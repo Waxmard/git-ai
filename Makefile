@@ -1,6 +1,14 @@
 PREFIX ?= $(HOME)/.local
 
-.PHONY: install uninstall
+.PHONY: install uninstall lint
+
+lint:
+	shellcheck -x lib/*.sh
+	@for f in bin/*; do \
+		if head -1 "$$f" | grep -q '^#!.*bash'; then \
+			shellcheck -x "$$f"; \
+		fi; \
+	done
 
 install:
 	@mkdir -p $(PREFIX)/bin $(PREFIX)/lib

@@ -1,0 +1,28 @@
+name: ShellCheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: Lint bash scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on lib/
+        run: shellcheck -x lib/*.sh
+
+      - name: Run ShellCheck on bin/ scripts
+        run: |
+          for f in bin/*; do
+            if head -1 "$f" | grep -q '^#!.*bash'; then
+              shellcheck -x "$f"
+            fi
+          done
