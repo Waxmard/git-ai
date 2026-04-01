@@ -7,6 +7,7 @@ die() {
 }
 
 strip_fences() {
+  # shellcheck disable=SC2016
   sed -E '/^```/d' | sed -E 's/^`+//;s/`+$//' | sed -E '/./,$!d' | sed -E ':a;/^[[:space:]]*$/{ $d;N;ba; }'
 }
 
