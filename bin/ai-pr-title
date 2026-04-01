@@ -4,6 +4,7 @@ set -o pipefail
 # Usage: ai-pr-title [claude|gemini|codex] [--base <branch>]
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=lib/ai-common.sh
 source "${SCRIPT_DIR}/../lib/ai-common.sh"
 
 PROVIDER=claude

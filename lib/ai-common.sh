@@ -7,7 +7,13 @@ die() {
 }
 
 strip_fences() {
-  sed -E '/^```/d' | sed -E 's/^`+//;s/`+$//' | sed -E '/./,$!d' | sed -E ':a;/^[[:space:]]*$/{ $d;N;ba; }'
+  perl -0pe '
+    s/^\s*```.*\n//mg;
+    s/^`+//mg;
+    s/`+$//mg;
+    s/\A(?:[ \t]*\n)+//;
+    s/(?:\n[ \t]*)+\z/\n/s;
+  '
 }
 
 load_gemini_env() {
@@ -98,6 +104,7 @@ run_provider() {
   local provider="$1"
   local prompt="$2"
   local input="$3"
+  local output
 
   case $provider in
     claude)
@@ -135,9 +142,26 @@ run_provider() {
       printf '%s\n' "$gemini_output" | strip_fences
       ;;
     codex)
-      codex exec --model gpt-5.4-mini "$prompt
+      local codex_output_file
+      local codex_err_file
+      codex_output_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex.XXXXXX") ||
+        die "failed to create temporary output file"
+      codex_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex-err.XXXXXX") ||
+        die "failed to create temporary error file"
+      codex exec --model gpt-5.4-mini --output-last-message "$codex_output_file" "$prompt
 
-$input" | strip_fences || die "Codex generation failed"
+$input" >/dev/null 2>"$codex_err_file" || {
+        local codex_error
+        codex_error=$(<"$codex_err_file")
+        rm -f "$codex_output_file" "$codex_err_file"
+        [[ -n "$codex_error" ]] && die "Codex generation failed: $codex_error"
+        die "Codex generation failed"
+      }
+      rm -f "$codex_err_file"
+      output=$(<"$codex_output_file")
+      rm -f "$codex_output_file"
+      [[ -n "$output" ]] || die "Codex generation failed: empty response"
+      printf '\n%s\n' "$output" | strip_fences
       ;;
     *)
       die "unknown provider: $provider"

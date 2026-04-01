@@ -4,6 +4,7 @@ set -o pipefail
 # Usage: ai-commit-gen [claude|gemini|codex]
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=lib/ai-common.sh
 source "${SCRIPT_DIR}/../lib/ai-common.sh"
 
 PROVIDER=${1:-claude}

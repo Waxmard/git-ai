@@ -1,6 +1,6 @@
 # git-ai
 
-LLM-powered git workflow tools. Generate commit messages and PR titles using Claude, Gemini, or Codex.
+LLM-powered git workflow tools. Generate commit messages and PR titles using Claude, Gemini, or Codex from the CLI, Lazygit, and other git environments that expose normal Git state.
 
 ## Install
 
@@ -29,6 +29,7 @@ ai-commit-gen [claude|gemini|codex]
 - Reads `git diff --staged` and produces a Conventional Commits message
 - Includes a description body for non-trivial changes
 - Default provider: `claude`
+- Works anywhere you can stage changes, including Lazygit and similar git UIs
 
 ### ai-pr-title
 
@@ -43,6 +44,14 @@ ai-pr-title [claude|gemini|codex] [--base <branch>]
 - Auto-detects the base branch from the remote default (falls back to `main`)
 - Use `--base` to override (e.g. `--base dev`)
 - Default provider: `claude`
+- Works from any git environment where the current branch is ahead of the base branch
+
+## Compatibility
+
+These tools do not depend on a specific terminal UI. They work in the CLI, in Lazygit, and in similar git environments as long as Git exposes the required repository state:
+
+- `ai-commit-gen` needs staged changes from `git diff --staged`
+- `ai-pr-title` needs commits and diff data relative to a base branch
 
 ## Providers
 
