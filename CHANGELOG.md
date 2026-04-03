@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/Waxmard/git-ai/compare/v0.1.2...v1.0.0) (2026-04-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* add model tier selection for LLM providers ([#7](https://github.com/Waxmard/git-ai/issues/7))
+
+### Features
+
+* add model tier selection for LLM providers ([#7](https://github.com/Waxmard/git-ai/issues/7)) ([4f0d4c7](https://github.com/Waxmard/git-ai/commit/4f0d4c7c094cd8559d67374c65596793c4a175b9))
+
 ## [0.1.2](https://github.com/Waxmard/git-ai/compare/v0.1.1...v0.1.2) (2026-04-03)
 
 
