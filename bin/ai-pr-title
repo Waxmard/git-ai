@@ -7,7 +7,7 @@ SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 # shellcheck source=lib/ai-common.sh
 source "${SCRIPT_DIR}/../lib/ai-common.sh"
 
-PROVIDER=claude
+PROVIDER=$(get_last_provider ai-pr-title)
 BASE=""
 
 while [[ $# -gt 0 ]]; do
@@ -46,4 +46,4 @@ $LOG
 Diff:
 $DIFF"
 
-run_provider "$PROVIDER" "$PROMPT" "$INPUT"
+run_provider ai-pr-title "$PROVIDER" "$PROMPT" "$INPUT"
