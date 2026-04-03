@@ -16,29 +16,51 @@ strip_fences() {
   '
 }
 
-get_last_provider() {
-  local tool_name="$1"
-  local fallback="${2:-claude}"
+get_last_choice() {
+  local key="$1"
+  local fallback="$2"
+  local valid="$3"
   local git_dir
   git_dir=$(git rev-parse --git-dir 2>/dev/null) || { printf '%s\n' "$fallback"; return 0; }
-  local state_file="${git_dir}/${tool_name}-last-provider"
+  local state_file="${git_dir}/${key}"
   if [[ -r "$state_file" ]]; then
     local stored
     stored=$(<"$state_file")
     stored="${stored%"${stored##*[![:space:]]}"}"
-    case $stored in
-      claude|gemini|codex) printf '%s\n' "$stored"; return 0 ;;
-    esac
+    if [[ "|${valid}|" == *"|${stored}|"* ]]; then
+      printf '%s\n' "$stored"
+      return 0
+    fi
   fi
   printf '%s\n' "$fallback"
 }
 
-save_last_provider() {
-  local tool_name="$1"
-  local provider="$2"
+save_last_choice() {
+  local key="$1"
+  local value="$2"
   local git_dir
   git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 0
-  printf '%s\n' "$provider" >"${git_dir}/${tool_name}-last-provider" 2>/dev/null || true
+  printf '%s\n' "$value" >"${git_dir}/${key}" 2>/dev/null || true
+}
+
+get_last_provider() {
+  get_last_choice "${1}-last-provider" "${2:-claude}" "claude|gemini|codex"
+}
+
+save_last_provider() {
+  save_last_choice "${1}-last-provider" "$2"
+}
+
+get_last_tier() {
+  local tool_name="$1"
+  local provider="$2"
+  local fallback="$3"
+  get_last_choice "${tool_name}-${provider}-last-tier" "$fallback" \
+    "haiku|sonnet|opus|flash-lite|flash|pro|mini|standard"
+}
+
+save_last_tier() {
+  save_last_choice "${1}-${2}-last-tier" "$3"
 }
 
 load_gemini_env() {
@@ -123,23 +145,76 @@ resolve_gemini_api_key() {
   return 1
 }
 
-list_tiers() {
-  case "${1:-}" in
-    claude)
-      printf '%s|%s\n' "haiku" "Haiku"
-      printf '%s|%s\n' "sonnet" "Sonnet"
-      printf '%s|%s\n' "opus" "Opus"
-      ;;
-    gemini)
-      printf '%s|%s\n' "flash-lite" "Flash Lite"
-      printf '%s|%s\n' "flash" "Flash"
-      printf '%s|%s\n' "pro" "Pro"
-      ;;
-    codex)
-      printf '%s|%s\n' "mini" "Mini"
-      printf '%s|%s\n' "standard" "Standard"
-      ;;
+provider_display_name() {
+  case $1 in
+    claude) echo "Claude" ;;
+    gemini) echo "Gemini" ;;
+    codex)  echo "OpenAI (Codex)" ;;
   esac
+}
+
+tier_display_name() {
+  case $1 in
+    haiku)      echo "Haiku" ;;
+    sonnet)     echo "Sonnet" ;;
+    opus)       echo "Opus" ;;
+    flash-lite) echo "Flash Lite" ;;
+    flash)      echo "Flash" ;;
+    pro)        echo "Pro" ;;
+    mini)       echo "Mini" ;;
+    standard)   echo "Standard" ;;
+  esac
+}
+
+# order_by_recent LAST ITEM...
+# Prints items with LAST first, then remaining in original order.
+order_by_recent() {
+  local last="$1"
+  shift
+  printf '%s\n' "$last"
+  for item in "$@"; do
+    [[ "$item" != "$last" ]] && printf '%s\n' "$item"
+  done
+}
+
+list_providers() {
+  local tool_name="${1:-}"
+  local all=(claude gemini codex)
+
+  if [[ -n "$tool_name" ]]; then
+    local last ordered=()
+    last=$(get_last_provider "$tool_name")
+    while IFS= read -r p; do ordered+=("$p"); done < <(order_by_recent "$last" "${all[@]}")
+    all=("${ordered[@]}")
+  fi
+
+  for p in "${all[@]}"; do
+    printf '%s|%s\n' "$p" "$(provider_display_name "$p")"
+  done
+}
+
+list_tiers() {
+  local provider="${1:-}"
+  local tool_name="${2:-}"
+  local all=()
+
+  case "$provider" in
+    claude) all=(haiku sonnet opus) ;;
+    gemini) all=(flash-lite flash pro) ;;
+    codex)  all=(mini standard) ;;
+    *) return ;;
+  esac
+
+  if [[ -n "$tool_name" ]]; then
+    local last ordered=()
+    last=$(get_last_tier "$tool_name" "$provider" "${all[0]}")
+    while IFS= read -r t; do ordered+=("$t"); done < <(order_by_recent "$last" "${all[@]}")
+    all=("${ordered[@]}")
+  fi
+
+  for t in "${all[@]}"; do
+    printf '%s|%s\n' "$t" "$(tier_display_name "$t")"
+  done
 }
 
 resolve_model() {
@@ -246,4 +321,5 @@ $input" >/dev/null 2>"$codex_err_file" || {
       ;;
   esac
   save_last_provider "$tool_name" "$provider"
+  [[ -n "$model_tier" ]] && save_last_tier "$tool_name" "$provider" "$model_tier"
 }
