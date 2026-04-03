@@ -123,6 +123,25 @@ resolve_gemini_api_key() {
   return 1
 }
 
+list_tiers() {
+  case "${1:-}" in
+    claude)
+      printf '%s|%s\n' "haiku" "Haiku"
+      printf '%s|%s\n' "sonnet" "Sonnet"
+      printf '%s|%s\n' "opus" "Opus"
+      ;;
+    gemini)
+      printf '%s|%s\n' "flash-lite" "Flash Lite"
+      printf '%s|%s\n' "flash" "Flash"
+      printf '%s|%s\n' "pro" "Pro"
+      ;;
+    codex)
+      printf '%s|%s\n' "mini" "Mini"
+      printf '%s|%s\n' "standard" "Standard"
+      ;;
+  esac
+}
+
 resolve_model() {
   local tool_name="$1"
   local provider="$2"
