@@ -1,18 +1,19 @@
 #!/bin/bash
 set -o pipefail
 # ai-commit-gen - Generate commit messages using Claude, Gemini, or Codex
-# Usage: ai-commit-gen [claude|gemini|codex]
+# Usage: ai-commit-gen [claude|gemini|codex] [tier]
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 # shellcheck source=lib/ai-common.sh
 source "${SCRIPT_DIR}/../lib/ai-common.sh"
 
 PROVIDER=${1:-$(get_last_provider ai-commit-gen)}
-PROMPT="Generate 1 git commit message using Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:). Output ONLY the commit message on a single line. Include a description body separated by a blank line for non-trivial changes. No numbering, no bullets, no explanations. Do not wrap in code blocks or backticks."
+MODEL_TIER="${2:-}"
+PROMPT="Generate 1 git commit message using Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:). Append ! before the colon (e.g. feat!:) for breaking changes. Output ONLY the commit message on a single line. Include a description body separated by a blank line for non-trivial changes. No numbering, no bullets, no explanations. Do not wrap in code blocks or backticks."
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 git diff --staged --quiet && die "no staged changes to summarize"
 
 STAGED_DIFF=$(git diff --staged) || die "failed to read staged diff"
 
-run_provider ai-commit-gen "$PROVIDER" "$PROMPT" "$STAGED_DIFF"
+run_provider ai-commit-gen "$PROVIDER" "$PROMPT" "$STAGED_DIFF" "$MODEL_TIER"
