@@ -16,6 +16,31 @@ strip_fences() {
   '
 }
 
+get_last_provider() {
+  local tool_name="$1"
+  local fallback="${2:-claude}"
+  local git_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null) || { printf '%s\n' "$fallback"; return 0; }
+  local state_file="${git_dir}/${tool_name}-last-provider"
+  if [[ -r "$state_file" ]]; then
+    local stored
+    stored=$(<"$state_file")
+    stored="${stored%"${stored##*[![:space:]]}"}"
+    case $stored in
+      claude|gemini|codex) printf '%s\n' "$stored"; return 0 ;;
+    esac
+  fi
+  printf '%s\n' "$fallback"
+}
+
+save_last_provider() {
+  local tool_name="$1"
+  local provider="$2"
+  local git_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 0
+  printf '%s\n' "$provider" >"${git_dir}/${tool_name}-last-provider" 2>/dev/null || true
+}
+
 load_gemini_env() {
   local private_env_file="${HOME}/.zsh-private"
 
@@ -98,12 +123,13 @@ resolve_gemini_api_key() {
   return 1
 }
 
-# run_provider PROVIDER PROMPT INPUT
+# run_provider TOOL_NAME PROVIDER PROMPT INPUT
 # Runs the given LLM provider with the prompt and input, pipes through strip_fences.
 run_provider() {
-  local provider="$1"
-  local prompt="$2"
-  local input="$3"
+  local tool_name="$1"
+  local provider="$2"
+  local prompt="$3"
+  local input="$4"
   local output
 
   case $provider in
@@ -167,4 +193,5 @@ $input" >/dev/null 2>"$codex_err_file" || {
       die "unknown provider: $provider"
       ;;
   esac
+  save_last_provider "$tool_name" "$provider"
 }
