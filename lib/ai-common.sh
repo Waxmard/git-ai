@@ -16,17 +16,12 @@ strip_fences() {
   '
 }
 
-state_dir() {
-  local dir="${XDG_STATE_HOME:-$HOME/.local/state}/git-ai"
-  mkdir -p "$dir" 2>/dev/null || true
-  printf '%s\n' "$dir"
-}
-
 get_last_provider() {
   local tool_name="$1"
   local fallback="${2:-claude}"
-  local state_file
-  state_file="$(state_dir)/${tool_name}-last-provider"
+  local git_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null) || { printf '%s\n' "$fallback"; return 0; }
+  local state_file="${git_dir}/${tool_name}-last-provider"
   if [[ -r "$state_file" ]]; then
     local stored
     stored=$(<"$state_file")
@@ -41,7 +36,9 @@ get_last_provider() {
 save_last_provider() {
   local tool_name="$1"
   local provider="$2"
-  printf '%s\n' "$provider" >"$(state_dir)/${tool_name}-last-provider" 2>/dev/null || true
+  local git_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 0
+  printf '%s\n' "$provider" >"${git_dir}/${tool_name}-last-provider" 2>/dev/null || true
 }
 
 load_gemini_env() {
