@@ -56,7 +56,7 @@ get_last_tier() {
   local provider="$2"
   local fallback="$3"
   get_last_choice "${tool_name}-${provider}-last-tier" "$fallback" \
-    "haiku|sonnet|opus|flash-lite|flash|pro|mini|standard"
+    "haiku|sonnet|opus|flash-lite|pro|mini|standard"
 }
 
 save_last_tier() {
@@ -159,7 +159,6 @@ tier_display_name() {
     sonnet)     echo "Sonnet" ;;
     opus)       echo "Opus" ;;
     flash-lite) echo "Flash Lite" ;;
-    flash)      echo "Flash" ;;
     pro)        echo "Pro" ;;
     mini)       echo "Mini" ;;
     standard)   echo "Standard" ;;
@@ -200,7 +199,7 @@ list_tiers() {
 
   case "$provider" in
     claude) all=(haiku sonnet opus) ;;
-    gemini) all=(flash-lite flash pro) ;;
+    gemini) all=(flash-lite pro) ;;
     codex)  all=(mini standard) ;;
     *) return ;;
   esac
@@ -228,7 +227,6 @@ resolve_model() {
       claude:sonnet)     printf '%s\n' "claude-sonnet-4-6" ;;
       claude:opus)       printf '%s\n' "claude-opus-4-6" ;;
       gemini:flash-lite) printf '%s\n' "gemini-3.1-flash-lite-preview" ;;
-      gemini:flash)      printf '%s\n' "gemini-3.1-flash-preview" ;;
       gemini:pro)        printf '%s\n' "gemini-3.1-pro-preview" ;;
       codex:mini)        printf '%s\n' "gpt-5.4-mini" ;;
       codex:standard)    printf '%s\n' "gpt-5.4" ;;

@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
       PROVIDER="$1"
       shift
       case "${1:-}" in
-        haiku|sonnet|opus|flash-lite|flash|pro|mini|standard)
+        haiku|sonnet|opus|flash-lite|pro|mini|standard)
           MODEL_TIER="$1"
           shift
           ;;
