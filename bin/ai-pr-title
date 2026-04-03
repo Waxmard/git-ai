@@ -1,13 +1,14 @@
 #!/bin/bash
 set -o pipefail
 # ai-pr-title - Generate PR titles and bodies using Claude, Gemini, or Codex
-# Usage: ai-pr-title [claude|gemini|codex] [--base <branch>]
+# Usage: ai-pr-title [claude|gemini|codex] [tier] [--base <branch>]
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 # shellcheck source=lib/ai-common.sh
 source "${SCRIPT_DIR}/../lib/ai-common.sh"
 
 PROVIDER=$(get_last_provider ai-pr-title)
+MODEL_TIER=""
 BASE=""
 
 while [[ $# -gt 0 ]]; do
@@ -19,6 +20,12 @@ while [[ $# -gt 0 ]]; do
     claude|gemini|codex)
       PROVIDER="$1"
       shift
+      case "${1:-}" in
+        haiku|sonnet|opus|flash-lite|flash|pro|mini|standard)
+          MODEL_TIER="$1"
+          shift
+          ;;
+      esac
       ;;
     *)
       die "unknown argument: $1"
@@ -46,4 +53,4 @@ $LOG
 Diff:
 $DIFF"
 
-run_provider ai-pr-title "$PROVIDER" "$PROMPT" "$INPUT"
+run_provider ai-pr-title "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER"

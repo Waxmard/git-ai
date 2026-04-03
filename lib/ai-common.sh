@@ -123,18 +123,51 @@ resolve_gemini_api_key() {
   return 1
 }
 
-# run_provider TOOL_NAME PROVIDER PROMPT INPUT
+resolve_model() {
+  local tool_name="$1"
+  local provider="$2"
+  local tier="${3:-}"
+
+  if [[ -n "$tier" ]]; then
+    case "${provider}:${tier}" in
+      claude:haiku)      printf '%s\n' "claude-haiku-4-5-20251001" ;;
+      claude:sonnet)     printf '%s\n' "claude-sonnet-4-6" ;;
+      claude:opus)       printf '%s\n' "claude-opus-4-6" ;;
+      gemini:flash-lite) printf '%s\n' "gemini-3.1-flash-lite-preview" ;;
+      gemini:flash)      printf '%s\n' "gemini-3.1-flash-preview" ;;
+      gemini:pro)        printf '%s\n' "gemini-3.1-pro-preview" ;;
+      codex:mini)        printf '%s\n' "gpt-5.4-mini" ;;
+      codex:standard)    printf '%s\n' "gpt-5.4" ;;
+      *) die "unknown model tier '$tier' for provider '$provider'" ;;
+    esac
+    return
+  fi
+
+  case "${tool_name}:${provider}" in
+    ai-pr-title:claude) printf '%s\n' "claude-opus-4-6" ;;
+    ai-pr-title:gemini) printf '%s\n' "gemini-3.1-pro-preview" ;;
+    ai-pr-title:codex)  printf '%s\n' "gpt-5.4" ;;
+    *:claude) printf '%s\n' "claude-haiku-4-5-20251001" ;;
+    *:gemini) printf '%s\n' "gemini-3.1-flash-lite-preview" ;;
+    *:codex)  printf '%s\n' "gpt-5.4-mini" ;;
+  esac
+}
+
+# run_provider TOOL_NAME PROVIDER PROMPT INPUT [MODEL_TIER]
 # Runs the given LLM provider with the prompt and input, pipes through strip_fences.
 run_provider() {
   local tool_name="$1"
   local provider="$2"
   local prompt="$3"
   local input="$4"
+  local model_tier="${5:-}"
   local output
+  local model
+  model=$(resolve_model "$tool_name" "$provider" "$model_tier")
 
   case $provider in
     claude)
-      claude -p "$prompt" --max-turns 1 --model claude-haiku-4-5-20251001 <<<"$input" | strip_fences ||
+      claude -p "$prompt" --max-turns 1 --model "$model" <<<"$input" | strip_fences ||
         die "Claude generation failed"
       ;;
     gemini)
@@ -148,7 +181,7 @@ run_provider() {
       export GEMINI_API_KEY
       local gemini_output
       gemini_output=$(
-        printf '%s\n' "$input" | "$gemini_bin" -p "$prompt" -m gemini-3.1-flash-lite-preview -e "" 2>"$gemini_err_file"
+        printf '%s\n' "$input" | "$gemini_bin" -p "$prompt" -m "$model" -e "" 2>"$gemini_err_file"
       )
       local gemini_status=$?
 
@@ -174,7 +207,7 @@ run_provider() {
         die "failed to create temporary output file"
       codex_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex-err.XXXXXX") ||
         die "failed to create temporary error file"
-      codex exec --model gpt-5.4-mini --output-last-message "$codex_output_file" "$prompt
+      codex exec --model "$model" --output-last-message "$codex_output_file" "$prompt
 
 $input" >/dev/null 2>"$codex_err_file" || {
         local codex_error
