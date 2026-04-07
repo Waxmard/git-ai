@@ -9,8 +9,7 @@ die() {
 strip_fences() {
   perl -0pe '
     s/^\s*```.*\n//mg;
-    s/^`+//mg;
-    s/`+$//mg;
+    s/^\s*`+\s*$\n?//mg;
     s/\A(?:[ \t]*\n)+//;
     s/(?:\n[ \t]*)+\z/\n/s;
   '

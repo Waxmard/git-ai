@@ -1,7 +1,9 @@
 #!/bin/bash
 set -o pipefail
 # ai-pr-title - Generate PR titles and bodies using Claude, Gemini, or Codex
-# Usage: ai-pr-title [claude|gemini|codex] [tier] [--base <branch>]
+# Usage: ai-pr-title [claude|gemini|codex] [tier] [--base <branch>] [--no-test-plan]
+# Recommended tiers: claude sonnet/opus, gemini pro — weaker tiers (haiku, flash-lite)
+# may not follow grouping instructions reliably.
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 # shellcheck source=lib/ai-common.sh
@@ -10,12 +12,17 @@ source "${SCRIPT_DIR}/../lib/ai-common.sh"
 PROVIDER=$(get_last_provider ai-pr-title)
 MODEL_TIER=""
 BASE=""
+TEST_PLAN=true
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --base)
       BASE="$2"
       shift 2
+      ;;
+    --no-test-plan)
+      TEST_PLAN=false
+      shift
       ;;
     claude|gemini|codex)
       PROVIDER="$1"
@@ -33,7 +40,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-PROMPT="Generate a pull request title and body. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Append ! before the colon (e.g. feat!:) for breaking changes. Follow with a blank line, then a concise PR body using markdown bullet points summarizing the key changes. Output ONLY the title and body. Do not wrap in code blocks or backticks."
+PROMPT_TWO_PASS="Given an auto-generated PR body draft (grouped from conventional commit messages) and a list of changed files, write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. Keep the same section groupings from the draft (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries in the draft may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Output ONLY the title and body. Do not wrap in code blocks or backticks."
+
+PROMPT_FALLBACK="Generate a pull request title and body. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Output ONLY the title and body. Do not wrap in code blocks or backticks."
+
+TEST_PLAN_SUFFIX=" After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work."
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
@@ -42,15 +53,85 @@ if [[ -z "$BASE" ]]; then
   BASE=${BASE:-main}
 fi
 
-LOG=$(git log --oneline "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
+# Each commit prefixed with GITAI_COMMIT to distinguish subjects from body lines
+LOG=$(git log --format="GITAI_COMMIT %s%n%b" "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
 [[ -z "$LOG" ]] && die "no commits ahead of $BASE"
 
-DIFF=$(git diff "$BASE"...HEAD 2>/dev/null) || die "failed to read diff against $BASE"
+DIFF_STAT=$(git diff --stat "$BASE"...HEAD 2>/dev/null) || die "failed to read diff stat against $BASE"
 
-INPUT="Commit log:
-$LOG
+# Count how many commits follow conventional commit format (subject lines only)
+CONVENTIONAL_COUNT=0
+TOTAL_COUNT=0
+while IFS= read -r line; do
+  [[ "$line" == "GITAI_COMMIT "* ]] || continue
+  msg="${line#GITAI_COMMIT }"
+  type=$(printf '%s' "$msg" | sed 's/[!(].*//' | sed 's/:.*//')
+  TOTAL_COUNT=$((TOTAL_COUNT + 1))
+  case "$type" in
+    feat|fix|refactor|docs|chore|ci|test|style|perf|build)
+      CONVENTIONAL_COUNT=$((CONVENTIONAL_COUNT + 1)) ;;
+  esac
+done <<< "$LOG"
+
+if (( TOTAL_COUNT > 0 && CONVENTIONAL_COUNT * 2 >= TOTAL_COUNT )); then
+  # Two-pass: auto-draft from commit messages, LLM polishes (no diff sent)
+
+  # Collect commits of a given type into a section; body lines indented under bullet
+  draft_section() {
+    local header="$1"
+    local type="$2"
+    local lines=""
+    local capturing=false
+
+    while IFS= read -r line; do
+      if [[ "$line" == "GITAI_COMMIT "* ]]; then
+        capturing=false
+        msg="${line#GITAI_COMMIT }"
+        t=$(printf '%s' "$msg" | sed 's/[!(].*//' | sed 's/:.*//')
+        if [[ "$t" == "$type" ]]; then
+          desc="${msg#*: }"
+          lines+="- ${desc}"$'\n'
+          capturing=true
+        fi
+      elif [[ "$capturing" == true && -n "$line" ]]; then
+        lines+="  ${line}"$'\n'
+      fi
+    done <<< "$LOG"
+
+    [[ -n "$lines" ]] && printf '### %s\n%s' "$header" "$lines"
+  }
+
+  DRAFT_BODY=""
+  for args in "Features feat" "Bug Fixes fix" "Refactors refactor" "Docs docs" \
+              "Chores chore" "Continuous Integration ci" "Tests test" \
+              "Style style" "Performance perf" "Build build"; do
+    header="${args% *}"
+    type="${args##* }"
+    section=$(draft_section "$header" "$type")
+    [[ -n "$section" ]] && DRAFT_BODY+="${section}"$'\n\n'
+  done
+
+  PROMPT="$PROMPT_TWO_PASS"
+  INPUT="Auto-generated draft (grouped from conventional commit messages):
+$DRAFT_BODY
+Changed files:
+$DIFF_STAT"
+
+else
+  # Fallback: commits don't consistently use conventional format — pass diff directly
+  DIFF=$(git diff -U0 "$BASE"...HEAD 2>/dev/null) || die "failed to read diff against $BASE"
+  PROMPT="$PROMPT_FALLBACK"
+  # Strip GITAI_COMMIT prefix so the LLM sees a clean commit log
+  INPUT="Commit log:
+$(printf '%s\n' "$LOG" | sed 's/^GITAI_COMMIT //')
+
+Changed files:
+$DIFF_STAT
 
 Diff:
 $DIFF"
+fi
+
+[[ "$TEST_PLAN" == "true" ]] && PROMPT="${PROMPT}${TEST_PLAN_SUFFIX}"
 
 run_provider ai-pr-title "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER"
