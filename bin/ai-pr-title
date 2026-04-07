@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-PROMPT="Generate a pull request title and body. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Append ! before the colon (e.g. feat!:) for breaking changes. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Output ONLY the title and body. Do not wrap in code blocks or backticks."
+PROMPT="Generate a pull request title and body. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Output ONLY the title and body. Do not wrap in code blocks or backticks."
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
