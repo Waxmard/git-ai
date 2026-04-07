@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/Waxmard/git-ai/compare/v1.0.0...v1.1.0) (2026-04-07)
+
+
+### Features
+
+* two-pass PR generation with grouped sections and --no-test-plan flag ([#10](https://github.com/Waxmard/git-ai/issues/10)) ([a44cef4](https://github.com/Waxmard/git-ai/commit/a44cef479b27fe6af08ca7b582993081a11dcb8e))
+
 ## [1.0.0](https://github.com/Waxmard/git-ai/compare/v0.1.2...v1.0.0) (2026-04-03)
 
 
