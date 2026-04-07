@@ -1,7 +1,7 @@
 #!/bin/bash
 set -o pipefail
 # ai-pr-title - Generate PR titles and bodies using Claude, Gemini, or Codex
-# Usage: ai-pr-title [claude|gemini|codex] [tier] [--base <branch>]
+# Usage: ai-pr-title [claude|gemini|codex] [tier] [--base <branch>] [--no-test-plan]
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 # shellcheck source=lib/ai-common.sh
@@ -10,12 +10,17 @@ source "${SCRIPT_DIR}/../lib/ai-common.sh"
 PROVIDER=$(get_last_provider ai-pr-title)
 MODEL_TIER=""
 BASE=""
+TEST_PLAN=true
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --base)
       BASE="$2"
       shift 2
+      ;;
+    --no-test-plan)
+      TEST_PLAN=false
+      shift
       ;;
     claude|gemini|codex)
       PROVIDER="$1"
@@ -34,6 +39,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 PROMPT="Generate a pull request title and body. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Output ONLY the title and body. Do not wrap in code blocks or backticks."
+
+if [[ "$TEST_PLAN" == "true" ]]; then
+  PROMPT="$PROMPT After the change sections, add a ### Test Plan section with a short bulleted checklist of manual steps a reviewer can follow to verify the changes work."
+fi
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
