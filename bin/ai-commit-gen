@@ -16,4 +16,14 @@ git diff --staged --quiet && die "no staged changes to summarize"
 
 STAGED_DIFF=$(git diff --staged) || die "failed to read staged diff"
 
-run_provider ai-commit-gen "$PROVIDER" "$PROMPT" "$STAGED_DIFF" "$MODEL_TIER"
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+if [[ -n "$LAST_TAG" ]]; then
+  COMMITS_SINCE=$(git rev-list --count "${LAST_TAG}..HEAD" 2>/dev/null || echo "?")
+  RELEASE_CONTEXT="[Release context: last tag ${LAST_TAG}, ${COMMITS_SINCE} commits since — staged changes are unreleased]"
+else
+  RELEASE_CONTEXT="[Release context: no release tags found — treat all changes as unreleased]"
+fi
+
+INPUT="${RELEASE_CONTEXT}"$'\n\n'"${STAGED_DIFF}"
+
+run_provider ai-commit-gen "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER"
