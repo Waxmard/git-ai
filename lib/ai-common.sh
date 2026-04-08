@@ -291,7 +291,7 @@ _run_anthropic_api() {
 import json, os
 print(json.dumps({
   "model": os.environ["GIT_AI_MODEL"],
-  "max_tokens": 1024,
+  "max_tokens": 8192,
   "system": os.environ["GIT_AI_PROMPT"],
   "messages": [{"role": "user", "content": os.environ["GIT_AI_INPUT"]}]
 }))
