@@ -43,7 +43,7 @@ save_last_choice() {
 }
 
 get_last_provider() {
-  get_last_choice "${1}-last-provider" "${2:-claude}" "claude|gemini|codex"
+  get_last_choice "${1}-last-provider" "${2:-gemini}" "claude|gemini|codex"
 }
 
 save_last_provider() {

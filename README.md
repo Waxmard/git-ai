@@ -54,7 +54,7 @@ ai-commit-gen [claude|gemini|codex] [tier]
 
 - Reads `git diff --staged` and produces a Conventional Commits message
 - Includes a description body for non-trivial changes
-- Default provider: `claude`
+- Default provider: `gemini`
 - Default tiers: `haiku`, `flash-lite`, `mini` (lightweight models for speed)
 - Works anywhere you can stage changes, including Lazygit and similar git UIs
 
@@ -70,8 +70,7 @@ ai-pr-title [claude|gemini|codex] [tier] [--base <branch>]
 - Produces a Conventional Commits title + markdown body
 - Auto-detects the base branch from the remote default (falls back to `main`)
 - Use `--base` to override (e.g. `--base dev`)
-- Default provider: `claude`
-- Default tiers: `opus`, `pro`, `standard` (more capable models for richer output)
+- Default provider: `gemini`
 - Works from any git environment where the current branch is ahead of the base branch
 
 ### ai-provider-menu
