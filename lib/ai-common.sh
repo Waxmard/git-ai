@@ -91,23 +91,21 @@ load_gemini_env() {
 }
 
 resolve_gemini_bin() {
-  local candidate
-  local candidates=(
-    "${GEMINI_BIN:-}"
-    "$HOME/.nvm/versions/node/v25.1.0/bin/gemini"
-    "$HOME/.nvm/versions/node/v24.11.0/bin/gemini"
-    "$HOME/.nvm/versions/node/v20.19.5/bin/gemini"
-    "$HOME/.nvm/versions/node/v20.10.0/bin/gemini"
-    "$HOME/.local/bin/gemini"
-    "/opt/homebrew/bin/gemini"
-    "/usr/local/bin/gemini"
-  )
+  if [[ -n "${GEMINI_BIN:-}" && -x "$GEMINI_BIN" ]]; then
+    printf '%s\n' "$GEMINI_BIN"
+    return 0
+  fi
 
-  for candidate in "${candidates[@]}"; do
-    if [[ -n "$candidate" && -x "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
+  if [[ -d "$HOME/.nvm/versions/node" ]]; then
+    local nvm_bin
+    for nvm_bin in "$HOME/.nvm/versions/node"/*/bin/gemini; do
+      [[ -f "$nvm_bin" && -x "$nvm_bin" ]] && { printf '%s\n' "$nvm_bin"; return 0; }
+    done
+  fi
+
+  local candidate
+  for candidate in "$HOME/.local/bin/gemini" "/opt/homebrew/bin/gemini" "/usr/local/bin/gemini"; do
+    [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
   done
 
   if command -v gemini >/dev/null 2>&1; then
@@ -244,6 +242,62 @@ resolve_model() {
   esac
 }
 
+_run_anthropic_api() {
+  local model="$1"
+  local prompt="$2"
+  local input="$3"
+  local body response
+  body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
+    python3 -c '
+import json, os
+print(json.dumps({
+  "model": os.environ["GIT_AI_MODEL"],
+  "max_tokens": 1024,
+  "system": os.environ["GIT_AI_PROMPT"],
+  "messages": [{"role": "user", "content": os.environ["GIT_AI_INPUT"]}]
+}))
+') || die "Failed to build Anthropic API request"
+  response=$(curl -sf \
+    -H "x-api-key: $ANTHROPIC_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "content-type: application/json" \
+    -d "$body" \
+    "https://api.anthropic.com/v1/messages") || die "Anthropic API request failed"
+  python3 -c '
+import json, sys
+data = json.loads(sys.stdin.read())
+print(data["content"][0]["text"])
+' <<<"$response" || die "Failed to parse Anthropic API response"
+}
+
+_run_openai_api() {
+  local model="$1"
+  local prompt="$2"
+  local input="$3"
+  local body response
+  body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
+    python3 -c '
+import json, os
+print(json.dumps({
+  "model": os.environ["GIT_AI_MODEL"],
+  "messages": [
+    {"role": "system", "content": os.environ["GIT_AI_PROMPT"]},
+    {"role": "user",   "content": os.environ["GIT_AI_INPUT"]}
+  ]
+}))
+') || die "Failed to build OpenAI API request"
+  response=$(curl -sf \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -H "content-type: application/json" \
+    -d "$body" \
+    "https://api.openai.com/v1/chat/completions") || die "OpenAI API request failed"
+  python3 -c '
+import json, sys
+data = json.loads(sys.stdin.read())
+print(data["choices"][0]["message"]["content"])
+' <<<"$response" || die "Failed to parse OpenAI API response"
+}
+
 # run_provider TOOL_NAME PROVIDER PROMPT INPUT [MODEL_TIER]
 # Runs the given LLM provider with the prompt and input, pipes through strip_fences.
 run_provider() {
@@ -258,8 +312,15 @@ run_provider() {
 
   case $provider in
     claude)
-      claude -p "$prompt" --max-turns 1 --model "$model" <<<"$input" | strip_fences ||
-        die "Claude generation failed"
+      if command -v claude >/dev/null 2>&1; then
+        claude -p "$prompt" --max-turns 1 --model "$model" <<<"$input" | strip_fences ||
+          die "Claude generation failed"
+      elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        _run_anthropic_api "$model" "$prompt" "$input" | strip_fences ||
+          die "Claude API generation failed"
+      else
+        die "Claude provider requires the Claude Code CLI or ANTHROPIC_API_KEY. See: https://claude.ai/code"
+      fi
       ;;
     gemini)
       load_gemini_env
@@ -292,26 +353,33 @@ run_provider() {
       printf '%s\n' "$gemini_output" | strip_fences
       ;;
     codex)
-      local codex_output_file
-      local codex_err_file
-      codex_output_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex.XXXXXX") ||
-        die "failed to create temporary output file"
-      codex_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex-err.XXXXXX") ||
-        die "failed to create temporary error file"
-      codex exec --model "$model" --output-last-message "$codex_output_file" "$prompt
+      if command -v codex >/dev/null 2>&1; then
+        local codex_output_file
+        local codex_err_file
+        codex_output_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex.XXXXXX") ||
+          die "failed to create temporary output file"
+        codex_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex-err.XXXXXX") ||
+          die "failed to create temporary error file"
+        codex exec --model "$model" --output-last-message "$codex_output_file" "$prompt
 
 $input" >/dev/null 2>"$codex_err_file" || {
-        local codex_error
-        codex_error=$(<"$codex_err_file")
-        rm -f "$codex_output_file" "$codex_err_file"
-        [[ -n "$codex_error" ]] && die "Codex generation failed: $codex_error"
-        die "Codex generation failed"
-      }
-      rm -f "$codex_err_file"
-      output=$(<"$codex_output_file")
-      rm -f "$codex_output_file"
-      [[ -n "$output" ]] || die "Codex generation failed: empty response"
-      printf '\n%s\n' "$output" | strip_fences
+          local codex_error
+          codex_error=$(<"$codex_err_file")
+          rm -f "$codex_output_file" "$codex_err_file"
+          [[ -n "$codex_error" ]] && die "Codex generation failed: $codex_error"
+          die "Codex generation failed"
+        }
+        rm -f "$codex_err_file"
+        output=$(<"$codex_output_file")
+        rm -f "$codex_output_file"
+        [[ -n "$output" ]] || die "Codex generation failed: empty response"
+        printf '\n%s\n' "$output" | strip_fences
+      elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+        _run_openai_api "$model" "$prompt" "$input" | strip_fences ||
+          die "OpenAI API generation failed"
+      else
+        die "Codex provider requires the Codex CLI or OPENAI_API_KEY. See: https://github.com/openai/codex"
+      fi
       ;;
     *)
       die "unknown provider: $provider"

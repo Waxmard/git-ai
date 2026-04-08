@@ -2,6 +2,18 @@
 
 LLM-powered git workflow tools. Generate commit messages and PR titles using Claude, Gemini, or Codex from the CLI, Lazygit, and other git environments that expose normal Git state.
 
+## Prerequisites
+
+At least one provider must be available:
+
+| Provider | Option A — CLI | Option B — API key |
+|----------|----------------|--------------------|
+| `claude` | [Claude Code CLI](https://claude.ai/code) — run `claude login` | Set `ANTHROPIC_API_KEY` |
+| `gemini` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) — set `GEMINI_API_KEY` or macOS Keychain | _(built-in, no separate CLI needed)_ |
+| `codex`  | [Codex CLI](https://github.com/openai/codex) — run `codex login` | Set `OPENAI_API_KEY` |
+
+API key mode (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) requires `curl` and `python3`, both standard on macOS and most Linux systems.
+
 ## Install
 
 ```bash
@@ -75,12 +87,12 @@ These tools do not depend on a specific terminal UI. They work in the CLI, in La
 
 | Provider | Tier | Model | Auth |
 |----------|------|-------|------|
-| `claude` | `haiku` | claude-haiku-4-5-20251001 | Claude Code CLI login |
-| `claude` | `sonnet` | claude-sonnet-4-6 | Claude Code CLI login |
-| `claude` | `opus` | claude-opus-4-6 | Claude Code CLI login |
+| `claude` | `haiku` | claude-haiku-4-5-20251001 | Claude Code CLI login, or `ANTHROPIC_API_KEY` |
+| `claude` | `sonnet` | claude-sonnet-4-6 | Claude Code CLI login, or `ANTHROPIC_API_KEY` |
+| `claude` | `opus` | claude-opus-4-6 | Claude Code CLI login, or `ANTHROPIC_API_KEY` |
 | `gemini` | `flash-lite` | gemini-3.1-flash-lite-preview | `GEMINI_API_KEY` env var or macOS Keychain |
 | `gemini` | `pro` | gemini-3.1-pro-preview | `GEMINI_API_KEY` env var or macOS Keychain |
-| `codex` | `mini` | gpt-5.4-mini | Codex CLI login |
-| `codex` | `standard` | gpt-5.4 | Codex CLI login |
+| `codex` | `mini` | gpt-5.4-mini | Codex CLI login, or `OPENAI_API_KEY` |
+| `codex` | `standard` | gpt-5.4 | Codex CLI login, or `OPENAI_API_KEY` |
 
 Last-used provider and tier are saved per repo (stored in `.git/`), so repeated runs remember your selection.
