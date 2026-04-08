@@ -134,4 +134,13 @@ fi
 
 [[ "$TEST_PLAN" == "true" ]] && PROMPT="${PROMPT}${TEST_PLAN_SUFFIX}"
 
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+if [[ -n "$LAST_TAG" ]]; then
+  COMMITS_SINCE=$(git rev-list --count "${LAST_TAG}..HEAD" 2>/dev/null || echo "?")
+  RELEASE_CONTEXT="[Release context: last tag ${LAST_TAG}, ${COMMITS_SINCE} commits since — changes in this PR are unreleased]"
+else
+  RELEASE_CONTEXT="[Release context: no release tags found — treat all changes as unreleased]"
+fi
+INPUT="${RELEASE_CONTEXT}"$'\n\n'"${INPUT}"
+
 run_provider ai-pr-title "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER"
