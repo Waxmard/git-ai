@@ -88,6 +88,10 @@ load_gemini_env() {
     export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-$GOOGLE_VERTEX_LOCATION}"
     export VERTEX_LOCATION="${VERTEX_LOCATION:-$GOOGLE_VERTEX_LOCATION}"
   fi
+
+  if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+    export GOOGLE_APPLICATION_CREDENTIALS
+  fi
 }
 
 resolve_gemini_bin() {
@@ -125,20 +129,55 @@ resolve_gemini_api_key() {
     return 0
   fi
 
-  keychain_account="${USER:-${LOGNAME:-$(id -un 2>/dev/null)}}"
-
-  if [[ -n "$keychain_account" ]]; then
-    key=$(security find-generic-password -a "$keychain_account" -s "gemini-api-key" -w 2>/dev/null) && [[ -n "$key" ]] && {
+  # macOS Keychain
+  if command -v security >/dev/null 2>&1; then
+    keychain_account="${USER:-${LOGNAME:-$(id -un 2>/dev/null)}}"
+    if [[ -n "$keychain_account" ]]; then
+      key=$(security find-generic-password -a "$keychain_account" -s "gemini-api-key" -w 2>/dev/null) && [[ -n "$key" ]] && {
+        printf '%s\n' "$key"
+        return 0
+      }
+    fi
+    key=$(security find-generic-password -s "gemini-api-key" -w 2>/dev/null) && [[ -n "$key" ]] && {
       printf '%s\n' "$key"
       return 0
     }
   fi
 
-  key=$(security find-generic-password -s "gemini-api-key" -w 2>/dev/null) && [[ -n "$key" ]] && {
-    printf '%s\n' "$key"
-    return 0
-  }
+  # Linux: libsecret / GNOME Keyring
+  if command -v secret-tool >/dev/null 2>&1; then
+    key=$(secret-tool lookup service gemini-api-key 2>/dev/null) && [[ -n "$key" ]] && {
+      printf '%s\n' "$key"
+      return 0
+    }
+  fi
 
+  # Linux: pass (password-store)
+  if command -v pass >/dev/null 2>&1; then
+    key=$(pass show gemini-api-key 2>/dev/null) && [[ -n "$key" ]] && {
+      printf '%s\n' "$key"
+      return 0
+    }
+  fi
+
+  # Linux: KDE Wallet
+  if command -v kwallet-query >/dev/null 2>&1; then
+    key=$(kwallet-query kdewallet -r gemini-api-key 2>/dev/null) && [[ -n "$key" ]] && {
+      printf '%s\n' "$key"
+      return 0
+    }
+  fi
+
+  return 1
+}
+
+_gemini_has_adc() {
+  if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
+    return 0
+  fi
+  if command -v gcloud >/dev/null 2>&1 && gcloud auth print-access-token >/dev/null 2>&1; then
+    return 0
+  fi
   return 1
 }
 
@@ -329,8 +368,13 @@ run_provider() {
         die "failed to create temporary error file"
       local gemini_bin
       gemini_bin=$(resolve_gemini_bin) || die "Gemini CLI not found. Set GEMINI_BIN or add gemini to PATH."
-      GEMINI_API_KEY=$(resolve_gemini_api_key) || die "Gemini API key not found. Set GEMINI_API_KEY or store a keychain item named gemini-api-key."
-      export GEMINI_API_KEY
+      local gemini_api_key
+      if gemini_api_key=$(resolve_gemini_api_key); then
+        GEMINI_API_KEY="$gemini_api_key"
+        export GEMINI_API_KEY
+      elif ! _gemini_has_adc; then
+        die "Gemini auth not found. Options: set GEMINI_API_KEY, store 'gemini-api-key' in your keychain (macOS Keychain / secret-tool / pass / kwallet), or configure gcloud ADC / GOOGLE_APPLICATION_CREDENTIALS."
+      fi
       local gemini_output
       gemini_output=$(
         printf '%s\n' "$input" | "$gemini_bin" -p "$prompt" -m "$model" -e "" 2>"$gemini_err_file"
