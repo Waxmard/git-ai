@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/Waxmard/git-ai/compare/v1.2.0...v1.3.0) (2026-04-08)
+
+
+### Features
+
+* add release context to generated prompts ([#14](https://github.com/Waxmard/git-ai/issues/14)) ([73fc310](https://github.com/Waxmard/git-ai/commit/73fc310200896ed9861a99ec74ebb3abf2e74e28))
+
 ## [1.2.0](https://github.com/Waxmard/git-ai/compare/v1.1.0...v1.2.0) (2026-04-08)
 
 
