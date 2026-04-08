@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/Waxmard/git-ai/compare/v1.1.0...v1.2.0) (2026-04-08)
+
+
+### Features
+
+* **auth:** expand provider auth fallbacks and default to gemini ([#12](https://github.com/Waxmard/git-ai/issues/12)) ([69eee1a](https://github.com/Waxmard/git-ai/commit/69eee1a7daba067954a02de55fad6efea52ff88a))
+
 ## [1.1.0](https://github.com/Waxmard/git-ai/compare/v1.0.0...v1.1.0) (2026-04-07)
 
 
