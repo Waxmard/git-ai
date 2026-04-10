@@ -12,6 +12,21 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - name: Release Please
+        uses: googleapis/release-please-action@v4
+        id: release
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GIT_AI_RELEASE_PLEASE_TOKEN }}
+
+      - name: Auto-merge release PR
+        run: |
+          PR_NUMBER=$(gh pr list \
+            --repo "${{ github.repository }}" \
+            --label "autorelease: pending" \
+            --json number \
+            --jq '.[0].number')
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr merge --rebase --auto --repo "${{ github.repository }}" "$PR_NUMBER"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GIT_AI_RELEASE_PLEASE_TOKEN }}
