@@ -62,28 +62,8 @@ save_last_tier() {
   save_last_choice "${1}-${2}-last-tier" "$3"
 }
 
-get_cached_message() {
-  local tool_name="$1"
-  local diff_hash="$2"
-  local git_dir
-  git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
-  local hash_file="${git_dir}/${tool_name}-last-diff-hash"
-  local msg_file="${git_dir}/${tool_name}-last-message"
-  [[ -r "$hash_file" && -r "$msg_file" ]] || return 1
-  local saved_hash
-  saved_hash=$(<"$hash_file")
-  saved_hash="${saved_hash%"${saved_hash##*[![:space:]]}"}"
-  [[ "$saved_hash" == "$diff_hash" ]] || return 1
-  printf '%s\n' "$(<"$msg_file")"
-  rm -f "$hash_file" "$msg_file"
-}
-
 save_last_message() {
-  local tool_name="$1"
-  local diff_hash="$2"
-  local message="$3"
-  save_last_choice "${tool_name}-last-diff-hash" "$diff_hash"
-  save_last_choice "${tool_name}-last-message"   "$message"
+  save_last_choice "${1}-last-message" "$2"
 }
 
 load_gemini_env() {
@@ -210,6 +190,7 @@ provider_display_name() {
     claude) echo "Claude" ;;
     gemini) echo "Gemini" ;;
     codex)  echo "OpenAI (Codex)" ;;
+    last)   echo "Reuse last message" ;;
   esac
 }
 
@@ -245,6 +226,11 @@ list_providers() {
     last=$(get_last_provider "$tool_name")
     while IFS= read -r p; do ordered+=("$p"); done < <(order_by_recent "$last" "${all[@]}")
     all=("${ordered[@]}")
+
+    local git_dir
+    git_dir=$(git rev-parse --git-dir 2>/dev/null) && \
+      [[ -r "${git_dir}/${tool_name}-last-message" ]] && \
+      all=("${all[@]}" last)
   fi
 
   for p in "${all[@]}"; do
