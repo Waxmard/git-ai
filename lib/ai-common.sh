@@ -247,6 +247,10 @@ list_tiers() {
     claude) all=(haiku sonnet opus) ;;
     gemini) all=(flash-lite pro) ;;
     codex)  all=(mini standard) ;;
+    last)
+      printf '%s|%s\n' "n/a" "(reusing saved message)"
+      return
+      ;;
     *) return ;;
   esac
 
