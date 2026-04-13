@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/Waxmard/git-ai/compare/v1.3.0...v1.4.0) (2026-04-13)
+
+
+### Features
+
+* reuse saved commit messages when the staged diff is unchanged ([#17](https://github.com/Waxmard/git-ai/issues/17)) ([352f2d4](https://github.com/Waxmard/git-ai/commit/352f2d4dddb6fda28515625dd825bcd4f711a895))
+
 ## [1.3.0](https://github.com/Waxmard/git-ai/compare/v1.2.0...v1.3.0) (2026-04-08)
 
 
