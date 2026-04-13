@@ -12,6 +12,14 @@ MODEL_TIER="${2:-}"
 PROMPT="Generate 1 git commit message using Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:). Never use !. Breaking changes are assessed at the PR level, not per commit. Output ONLY the commit message on a single line. Include a description body separated by a blank line for non-trivial changes. No numbering, no bullets, no explanations. Do not wrap in code blocks or backticks."
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
+
+if [[ "$PROVIDER" == "last" ]]; then
+  GIT_DIR=$(git rev-parse --git-dir)
+  [[ -r "${GIT_DIR}/ai-commit-gen-last-message" ]] || die "no saved commit message"
+  cat "${GIT_DIR}/ai-commit-gen-last-message"
+  exit 0
+fi
+
 git diff --staged --quiet && die "no staged changes to summarize"
 
 STAGED_DIFF=$(git diff --staged) || die "failed to read staged diff"
@@ -26,4 +34,6 @@ fi
 
 INPUT="${RELEASE_CONTEXT}"$'\n\n'"${STAGED_DIFF}"
 
-run_provider ai-commit-gen "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER"
+generated=$(run_provider ai-commit-gen "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
+save_last_message ai-commit-gen "$generated"
+printf '%s\n' "$generated"
