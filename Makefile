@@ -1,6 +1,13 @@
 PREFIX ?= $(HOME)/.local
+BATS := node_modules/.bin/bats
 
-.PHONY: install uninstall lint
+.PHONY: install uninstall lint test
+
+test: $(BATS)
+	$(BATS) --recursive test/
+
+$(BATS):
+	npm ci
 
 lint:
 	shellcheck -x lib/*.sh

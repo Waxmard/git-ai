@@ -206,7 +206,9 @@ order_by_recent() {
   shift
   printf '%s\n' "$last"
   for item in "$@"; do
-    [[ "$item" != "$last" ]] && printf '%s\n' "$item"
+    if [[ "$item" != "$last" ]]; then
+      printf '%s\n' "$item"
+    fi
   done
 }
 

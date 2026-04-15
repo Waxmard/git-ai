@@ -1,0 +1,58 @@
+#!/usr/bin/env bats
+load '../helpers/common'
+
+setup() {
+  load_bats_libs
+  TEST_REPO="$(make_test_repo)"
+  cd "$TEST_REPO"
+  source "${REPO_ROOT}/lib/ai-common.sh"
+  source "${REPO_ROOT}/bin/git-ai"
+}
+
+teardown() {
+  cd /tmp
+  rm -rf "$TEST_REPO"
+}
+
+@test "cmd_tiers: claude returns haiku, sonnet, opus" {
+  run cmd_tiers "claude" "commit"
+  assert_success
+  assert_output --partial "haiku|"
+  assert_output --partial "sonnet|"
+  assert_output --partial "opus|"
+}
+
+@test "cmd_tiers: gemini returns flash-lite, pro" {
+  run cmd_tiers "gemini" "commit"
+  assert_success
+  assert_output --partial "flash-lite|"
+  assert_output --partial "pro|"
+}
+
+@test "cmd_tiers: codex returns mini, standard" {
+  run cmd_tiers "codex" "commit"
+  assert_success
+  assert_output --partial "mini|"
+  assert_output --partial "standard|"
+}
+
+@test "cmd_tiers: last provider returns single reuse-message line" {
+  run cmd_tiers "last" "commit"
+  assert_success
+  assert_output --partial "n/a|"
+}
+
+@test "cmd_tiers: outputs pipe-delimited tier|display lines" {
+  run cmd_tiers "claude" "commit"
+  assert_success
+  while IFS= read -r line; do
+    [[ "$line" == *"|"* ]] || fail "line missing pipe delimiter: $line"
+  done <<< "$output"
+}
+
+@test "cmd_tiers: last tier appears first after save" {
+  save_last_tier "commit" "claude" "opus"
+  run cmd_tiers "claude" "commit"
+  assert_success
+  assert_line --index 0 "opus|Opus"
+}

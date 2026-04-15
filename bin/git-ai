@@ -3,7 +3,7 @@ set -o pipefail
 # git-ai - LLM-powered git workflow tools
 # Usage: git-ai <commit|pr|providers|tiers> [...]
 
-SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 # shellcheck source=lib/ai-common.sh
 source "${SCRIPT_DIR}/../lib/ai-common.sh"
 
@@ -282,14 +282,16 @@ cmd_tiers() {
 # Dispatch
 # ---------------------------------------------------------------------------
 
-CMD="${1:-}"
-shift || true
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  CMD="${1:-}"
+  shift || true
 
-case "$CMD" in
-  commit)    cmd_commit "$@" ;;
-  pr|mr)     cmd_pr "$@" ;;
-  providers) cmd_providers "$@" ;;
-  tiers)     cmd_tiers "$@" ;;
-  "")        die "usage: git-ai <commit|pr|providers|tiers> [...]" ;;
-  *)         die "unknown command: $CMD" ;;
-esac
+  case "$CMD" in
+    commit)    cmd_commit "$@" ;;
+    pr|mr)     cmd_pr "$@" ;;
+    providers) cmd_providers "$@" ;;
+    tiers)     cmd_tiers "$@" ;;
+    "")        die "usage: git-ai <commit|pr|providers|tiers> [...]" ;;
+    *)         die "unknown command: $CMD" ;;
+  esac
+fi

@@ -2,7 +2,16 @@
   "name": "@waxmard/git-ai",
   "version": "1.4.0",
   "description": "LLM-powered git workflow tools — generate commit messages and PR titles using Claude, Gemini, or Codex",
-  "keywords": ["git", "ai", "commit", "pull-request", "claude", "gemini", "codex", "cli"],
+  "keywords": [
+    "git",
+    "ai",
+    "commit",
+    "pull-request",
+    "claude",
+    "gemini",
+    "codex",
+    "cli"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,6 +22,21 @@
     "git-ai": "bin/git-ai",
     "aigit": "bin/aigit"
   },
-  "files": ["bin/", "lib/", "README.md", "CHANGELOG.md"],
-  "engines": { "node": ">=14" }
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "scripts": {
+    "test": "bats --recursive test/"
+  },
+  "devDependencies": {
+    "bats": "^1.13.0",
+    "bats-assert": "^2.2.4",
+    "bats-support": "^0.3.0"
+  }
 }
