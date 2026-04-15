@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+      - "git-ai-v*"
 
 permissions:
   contents: read

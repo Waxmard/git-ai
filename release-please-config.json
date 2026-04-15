@@ -4,7 +4,8 @@
     ".": {
       "release-type": "node",
       "changelog-path": "CHANGELOG.md",
-      "extra-files": ["version.txt"]
+      "extra-files": ["version.txt"],
+      "include-component-in-tag": false
     }
   }
 }
