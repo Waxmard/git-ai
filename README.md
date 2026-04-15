@@ -2,6 +2,19 @@
 
 LLM-powered git workflow tools. Generate commit messages and PR titles using Claude, Gemini, or Codex from the CLI, Lazygit, and other git environments that expose normal Git state.
 
+## Install
+
+```bash
+npm install -g @waxmard/git-ai
+```
+
+Or clone and symlink for local development:
+
+```bash
+make install   # symlinks to ~/.local/bin and ~/.local/lib; edits are live
+make uninstall
+```
+
 ## Prerequisites
 
 At least one provider must be available:
@@ -28,73 +41,51 @@ git-ai tries these in order until one succeeds:
    - `gcloud auth application-default login`
    - or set `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json`
 
-## Install
-
-```bash
-make install
-```
-
-This creates symlinks in `~/.local/bin` and `~/.local/lib`. Edits to the repo are live immediately.
-
-To uninstall:
-
-```bash
-make uninstall
-```
-
 ## Commands
 
-### ai-commit-gen
+Both `git-ai` and `aigit` work identically — use whichever you prefer.
+
+### commit
 
 Generate a commit message from staged changes.
 
 ```bash
-ai-commit-gen [claude|gemini|codex] [tier]
+git-ai commit [claude|gemini|codex] [tier]
 ```
 
 - Reads `git diff --staged` and produces a Conventional Commits message
 - Includes a description body for non-trivial changes
 - Default provider: `gemini`
 - Default tiers: `haiku`, `flash-lite`, `mini` (lightweight models for speed)
-- Works anywhere you can stage changes, including Lazygit and similar git UIs
+- Pass `last` as the provider to reuse the previously generated message
 
-### ai-pr-title
+### pr
 
 Generate a PR title and body from the current branch.
 
 ```bash
-ai-pr-title [claude|gemini|codex] [tier] [--base <branch>]
+git-ai pr [claude|gemini|codex] [tier] [--base <branch>] [--fresh]
+git-ai mr [...]   # alias for pr
 ```
 
-- Reads both the commit log and diff against the base branch
-- Produces a Conventional Commits title + markdown body
+- Reads the commit log and diff against the base branch
+- Produces a Conventional Commits title + markdown body with a `### Test Plan` section
 - Auto-detects the base branch from the remote default (falls back to `main`)
 - Use `--base` to override (e.g. `--base dev`)
-- Default provider: `gemini`
-- Works from any git environment where the current branch is ahead of the base branch
+- Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
+- Use `--fresh` to ignore the saved output and regenerate from scratch
+- Default provider: `gemini` (defaults to `pro`/`opus` tier — stronger models for PR-level summaries)
 
-### ai-provider-menu
+### providers / tiers
 
-List providers ordered by last-used, for Lazygit custom menu integration.
+List available providers and tiers, ordered by last-used. Primarily for Lazygit integration.
 
-```bash
-ai-provider-menu <tool-name>
-```
-
-### ai-tier-menu
-
-List model tiers ordered by last-used, for Lazygit custom menu integration.
+`last` is only a commit provider option; PR refinement reuses cached prior output automatically.
 
 ```bash
-ai-tier-menu <provider> [tool-name]
+git-ai providers [commit|pr]
+git-ai tiers <provider> [commit|pr]
 ```
-
-## Compatibility
-
-These tools do not depend on a specific terminal UI. They work in the CLI, in Lazygit, and in similar git environments as long as Git exposes the required repository state:
-
-- `ai-commit-gen` needs staged changes from `git diff --staged`
-- `ai-pr-title` needs commits and diff data relative to a base branch
 
 ## Providers
 
@@ -108,4 +99,39 @@ These tools do not depend on a specific terminal UI. They work in the CLI, in La
 | `codex` | `mini` | gpt-5.4-mini | Codex CLI login, or `OPENAI_API_KEY` |
 | `codex` | `standard` | gpt-5.4 | Codex CLI login, or `OPENAI_API_KEY` |
 
-Last-used provider and tier are saved per repo (stored in `.git/`), so repeated runs remember your selection.
+Last-used provider and tier are saved per repo in `.git/`, so repeated runs remember your selection.
+
+## Lazygit integration
+
+Add to `~/.config/lazygit/config.yml`:
+
+```yaml
+customCommands:
+  - key: "<c-g>"
+    description: "AI commit message"
+    command: 'git commit -m "$(git-ai commit {{.Form.Provider}} {{.Form.Tier}})" --edit'
+    context: "files"
+    prompts:
+      - type: "menuFromCommand"
+        title: "Select AI Provider"
+        key: "Provider"
+        command: "git-ai providers commit"
+        filter: '(?P<value>[^|]+)\|(?P<label>.+)'
+        valueFormat: '{{ .value }}'
+        labelFormat: '{{ .label }}'
+      - type: "menuFromCommand"
+        title: "Select Model Tier"
+        key: "Tier"
+        command: "git-ai tiers {{.Form.Provider}} commit"
+        filter: '(?P<value>[^|]+)\|(?P<label>.+)'
+        valueFormat: '{{ .value }}'
+        labelFormat: '{{ .label }}'
+    output: terminal
+```
+
+## Compatibility
+
+git-ai does not depend on a specific terminal UI. It works in the CLI, in Lazygit, and in similar git environments as long as Git exposes the required repository state:
+
+- `git-ai commit` needs staged changes (`git diff --staged`)
+- `git-ai pr` needs commits and diff data relative to a base branch

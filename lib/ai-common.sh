@@ -67,13 +67,6 @@ save_last_message() {
 }
 
 load_gemini_env() {
-  local private_env_file="${HOME}/.zsh-private"
-
-  if [[ -r "$private_env_file" ]]; then
-    # shellcheck disable=SC1090
-    source "$private_env_file"
-  fi
-
   if [[ -n "${GOOGLE_CLOUD_PROJECT:-}" ]]; then
     export GOOGLE_CLOUD_PROJECT
     export GOOGLE_VERTEX_PROJECT="${GOOGLE_VERTEX_PROJECT:-$GOOGLE_CLOUD_PROJECT}"
@@ -213,7 +206,9 @@ order_by_recent() {
   shift
   printf '%s\n' "$last"
   for item in "$@"; do
-    [[ "$item" != "$last" ]] && printf '%s\n' "$item"
+    if [[ "$item" != "$last" ]]; then
+      printf '%s\n' "$item"
+    fi
   done
 }
 
@@ -229,6 +224,7 @@ list_providers() {
 
     local git_dir
     git_dir=$(git rev-parse --git-dir 2>/dev/null) && \
+      [[ "$tool_name" == "commit" ]] && \
       [[ -r "${git_dir}/${tool_name}-last-message" ]] && \
       all=("${all[@]}" last)
   fi
@@ -286,9 +282,9 @@ resolve_model() {
   fi
 
   case "${tool_name}:${provider}" in
-    ai-pr-title:claude) printf '%s\n' "claude-opus-4-6" ;;
-    ai-pr-title:gemini) printf '%s\n' "gemini-3.1-pro-preview" ;;
-    ai-pr-title:codex)  printf '%s\n' "gpt-5.4" ;;
+    pr:claude) printf '%s\n' "claude-opus-4-6" ;;
+    pr:gemini) printf '%s\n' "gemini-3.1-pro-preview" ;;
+    pr:codex)  printf '%s\n' "gpt-5.4" ;;
     *:claude) printf '%s\n' "claude-haiku-4-5-20251001" ;;
     *:gemini) printf '%s\n' "gemini-3.1-flash-lite-preview" ;;
     *:codex)  printf '%s\n' "gpt-5.4-mini" ;;
@@ -299,7 +295,7 @@ _run_anthropic_api() {
   local model="$1"
   local prompt="$2"
   local input="$3"
-  local body response
+  local body response curl_cfg
   body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
     python3 -c '
 import json, os
@@ -310,12 +306,17 @@ print(json.dumps({
   "messages": [{"role": "user", "content": os.environ["GIT_AI_INPUT"]}]
 }))
 ') || die "Failed to build Anthropic API request"
+  curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  printf 'header = "x-api-key: %s"\n' "$ANTHROPIC_API_KEY" > "$curl_cfg"
   response=$(curl -sf \
-    -H "x-api-key: $ANTHROPIC_API_KEY" \
+    -K "$curl_cfg" \
     -H "anthropic-version: 2023-06-01" \
     -H "content-type: application/json" \
     -d "$body" \
-    "https://api.anthropic.com/v1/messages") || die "Anthropic API request failed"
+    "https://api.anthropic.com/v1/messages")
+  local curl_status=$?
+  rm -f "$curl_cfg"
+  [[ $curl_status -eq 0 ]] || die "Anthropic API request failed"
   python3 -c '
 import json, sys
 data = json.loads(sys.stdin.read())
@@ -327,7 +328,7 @@ _run_openai_api() {
   local model="$1"
   local prompt="$2"
   local input="$3"
-  local body response
+  local body response curl_cfg
   body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
     python3 -c '
 import json, os
@@ -339,11 +340,16 @@ print(json.dumps({
   ]
 }))
 ') || die "Failed to build OpenAI API request"
+  curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  printf 'header = "Authorization: Bearer %s"\n' "$OPENAI_API_KEY" > "$curl_cfg"
   response=$(curl -sf \
-    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -K "$curl_cfg" \
     -H "content-type: application/json" \
     -d "$body" \
-    "https://api.openai.com/v1/chat/completions") || die "OpenAI API request failed"
+    "https://api.openai.com/v1/chat/completions")
+  local curl_status=$?
+  rm -f "$curl_cfg"
+  [[ $curl_status -eq 0 ]] || die "OpenAI API request failed"
   python3 -c '
 import json, sys
 data = json.loads(sys.stdin.read())
@@ -380,6 +386,7 @@ run_provider() {
       local gemini_err_file
       gemini_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-gemini.XXXXXX") ||
         die "failed to create temporary error file"
+      trap 'rm -f "$gemini_err_file"' EXIT
       local gemini_bin
       gemini_bin=$(resolve_gemini_bin) || die "Gemini CLI not found. Set GEMINI_BIN or add gemini to PATH."
       local gemini_api_key
@@ -418,6 +425,7 @@ run_provider() {
           die "failed to create temporary output file"
         codex_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex-err.XXXXXX") ||
           die "failed to create temporary error file"
+        trap 'rm -f "$codex_output_file" "$codex_err_file"' EXIT
         codex exec --model "$model" --output-last-message "$codex_output_file" "$prompt
 
 $input" >/dev/null 2>"$codex_err_file" || {
