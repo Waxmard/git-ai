@@ -59,3 +59,46 @@ teardown() {
   assert_success
   assert_output "new content"
 }
+
+@test "load_cached_pr_sha: returns failure when no sha file exists" {
+  run load_cached_pr_sha "$GIT_DIR" "feature/new" "main"
+  assert_failure
+}
+
+@test "load_cached_pr_sha: returns failure for existing cache without sha" {
+  save_cached_pr "$GIT_DIR" "feature/new" "main" "some output"
+  run load_cached_pr_sha "$GIT_DIR" "feature/new" "main"
+  assert_failure
+}
+
+@test "save_cached_pr + load_cached_pr_sha: round-trips sha" {
+  save_cached_pr "$GIT_DIR" "feature/new" "main" "some output" "abc123def456"
+  run load_cached_pr_sha "$GIT_DIR" "feature/new" "main"
+  assert_success
+  assert_output "abc123def456"
+}
+
+@test "save_cached_pr: sha isolated per branch" {
+  save_cached_pr "$GIT_DIR" "feature/a" "main" "output a" "sha-for-a"
+  save_cached_pr "$GIT_DIR" "feature/b" "main" "output b" "sha-for-b"
+  run load_cached_pr_sha "$GIT_DIR" "feature/a" "main"
+  assert_output "sha-for-a"
+  run load_cached_pr_sha "$GIT_DIR" "feature/b" "main"
+  assert_output "sha-for-b"
+}
+
+@test "save_cached_pr: sha isolated per base branch" {
+  save_cached_pr "$GIT_DIR" "feature/x" "main" "output main" "sha-main"
+  save_cached_pr "$GIT_DIR" "feature/x" "develop" "output develop" "sha-develop"
+  run load_cached_pr_sha "$GIT_DIR" "feature/x" "main"
+  assert_output "sha-main"
+  run load_cached_pr_sha "$GIT_DIR" "feature/x" "develop"
+  assert_output "sha-develop"
+}
+
+@test "save_cached_pr: overwrites existing sha" {
+  save_cached_pr "$GIT_DIR" "feature/new" "main" "output" "old-sha"
+  save_cached_pr "$GIT_DIR" "feature/new" "main" "output" "new-sha"
+  run load_cached_pr_sha "$GIT_DIR" "feature/new" "main"
+  assert_output "new-sha"
+}

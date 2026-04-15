@@ -38,17 +38,32 @@ load_cached_pr() {
   cat "$cache_file"
 }
 
+load_cached_pr_sha() {
+  local git_dir="$1"
+  local branch_name="$2"
+  local base_branch="$3"
+  local cache_file sha_file
+  cache_file=$(branch_cache_path "$git_dir" "$branch_name" "$base_branch") || return 1
+  sha_file="$(dirname "$cache_file")/last-head-sha"
+  [[ -r "$sha_file" ]] || return 1
+  cat "$sha_file"
+}
+
 save_cached_pr() {
   local git_dir="$1"
   local branch_name="$2"
   local base_branch="$3"
   local output="$4"
+  local head_sha="${5:-}"
   local cache_file cache_dir
 
   cache_file=$(branch_cache_path "$git_dir" "$branch_name" "$base_branch") || return 1
   cache_dir=$(dirname "$cache_file")
   mkdir -p "$cache_dir" || return 1
   printf '%s\n' "$output" >"$cache_file"
+  if [[ -n "$head_sha" ]]; then
+    printf '%s\n' "$head_sha" >"${cache_dir}/last-head-sha"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -158,9 +173,6 @@ cmd_pr() {
   LOG=$(git log --format="GITAI_COMMIT %s%n%b" "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
   [[ -z "$LOG" ]] && die "no commits ahead of $BASE"
 
-  local DIFF_STAT
-  DIFF_STAT=$(git diff --stat "$BASE"...HEAD 2>/dev/null) || die "failed to read diff stat against $BASE"
-
   # Count how many commits follow conventional commit format (subject lines only)
   local CONVENTIONAL_COUNT=0
   local TOTAL_COUNT=0
@@ -175,6 +187,33 @@ cmd_pr() {
         CONVENTIONAL_COUNT=$((CONVENTIONAL_COUNT + 1)) ;;
     esac
   done <<< "$LOG"
+
+  # Load cached PR and SHA if available (not --fresh)
+  local EXISTING="" CACHED_SHA=""
+  if [[ "$FRESH" != "true" && -n "$CURRENT_BRANCH" ]]; then
+    EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
+    CACHED_SHA=$(load_cached_pr_sha "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
+  fi
+
+  # Use cached SHA as input base for incremental mode; falls back to BASE if SHA is
+  # missing or no longer in repo (e.g. after rebase/force-push)
+  local INPUT_BASE="$BASE"
+  if [[ -n "$CACHED_SHA" ]] && git cat-file -e "${CACHED_SHA}^{commit}" 2>/dev/null; then
+    INPUT_BASE="$CACHED_SHA"
+  fi
+
+  # Narrow LOG to new commits only when incremental (CONVENTIONAL_COUNT already from full log)
+  if [[ "$INPUT_BASE" != "$BASE" ]]; then
+    LOG=$(git log --format="GITAI_COMMIT %s%n%b" "${INPUT_BASE}..HEAD" 2>/dev/null) || LOG=""
+  fi
+
+  # Three-dot merge-base diff for full range; two-dot exact range for incremental
+  local DIFF_STAT
+  if [[ "$INPUT_BASE" == "$BASE" ]]; then
+    DIFF_STAT=$(git diff --stat "$BASE"...HEAD 2>/dev/null) || die "failed to read diff stat against $BASE"
+  else
+    DIFF_STAT=$(git diff --stat "${INPUT_BASE}..HEAD" 2>/dev/null) || die "failed to read diff stat since last generation"
+  fi
 
   local PROMPT INPUT
 
@@ -229,7 +268,11 @@ $DIFF_STAT
   else
     # Fallback: commits don't consistently use conventional format — pass diff directly
     local DIFF
-    DIFF=$(git diff -U0 "$BASE"...HEAD 2>/dev/null) || die "failed to read diff against $BASE"
+    if [[ "$INPUT_BASE" == "$BASE" ]]; then
+      DIFF=$(git diff -U0 "$BASE"...HEAD 2>/dev/null) || die "failed to read diff against $BASE"
+    else
+      DIFF=$(git diff -U0 "${INPUT_BASE}..HEAD" 2>/dev/null) || die "failed to read diff since last generation"
+    fi
     PROMPT="$PROMPT_FALLBACK"
     # Strip GITAI_COMMIT prefix so the LLM sees a clean commit log
     INPUT="<commit_log>
@@ -241,11 +284,6 @@ $DIFF_STAT
 <diff>
 $DIFF
 </diff>"
-  fi
-
-  local EXISTING=""
-  if [[ "$FRESH" != "true" && -n "$CURRENT_BRANCH" ]]; then
-    EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
   fi
 
   if [[ -n "${EXISTING:-}" ]]; then
@@ -280,8 +318,10 @@ ${INPUT}"
   local OUTPUT
   OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
   save_last_message pr "$OUTPUT"
+  local HEAD_SHA
+  HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || HEAD_SHA=""
   if [[ -n "$CURRENT_BRANCH" ]]; then
-    save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" ||
+    save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" ||
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
   printf '%s\n' "$OUTPUT"
