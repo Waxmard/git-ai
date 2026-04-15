@@ -19,14 +19,7 @@ jobs:
           token: ${{ secrets.GIT_AI_RELEASE_PLEASE_TOKEN }}
 
       - name: Auto-merge release PR
-        run: |
-          PR_NUMBER=$(gh pr list \
-            --repo "${{ github.repository }}" \
-            --label "autorelease: pending" \
-            --json number \
-            --jq '.[0].number')
-          if [ -n "$PR_NUMBER" ]; then
-            gh pr merge --rebase --auto --repo "${{ github.repository }}" "$PR_NUMBER"
-          fi
+        if: steps.release.outputs.pr != ''
+        run: gh pr merge --rebase --auto --repo "${{ github.repository }}" "${{ fromJSON(steps.release.outputs.pr).number }}"
         env:
           GH_TOKEN: ${{ secrets.GIT_AI_RELEASE_PLEASE_TOKEN }}
