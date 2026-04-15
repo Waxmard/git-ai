@@ -286,9 +286,9 @@ resolve_model() {
   fi
 
   case "${tool_name}:${provider}" in
-    ai-pr-title:claude) printf '%s\n' "claude-opus-4-6" ;;
-    ai-pr-title:gemini) printf '%s\n' "gemini-3.1-pro-preview" ;;
-    ai-pr-title:codex)  printf '%s\n' "gpt-5.4" ;;
+    pr:claude) printf '%s\n' "claude-opus-4-6" ;;
+    pr:gemini) printf '%s\n' "gemini-3.1-pro-preview" ;;
+    pr:codex)  printf '%s\n' "gpt-5.4" ;;
     *:claude) printf '%s\n' "claude-haiku-4-5-20251001" ;;
     *:gemini) printf '%s\n' "gemini-3.1-flash-lite-preview" ;;
     *:codex)  printf '%s\n' "gpt-5.4-mini" ;;

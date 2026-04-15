@@ -10,10 +10,8 @@
   },
   "homepage": "https://github.com/Waxmard/git-ai#readme",
   "bin": {
-    "ai-commit-gen": "bin/ai-commit-gen",
-    "ai-pr-title": "bin/ai-pr-title",
-    "ai-provider-menu": "bin/ai-provider-menu",
-    "ai-tier-menu": "bin/ai-tier-menu"
+    "git-ai": "bin/git-ai",
+    "aigit": "bin/aigit"
   },
   "files": ["bin/", "lib/", "README.md", "CHANGELOG.md"],
   "engines": { "node": ">=14" }
