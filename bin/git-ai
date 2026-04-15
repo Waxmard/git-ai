@@ -207,6 +207,13 @@ cmd_pr() {
     LOG=$(git log --format="GITAI_COMMIT %s%n%b" "${INPUT_BASE}..HEAD" 2>/dev/null) || LOG=""
   fi
 
+  # No new commits since last generation — output cached PR directly, skip LLM call
+  if [[ -n "$EXISTING" && -z "$LOG" && "$INPUT_BASE" != "$BASE" ]]; then
+    echo "git-ai: no new commits since last generation, using cached output (use --fresh to regenerate)" >&2
+    printf '%s\n' "$EXISTING"
+    return 0
+  fi
+
   # Three-dot merge-base diff for full range; two-dot exact range for incremental
   local DIFF_STAT
   if [[ "$INPUT_BASE" == "$BASE" ]]; then
