@@ -1,0 +1,20 @@
+#!/bin/bash
+# Tracked at hooks/pre-commit. Install: make hooks (or make install).
+
+set -o pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+echo "==> pre-commit: lint..."
+if ! make -C "$REPO_ROOT" lint; then
+  echo "pre-commit: lint failed — commit aborted." >&2
+  exit 1
+fi
+
+echo "==> pre-commit: tests..."
+if ! make -C "$REPO_ROOT" test; then
+  echo "pre-commit: tests failed — commit aborted." >&2
+  exit 1
+fi
+
+echo "==> pre-commit: all checks passed."

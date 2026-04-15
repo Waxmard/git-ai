@@ -1,7 +1,7 @@
 PREFIX ?= $(HOME)/.local
 BATS := node_modules/.bin/bats
 
-.PHONY: install uninstall lint test
+.PHONY: install uninstall lint test hooks
 
 test: $(BATS)
 	$(BATS) --recursive test/
@@ -11,13 +11,18 @@ $(BATS):
 
 lint:
 	shellcheck -x lib/*.sh
-	@for f in bin/*; do \
+	@for f in bin/* hooks/*; do \
 		if head -1 "$$f" | grep -q '^#!.*bash'; then \
 			shellcheck -x "$$f"; \
 		fi; \
 	done
 
-install:
+hooks:
+	@chmod +x $(CURDIR)/hooks/pre-commit
+	@ln -sf $(CURDIR)/hooks/pre-commit $(CURDIR)/.git/hooks/pre-commit
+	@echo "Installed pre-commit hook"
+
+install: hooks
 	@mkdir -p $(PREFIX)/bin $(PREFIX)/lib
 	@ln -sf $(CURDIR)/bin/git-ai $(PREFIX)/bin/git-ai
 	@ln -sf $(CURDIR)/bin/aigit $(PREFIX)/bin/aigit
