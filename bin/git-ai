@@ -80,12 +80,14 @@ cmd_commit() {
   LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
   if [[ -n "$LAST_TAG" ]]; then
     COMMITS_SINCE=$(git rev-list --count "${LAST_TAG}..HEAD" 2>/dev/null || echo "?")
-    RELEASE_CONTEXT="[Release context: last tag ${LAST_TAG}, ${COMMITS_SINCE} commits since — staged changes are unreleased]"
+    RELEASE_CONTEXT="Release context: last tag ${LAST_TAG}, ${COMMITS_SINCE} commits since — staged changes are unreleased"
   else
-    RELEASE_CONTEXT="[Release context: no release tags found — treat all changes as unreleased]"
+    RELEASE_CONTEXT="Release context: no release tags found — treat all changes as unreleased"
   fi
 
-  INPUT="${RELEASE_CONTEXT}"$'\n\n'"${STAGED_DIFF}"
+  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"$'\n\n'"<diff>
+${STAGED_DIFF}
+</diff>"
 
   generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
   save_last_message commit "$generated"
@@ -126,16 +128,16 @@ cmd_pr() {
   done
 
   # shellcheck disable=SC2016
-  local PROMPT_TWO_PASS='Given an auto-generated PR body draft (grouped from conventional commit messages) and a list of changed files, write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Keep the same section groupings from the draft (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries in the draft may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
+  local PROMPT_TWO_PASS='Given an auto-generated PR body draft in <draft> (grouped from conventional commit messages) and a list of changed files in <changed_files>, write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Keep the same section groupings from the draft (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries in the draft may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
 
   # shellcheck disable=SC2016
-  local PROMPT_FALLBACK='Generate a pull request title and body. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
+  local PROMPT_FALLBACK='Generate a pull request title and body from the commit log in <commit_log>, changed files in <changed_files>, and full diff in <diff>. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
 
   # shellcheck disable=SC2016
-  local PROMPT_TWO_PASS_UPDATE='An existing PR title and body are provided, along with an auto-generated draft of the new commits (grouped from conventional commit messages) and a list of changed files. Update the PR title and body to reflect new commits. Default to preserving existing wording — only rephrase when new content genuinely conflicts with or makes existing text inaccurate. Write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Keep the same section groupings (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
+  local PROMPT_TWO_PASS_UPDATE='An existing PR title and body are provided in <existing_pr>, along with an auto-generated draft of the new commits in <draft> (grouped from conventional commit messages) and a list of changed files in <changed_files>. Update the PR title and body to reflect new commits. Default to preserving existing wording — only rephrase when new content genuinely conflicts with or makes existing text inaccurate. Write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Keep the same section groupings (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
 
   # shellcheck disable=SC2016
-  local PROMPT_FALLBACK_UPDATE='An existing PR title and body are provided, along with the full commit log, changed files, and diff for the current branch. Update the PR title and body to reflect new commits. Default to preserving existing wording — only rephrase when new content genuinely conflicts with or makes existing text inaccurate. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
+  local PROMPT_FALLBACK_UPDATE='An existing PR title and body are provided in <existing_pr>, along with the full commit log in <commit_log>, changed files in <changed_files>, and diff in <diff> for the current branch. Update the PR title and body to reflect new commits. Default to preserving existing wording — only rephrase when new content genuinely conflicts with or makes existing text inaccurate. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
 
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
   local GIT_DIR
@@ -217,10 +219,12 @@ cmd_pr() {
     done
 
     PROMPT="$PROMPT_TWO_PASS"
-    INPUT="Auto-generated draft (grouped from conventional commit messages):
+    INPUT="<draft>
 $DRAFT_BODY
-Changed files:
-$DIFF_STAT"
+</draft>
+<changed_files>
+$DIFF_STAT
+</changed_files>"
 
   else
     # Fallback: commits don't consistently use conventional format — pass diff directly
@@ -228,14 +232,15 @@ $DIFF_STAT"
     DIFF=$(git diff -U0 "$BASE"...HEAD 2>/dev/null) || die "failed to read diff against $BASE"
     PROMPT="$PROMPT_FALLBACK"
     # Strip GITAI_COMMIT prefix so the LLM sees a clean commit log
-    INPUT="Commit log:
+    INPUT="<commit_log>
 $(printf '%s\n' "$LOG" | sed 's/^GITAI_COMMIT //')
-
-Changed files:
+</commit_log>
+<changed_files>
 $DIFF_STAT
-
-Diff:
-$DIFF"
+</changed_files>
+<diff>
+$DIFF
+</diff>"
   fi
 
   local EXISTING=""
@@ -245,10 +250,9 @@ $DIFF"
 
   if [[ -n "${EXISTING:-}" ]]; then
     echo "git-ai: updating existing PR draft for ${CURRENT_BRANCH} (use --fresh to regenerate)" >&2
-    INPUT="Existing PR title and body:
+    INPUT="<existing_pr>
 ${EXISTING}
-
----
+</existing_pr>
 
 ${INPUT}"
     if (( TOTAL_COUNT > 0 && CONVENTIONAL_COUNT * 2 >= TOTAL_COUNT )); then
@@ -267,11 +271,11 @@ ${INPUT}"
       local MAJOR="${BASH_REMATCH[1]}" MINOR="${BASH_REMATCH[2]}" PATCH="${BASH_REMATCH[3]}"
       SEMVER_CONTEXT=". Next release: breaking→v$((MAJOR+1)).0.0, feature→v${MAJOR}.$((MINOR+1)).0, fix→v${MAJOR}.${MINOR}.$((PATCH+1))"
     fi
-    RELEASE_CONTEXT="[Release context: current version ${LAST_TAG}, ${COMMITS_SINCE} commits since last release${SEMVER_CONTEXT}]"
+    RELEASE_CONTEXT="Release context: current version ${LAST_TAG}, ${COMMITS_SINCE} commits since last release${SEMVER_CONTEXT}"
   else
-    RELEASE_CONTEXT="[Release context: no release tags found — treat all changes as unreleased]"
+    RELEASE_CONTEXT="Release context: no release tags found — treat all changes as unreleased"
   fi
-  INPUT="${RELEASE_CONTEXT}"$'\n\n'"${INPUT}"
+  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"$'\n\n'"${INPUT}"
 
   local OUTPUT
   OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
