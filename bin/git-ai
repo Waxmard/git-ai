@@ -244,6 +244,7 @@ $DIFF"
   fi
 
   if [[ -n "${EXISTING:-}" ]]; then
+    echo "git-ai: updating existing PR draft for ${CURRENT_BRANCH} (use --fresh to regenerate)" >&2
     INPUT="Existing PR title and body:
 ${EXISTING}
 
