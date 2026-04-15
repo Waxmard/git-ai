@@ -1,7 +1,7 @@
 #!/bin/bash
 set -o pipefail
 # ai-pr-title - Generate PR titles and bodies using Claude, Gemini, or Codex
-# Usage: ai-pr-title [claude|gemini|codex] [tier] [--base <branch>] [--no-test-plan]
+# Usage: ai-pr-title [claude|gemini|codex] [tier] [--base <branch>] [--fresh]
 # Recommended tiers: claude sonnet/opus, gemini pro — weaker tiers (haiku, flash-lite)
 # may not follow grouping instructions reliably.
 
@@ -12,7 +12,7 @@ source "${SCRIPT_DIR}/../lib/ai-common.sh"
 PROVIDER=$(get_last_provider ai-pr-title)
 MODEL_TIER=""
 BASE=""
-TEST_PLAN=true
+FRESH=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -20,8 +20,8 @@ while [[ $# -gt 0 ]]; do
       BASE="$2"
       shift 2
       ;;
-    --no-test-plan)
-      TEST_PLAN=false
+    --fresh)
+      FRESH=true
       shift
       ;;
     claude|gemini|codex)
@@ -40,13 +40,55 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-PROMPT_TWO_PASS="Given an auto-generated PR body draft (grouped from conventional commit messages) and a list of changed files, write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. If the renamed or removed interface was introduced after the last tag (i.e., it appears in this PR's changes but was not present at the last release), it has never shipped to consumers and cannot be a breaking change — omit !. Keep the same section groupings from the draft (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries in the draft may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Phrase each bullet as a practical outcome from the reader's perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. Output ONLY the title and body. Do not wrap in code blocks or backticks."
+PROMPT_TWO_PASS="Given an auto-generated PR body draft (grouped from conventional commit messages) and a list of changed files, write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. If the renamed or removed interface was introduced after the last tag (i.e., it appears in this PR's changes but was not present at the last release), it has never shipped to consumers and cannot be a breaking change — omit !. Keep the same section groupings from the draft (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries in the draft may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Phrase each bullet as a practical outcome from the reader's perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks."
 
-PROMPT_FALLBACK="Generate a pull request title and body. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. If the renamed or removed interface was introduced after the last tag (i.e., it appears in this PR's changes but was not present at the last release), it has never shipped to consumers and cannot be a breaking change — omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Phrase each bullet as a practical outcome from the reader's perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. Output ONLY the title and body. Do not wrap in code blocks or backticks."
+PROMPT_FALLBACK="Generate a pull request title and body. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. If the renamed or removed interface was introduced after the last tag (i.e., it appears in this PR's changes but was not present at the last release), it has never shipped to consumers and cannot be a breaking change — omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Phrase each bullet as a practical outcome from the reader's perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks."
 
-TEST_PLAN_SUFFIX=" After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work."
+PROMPT_TWO_PASS_UPDATE="An existing PR title and body are provided, along with an auto-generated draft of the new commits (grouped from conventional commit messages) and a list of changed files. Update the PR title and body to incorporate the new commits while preserving the overall intent and structure of the existing description. Write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. If the renamed or removed interface was introduced after the last tag (i.e., it appears in this PR's changes but was not present at the last release), it has never shipped to consumers and cannot be a breaking change — omit !. Keep the same section groupings (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Phrase each bullet as a practical outcome from the reader's perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks."
+
+PROMPT_FALLBACK_UPDATE="An existing PR title and body are provided, along with the full commit log, changed files, and diff for the current branch. Update the PR title and body to incorporate any new commits while preserving the overall intent and structure of the existing description. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) ONLY for changes that break backward compatibility — removed or renamed public interface, changed required arguments, or incompatible behavior change. When in doubt, omit !. If the renamed or removed interface was introduced after the last tag (i.e., it appears in this PR's changes but was not present at the last release), it has never shipped to consumers and cannot be a breaking change — omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Phrase each bullet as a practical outcome from the reader's perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks."
+
+current_branch_name() {
+  local branch
+  branch=$(git branch --show-current 2>/dev/null) || return 1
+  [[ -n "$branch" ]] || return 1
+  printf '%s\n' "$branch"
+}
+
+branch_cache_path() {
+  local git_dir="$1"
+  local branch_name="$2"
+  printf '%s\n' "${git_dir}/ai-pr-title-cache/${branch_name}/last-output"
+}
+
+load_cached_pr() {
+  local git_dir="$1"
+  local branch_name="$2"
+  local cache_file
+  cache_file=$(branch_cache_path "$git_dir" "$branch_name")
+  [[ -r "$cache_file" ]] || return 1
+  cat "$cache_file"
+}
+
+save_cached_pr() {
+  local git_dir="$1"
+  local branch_name="$2"
+  local output="$3"
+  local cache_file cache_dir
+
+  cache_file=$(branch_cache_path "$git_dir" "$branch_name")
+  cache_dir=$(dirname "$cache_file")
+  mkdir -p "$cache_dir" || return 1
+  printf '%s\n' "$output" >"$cache_file"
+}
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
+GIT_DIR=$(git rev-parse --git-dir)
+
+CURRENT_BRANCH=""
+if CURRENT_BRANCH=$(current_branch_name); then
+  :
+fi
 
 if [[ -z "$BASE" ]]; then
   BASE=$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p')
@@ -132,7 +174,23 @@ Diff:
 $DIFF"
 fi
 
-[[ "$TEST_PLAN" == "true" ]] && PROMPT="${PROMPT}${TEST_PLAN_SUFFIX}"
+if [[ "$FRESH" != "true" && -n "$CURRENT_BRANCH" ]]; then
+  EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" || true)
+fi
+
+if [[ -n "${EXISTING:-}" ]]; then
+  INPUT="Existing PR title and body:
+${EXISTING}
+
+---
+
+${INPUT}"
+  if (( TOTAL_COUNT > 0 && CONVENTIONAL_COUNT * 2 >= TOTAL_COUNT )); then
+    PROMPT="$PROMPT_TWO_PASS_UPDATE"
+  else
+    PROMPT="$PROMPT_FALLBACK_UPDATE"
+  fi
+fi
 
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 if [[ -n "$LAST_TAG" ]]; then
@@ -143,4 +201,9 @@ else
 fi
 INPUT="${RELEASE_CONTEXT}"$'\n\n'"${INPUT}"
 
-run_provider ai-pr-title "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER"
+OUTPUT=$(run_provider ai-pr-title "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
+save_last_message ai-pr-title "$OUTPUT"
+if [[ -n "$CURRENT_BRANCH" ]]; then
+  save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$OUTPUT" || die "failed to save PR cache for branch ${CURRENT_BRANCH}"
+fi
+printf '%s\n' "$OUTPUT"

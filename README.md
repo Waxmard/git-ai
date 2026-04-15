@@ -63,13 +63,16 @@ ai-commit-gen [claude|gemini|codex] [tier]
 Generate a PR title and body from the current branch.
 
 ```bash
-ai-pr-title [claude|gemini|codex] [tier] [--base <branch>]
+ai-pr-title [claude|gemini|codex] [tier] [--base <branch>] [--fresh]
 ```
 
 - Reads both the commit log and diff against the base branch
 - Produces a Conventional Commits title + markdown body
+- Always includes a `### Test Plan` section
 - Auto-detects the base branch from the remote default (falls back to `main`)
 - Use `--base` to override (e.g. `--base dev`)
+- Reuses the last generated PR title/body for the current branch when available
+- Use `--fresh` to ignore the saved PR output for the current branch and regenerate from branch state only
 - Default provider: `gemini`
 - Works from any git environment where the current branch is ahead of the base branch
 
@@ -108,4 +111,4 @@ These tools do not depend on a specific terminal UI. They work in the CLI, in La
 | `codex` | `mini` | gpt-5.4-mini | Codex CLI login, or `OPENAI_API_KEY` |
 | `codex` | `standard` | gpt-5.4 | Codex CLI login, or `OPENAI_API_KEY` |
 
-Last-used provider and tier are saved per repo (stored in `.git/`), so repeated runs remember your selection.
+Last-used provider and tier are saved per repo (stored in `.git/`), so repeated runs remember your selection. `ai-pr-title` also saves the last generated PR output per branch under `.git/ai-pr-title-cache/` so subsequent runs on the same branch can refine the previous title/body automatically.
