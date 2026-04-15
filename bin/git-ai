@@ -21,14 +21,19 @@ current_branch_name() {
 branch_cache_path() {
   local git_dir="$1"
   local branch_name="$2"
-  printf '%s\n' "${git_dir}/pr-cache/${branch_name}/last-output"
+  local base_branch="$3"
+  local cache_key
+
+  cache_key=$(printf '%s\n%s\n' "$branch_name" "$base_branch" | git hash-object --stdin) || return 1
+  printf '%s\n' "${git_dir}/pr-cache/${cache_key}/last-output"
 }
 
 load_cached_pr() {
   local git_dir="$1"
   local branch_name="$2"
+  local base_branch="$3"
   local cache_file
-  cache_file=$(branch_cache_path "$git_dir" "$branch_name")
+  cache_file=$(branch_cache_path "$git_dir" "$branch_name" "$base_branch") || return 1
   [[ -r "$cache_file" ]] || return 1
   cat "$cache_file"
 }
@@ -36,10 +41,11 @@ load_cached_pr() {
 save_cached_pr() {
   local git_dir="$1"
   local branch_name="$2"
-  local output="$3"
+  local base_branch="$3"
+  local output="$4"
   local cache_file cache_dir
 
-  cache_file=$(branch_cache_path "$git_dir" "$branch_name")
+  cache_file=$(branch_cache_path "$git_dir" "$branch_name" "$base_branch") || return 1
   cache_dir=$(dirname "$cache_file")
   mkdir -p "$cache_dir" || return 1
   printf '%s\n' "$output" >"$cache_file"
@@ -234,7 +240,7 @@ $DIFF"
 
   local EXISTING=""
   if [[ "$FRESH" != "true" && -n "$CURRENT_BRANCH" ]]; then
-    EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" || true)
+    EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
   fi
 
   if [[ -n "${EXISTING:-}" ]]; then
@@ -265,7 +271,8 @@ ${INPUT}"
   OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
   save_last_message pr "$OUTPUT"
   if [[ -n "$CURRENT_BRANCH" ]]; then
-    save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$OUTPUT" || die "failed to save PR cache for branch ${CURRENT_BRANCH}"
+    save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" ||
+      die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
   printf '%s\n' "$OUTPUT"
 }

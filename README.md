@@ -72,13 +72,15 @@ git-ai mr [...]   # alias for pr
 - Produces a Conventional Commits title + markdown body with a `### Test Plan` section
 - Auto-detects the base branch from the remote default (falls back to `main`)
 - Use `--base` to override (e.g. `--base dev`)
-- Saves the generated output per branch under `.git/pr-cache/`; subsequent runs on the same branch refine the previous result automatically
+- Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
 - Use `--fresh` to ignore the saved output and regenerate from scratch
 - Default provider: `gemini` (defaults to `pro`/`opus` tier — stronger models for PR-level summaries)
 
 ### providers / tiers
 
 List available providers and tiers, ordered by last-used. Primarily for Lazygit integration.
+
+`last` is only a commit provider option; PR refinement reuses cached prior output automatically.
 
 ```bash
 git-ai providers [commit|pr]

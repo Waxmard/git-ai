@@ -224,6 +224,7 @@ list_providers() {
 
     local git_dir
     git_dir=$(git rev-parse --git-dir 2>/dev/null) && \
+      [[ "$tool_name" == "commit" ]] && \
       [[ -r "${git_dir}/${tool_name}-last-message" ]] && \
       all=("${all[@]}" last)
   fi
