@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 _CONVENTIONAL_TYPES = frozenset(
     ["feat", "fix", "refactor", "docs", "chore", "ci", "test", "style", "perf", "build"]
+)
+
+DEFAULT_RELEASE_CONTEXT = (
+    "Release context: no release tags found — treat all changes as unreleased"
 )
 
 
@@ -55,9 +60,7 @@ def get_release_context(repo_path: str | Path) -> str:
         text=True,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        return (
-            "Release context: no release tags found — treat all changes as unreleased"
-        )
+        return DEFAULT_RELEASE_CONTEXT
 
     last_tag = result.stdout.strip()
     count = subprocess.run(
@@ -82,9 +85,7 @@ def get_mr_release_context(repo_path: str | Path) -> str:
         text=True,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        return (
-            "Release context: no release tags found — treat all changes as unreleased"
-        )
+        return DEFAULT_RELEASE_CONTEXT
 
     last_tag = result.stdout.strip()
     count = subprocess.run(
@@ -145,6 +146,92 @@ def count_conventional_commits(log: str) -> tuple[int, int]:
         if type_match and type_match.group(1) in _CONVENTIONAL_TYPES:
             conventional += 1
     return conventional, total
+
+
+def format_commit_log(commits: Iterable[tuple[str, str]]) -> str:
+    """Build a GITAI_COMMIT-prefixed log from (subject, body) pairs.
+
+    Produces the same shape as `git log --format=GITAI_COMMIT %s%n%b`.
+    """
+    parts: list[str] = []
+    for subject, body in commits:
+        parts.append(f"GITAI_COMMIT {subject}")
+        if body:
+            parts.append(body)
+    if not parts:
+        return ""
+    return "\n".join(parts) + "\n"
+
+
+_DIFF_FILE_HEADER = re.compile(r"^diff --git a/(?P<a>.+?) b/(?P<b>.+)$")
+
+
+def derive_diff_stat(diff: str) -> str:
+    """Derive a git-diff-stat-style summary from a raw unified diff string.
+
+    Output shape approximates `git diff --stat`: one line per file with change
+    count and a +/- bar, plus a summary footer. Binary files are reported with
+    "Bin" instead of counts.
+    """
+    files: list[tuple[str, int, int, bool]] = []
+    current_path: str | None = None
+    insertions = 0
+    deletions = 0
+    binary = False
+
+    def flush() -> None:
+        if current_path is not None:
+            files.append((current_path, insertions, deletions, binary))
+
+    for line in diff.splitlines():
+        header_match = _DIFF_FILE_HEADER.match(line)
+        if header_match:
+            flush()
+            current_path = header_match.group("b")
+            insertions = 0
+            deletions = 0
+            binary = False
+            continue
+        if current_path is None:
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+            binary = True
+            continue
+        if line.startswith("+"):
+            insertions += 1
+        elif line.startswith("-"):
+            deletions += 1
+    flush()
+
+    if not files:
+        return ""
+
+    max_path = max(len(p) for p, _, _, _ in files)
+    total_ins = sum(i for _, i, _, _ in files)
+    total_del = sum(d for _, _, d, _ in files)
+
+    lines: list[str] = []
+    for path, ins, dels, is_binary in files:
+        if is_binary:
+            lines.append(f" {path.ljust(max_path)} | Bin")
+            continue
+        total = ins + dels
+        bar = "+" * ins + "-" * dels
+        if len(bar) > 40:
+            scale = 40 / len(bar)
+            bar = "+" * max(1, int(ins * scale)) + "-" * max(1, int(dels * scale))
+        lines.append(f" {path.ljust(max_path)} | {total:>3} {bar}")
+
+    file_word = "file" if len(files) == 1 else "files"
+    pieces = [f"{len(files)} {file_word} changed"]
+    if total_ins:
+        pieces.append(f"{total_ins} insertion{'' if total_ins == 1 else 's'}(+)")
+    if total_del:
+        pieces.append(f"{total_del} deletion{'' if total_del == 1 else 's'}(-)")
+    lines.append(" " + ", ".join(pieces))
+    return "\n".join(lines)
 
 
 def build_draft_body(log: str) -> str:
