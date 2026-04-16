@@ -1,10 +1,16 @@
 PREFIX ?= $(HOME)/.local
 BATS := node_modules/.bin/bats
+UV ?= uv
+export UV_CACHE_DIR := .uv-cache
 
-.PHONY: install uninstall lint test hooks
+.PHONY: install uninstall lint test hooks sync py-format py-lint py-type-check py-test py-pre-commit
 
 test: $(BATS)
-	$(BATS) --recursive test/
+	@if command -v parallel >/dev/null 2>&1 || command -v rush >/dev/null 2>&1; then \
+		$(BATS) --jobs 4 --recursive test/; \
+	else \
+		$(BATS) --recursive test/; \
+	fi
 
 $(BATS):
 	npm ci
@@ -34,3 +40,23 @@ uninstall:
 	@rm -f $(PREFIX)/bin/aigit
 	@rm -f $(PREFIX)/lib/ai-common.sh
 	@echo "Uninstalled git-ai from $(PREFIX)"
+
+# Python targets
+sync:
+	$(UV) sync
+
+py-format:
+	$(UV) run ruff check python/ --fix --select F401,I
+	$(UV) run ruff format python/
+
+py-lint:
+	$(UV) run ruff check python/
+
+py-type-check:
+	$(UV) run mypy python/git_ai test/python
+
+py-test:
+	$(UV) run pytest
+
+py-pre-commit:
+	$(UV) run pre-commit run --all-files

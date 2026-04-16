@@ -1,0 +1,30 @@
+name: Python
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python:
+    name: Lint, type-check, and test Python package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-caching: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint (ruff)
+        run: make py-lint
+
+      - name: Type-check (mypy)
+        run: make py-type-check
+
+      - name: Test (pytest)
+        run: make py-test

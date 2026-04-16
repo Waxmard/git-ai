@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waxmard-git-ai"
+version = "3.0.0"
+description = "LLM-powered git workflow tools — generate commit messages and MR descriptions using Gemini"
+requires-python = ">=3.10"
+dependencies = ["google-genai>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/Waxmard/git-ai"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.package-data]
+"git_ai" = ["prompts/*.txt", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["test/python"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.0",
+    "pre-commit>=4.5.1",
+    "pytest>=8.4.0",
+    "ruff>=0.13.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_configs = true
+

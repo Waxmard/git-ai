@@ -129,6 +129,49 @@ customCommands:
     output: terminal
 ```
 
+## Python library
+
+git-ai is also distributed as a Python package (`waxmard-git-ai`) so other tools can reuse the same commit-message and MR-description generation without shelling out. Gemini only.
+
+```bash
+pip install waxmard-git-ai
+# or: uv add waxmard-git-ai
+```
+
+**Repo-mode** (reads staged diff / base..HEAD from a local checkout):
+
+```python
+from git_ai import generate_commit_message, generate_mr_description
+
+msg = generate_commit_message(".")
+pr = generate_mr_description(".", base_branch="main")
+```
+
+**Data-mode** (no local checkout required — pass raw diff strings, e.g. fetched from the GitHub/GitLab API):
+
+```python
+from git_ai import (
+    create_gemini_client,
+    format_commit_log,
+    generate_commit_message_from_diff,
+    generate_mr_description_from_data,
+)
+
+client = create_gemini_client()
+
+commit_msg = generate_commit_message_from_diff(diff_text, client=client)
+
+log = format_commit_log((c.title, c.message) for c in mr_commits)
+pr_text = generate_mr_description_from_data(
+    diff=diff_text,
+    commit_log=log,
+    existing_pr=current_pr_body or None,
+    client=client,
+)
+```
+
+`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Pass `model=` to override the default Gemini model (`COMMIT_MODEL` / `MR_MODEL`).
+
 ## Compatibility
 
 git-ai does not depend on a specific terminal UI. It works in the CLI, in Lazygit, and in similar git environments as long as Git exposes the required repository state:

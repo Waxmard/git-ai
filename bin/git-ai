@@ -38,17 +38,32 @@ load_cached_pr() {
   cat "$cache_file"
 }
 
+load_cached_pr_sha() {
+  local git_dir="$1"
+  local branch_name="$2"
+  local base_branch="$3"
+  local cache_file sha_file
+  cache_file=$(branch_cache_path "$git_dir" "$branch_name" "$base_branch") || return 1
+  sha_file="$(dirname "$cache_file")/last-head-sha"
+  [[ -r "$sha_file" ]] || return 1
+  cat "$sha_file"
+}
+
 save_cached_pr() {
   local git_dir="$1"
   local branch_name="$2"
   local base_branch="$3"
   local output="$4"
+  local head_sha="${5:-}"
   local cache_file cache_dir
 
   cache_file=$(branch_cache_path "$git_dir" "$branch_name" "$base_branch") || return 1
   cache_dir=$(dirname "$cache_file")
   mkdir -p "$cache_dir" || return 1
   printf '%s\n' "$output" >"$cache_file"
+  if [[ -n "$head_sha" ]]; then
+    printf '%s\n' "$head_sha" >"${cache_dir}/last-head-sha"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -59,8 +74,8 @@ cmd_commit() {
   local PROVIDER MODEL_TIER
   PROVIDER=${1:-$(get_last_provider commit)}
   MODEL_TIER="${2:-}"
-  # shellcheck disable=SC2016
-  local PROMPT='Generate 1 git commit message using Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:). Never use !. Breaking changes are assessed at the PR level, not per commit. Output ONLY the commit message on a single line. Include a description body separated by a blank line for non-trivial changes. No numbering, no bullets, no explanations. Do not wrap in code blocks or backticks.'
+  local PROMPT
+  PROMPT=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/commit.txt") || die "failed to read commit prompt"
 
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
@@ -80,12 +95,14 @@ cmd_commit() {
   LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
   if [[ -n "$LAST_TAG" ]]; then
     COMMITS_SINCE=$(git rev-list --count "${LAST_TAG}..HEAD" 2>/dev/null || echo "?")
-    RELEASE_CONTEXT="[Release context: last tag ${LAST_TAG}, ${COMMITS_SINCE} commits since — staged changes are unreleased]"
+    RELEASE_CONTEXT="Release context: last tag ${LAST_TAG}, ${COMMITS_SINCE} commits since — staged changes are unreleased"
   else
-    RELEASE_CONTEXT="[Release context: no release tags found — treat all changes as unreleased]"
+    RELEASE_CONTEXT="Release context: no release tags found — treat all changes as unreleased"
   fi
 
-  INPUT="${RELEASE_CONTEXT}"$'\n\n'"${STAGED_DIFF}"
+  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"$'\n\n'"<diff>
+${STAGED_DIFF}
+</diff>"
 
   generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
   save_last_message commit "$generated"
@@ -125,17 +142,11 @@ cmd_pr() {
     esac
   done
 
-  # shellcheck disable=SC2016
-  local PROMPT_TWO_PASS='Given an auto-generated PR body draft (grouped from conventional commit messages) and a list of changed files, write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Keep the same section groupings from the draft (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries in the draft may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
-
-  # shellcheck disable=SC2016
-  local PROMPT_FALLBACK='Generate a pull request title and body. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
-
-  # shellcheck disable=SC2016
-  local PROMPT_TWO_PASS_UPDATE='An existing PR title and body are provided, along with an auto-generated draft of the new commits (grouped from conventional commit messages) and a list of changed files. Update the PR title and body to incorporate the new commits while preserving the overall intent and structure of the existing description. Write a polished PR title in Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line and a refined body. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Keep the same section groupings (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs). Only include sections that have changes. Some entries may be intra-branch churn (fixes or refactors of code introduced in this same PR) — consolidate or remove these rather than listing them as separate sections. Focus on the net, final effect of the PR relative to the base branch. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
-
-  # shellcheck disable=SC2016
-  local PROMPT_FALLBACK_UPDATE='An existing PR title and body are provided, along with the full commit log, changed files, and diff for the current branch. Update the PR title and body to incorporate any new commits while preserving the overall intent and structure of the existing description. The title MUST use Conventional Commits format (feat:, fix:, refactor:, build:, chore:, docs:, style:, test:, perf:, ci:) on a single line. Use ! (e.g. feat!:) when this PR would require a semver MAJOR version bump — i.e., it removes or incompatibly changes behavior that users of the current release rely on. Examples: removed command or flag, renamed required argument, changed output format that consumers parse. When in doubt, omit !. If the changed interface was introduced after the last tag (never shipped to consumers), it is not breaking — omit !. Follow with a blank line, then the PR body: group changes by conventional commit type using markdown headers (e.g. ### Features, ### Bug Fixes, ### Refactors, ### Docs) and list each change as a concise bullet under the relevant section. Only include sections that have changes. Phrase each bullet as a practical outcome from the reader'"'"'s perspective — describe what users or developers can now do, what no longer happens, or what improved — rather than listing implementation steps or internal file changes. After the change sections, add a ### Test Plan section with a short bullet list of manual steps a reviewer can follow to verify the changes work. Output ONLY the title and body. Do not wrap in code blocks or backticks.'
+  local PROMPT_TWO_PASS PROMPT_FALLBACK PROMPT_TWO_PASS_UPDATE PROMPT_FALLBACK_UPDATE
+  PROMPT_TWO_PASS=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/pr-two-pass.txt") || die "failed to read pr-two-pass prompt"
+  PROMPT_FALLBACK=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/pr-fallback.txt") || die "failed to read pr-fallback prompt"
+  PROMPT_TWO_PASS_UPDATE=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/pr-two-pass-update.txt") || die "failed to read pr-two-pass-update prompt"
+  PROMPT_FALLBACK_UPDATE=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/pr-fallback-update.txt") || die "failed to read pr-fallback-update prompt"
 
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
   local GIT_DIR
@@ -156,9 +167,6 @@ cmd_pr() {
   LOG=$(git log --format="GITAI_COMMIT %s%n%b" "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
   [[ -z "$LOG" ]] && die "no commits ahead of $BASE"
 
-  local DIFF_STAT
-  DIFF_STAT=$(git diff --stat "$BASE"...HEAD 2>/dev/null) || die "failed to read diff stat against $BASE"
-
   # Count how many commits follow conventional commit format (subject lines only)
   local CONVENTIONAL_COUNT=0
   local TOTAL_COUNT=0
@@ -173,6 +181,40 @@ cmd_pr() {
         CONVENTIONAL_COUNT=$((CONVENTIONAL_COUNT + 1)) ;;
     esac
   done <<< "$LOG"
+
+  # Load cached PR and SHA if available (not --fresh)
+  local EXISTING="" CACHED_SHA=""
+  if [[ "$FRESH" != "true" && -n "$CURRENT_BRANCH" ]]; then
+    EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
+    CACHED_SHA=$(load_cached_pr_sha "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
+  fi
+
+  # Use cached SHA as input base for incremental mode; falls back to BASE if SHA is
+  # missing or no longer in repo (e.g. after rebase/force-push)
+  local INPUT_BASE="$BASE"
+  if [[ -n "$CACHED_SHA" ]] && git cat-file -e "${CACHED_SHA}^{commit}" 2>/dev/null; then
+    INPUT_BASE="$CACHED_SHA"
+  fi
+
+  # Narrow LOG to new commits only when incremental (CONVENTIONAL_COUNT already from full log)
+  if [[ "$INPUT_BASE" != "$BASE" ]]; then
+    LOG=$(git log --format="GITAI_COMMIT %s%n%b" "${INPUT_BASE}..HEAD" 2>/dev/null) || LOG=""
+  fi
+
+  # No new commits since last generation — output cached PR directly, skip LLM call
+  if [[ -n "$EXISTING" && -z "$LOG" && "$INPUT_BASE" != "$BASE" ]]; then
+    echo "git-ai: no new commits since last generation, using cached output (use --fresh to regenerate)" >&2
+    printf '%s\n' "$EXISTING"
+    return 0
+  fi
+
+  # Three-dot merge-base diff for full range; two-dot exact range for incremental
+  local DIFF_STAT
+  if [[ "$INPUT_BASE" == "$BASE" ]]; then
+    DIFF_STAT=$(git diff --stat "$BASE"...HEAD 2>/dev/null) || die "failed to read diff stat against $BASE"
+  else
+    DIFF_STAT=$(git diff --stat "${INPUT_BASE}..HEAD" 2>/dev/null) || die "failed to read diff stat since last generation"
+  fi
 
   local PROMPT INPUT
 
@@ -217,37 +259,39 @@ cmd_pr() {
     done
 
     PROMPT="$PROMPT_TWO_PASS"
-    INPUT="Auto-generated draft (grouped from conventional commit messages):
+    INPUT="<draft>
 $DRAFT_BODY
-Changed files:
-$DIFF_STAT"
+</draft>
+<changed_files>
+$DIFF_STAT
+</changed_files>"
 
   else
     # Fallback: commits don't consistently use conventional format — pass diff directly
     local DIFF
-    DIFF=$(git diff -U0 "$BASE"...HEAD 2>/dev/null) || die "failed to read diff against $BASE"
+    if [[ "$INPUT_BASE" == "$BASE" ]]; then
+      DIFF=$(git diff -U0 "$BASE"...HEAD 2>/dev/null) || die "failed to read diff against $BASE"
+    else
+      DIFF=$(git diff -U0 "${INPUT_BASE}..HEAD" 2>/dev/null) || die "failed to read diff since last generation"
+    fi
     PROMPT="$PROMPT_FALLBACK"
     # Strip GITAI_COMMIT prefix so the LLM sees a clean commit log
-    INPUT="Commit log:
+    INPUT="<commit_log>
 $(printf '%s\n' "$LOG" | sed 's/^GITAI_COMMIT //')
-
-Changed files:
+</commit_log>
+<changed_files>
 $DIFF_STAT
-
-Diff:
-$DIFF"
-  fi
-
-  local EXISTING=""
-  if [[ "$FRESH" != "true" && -n "$CURRENT_BRANCH" ]]; then
-    EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
+</changed_files>
+<diff>
+$DIFF
+</diff>"
   fi
 
   if [[ -n "${EXISTING:-}" ]]; then
-    INPUT="Existing PR title and body:
+    echo "git-ai: updating existing PR draft for ${CURRENT_BRANCH} (use --fresh to regenerate)" >&2
+    INPUT="<existing_pr>
 ${EXISTING}
-
----
+</existing_pr>
 
 ${INPUT}"
     if (( TOTAL_COUNT > 0 && CONVENTIONAL_COUNT * 2 >= TOTAL_COUNT )); then
@@ -266,17 +310,19 @@ ${INPUT}"
       local MAJOR="${BASH_REMATCH[1]}" MINOR="${BASH_REMATCH[2]}" PATCH="${BASH_REMATCH[3]}"
       SEMVER_CONTEXT=". Next release: breaking→v$((MAJOR+1)).0.0, feature→v${MAJOR}.$((MINOR+1)).0, fix→v${MAJOR}.${MINOR}.$((PATCH+1))"
     fi
-    RELEASE_CONTEXT="[Release context: current version ${LAST_TAG}, ${COMMITS_SINCE} commits since last release${SEMVER_CONTEXT}]"
+    RELEASE_CONTEXT="Release context: current version ${LAST_TAG}, ${COMMITS_SINCE} commits since last release${SEMVER_CONTEXT}"
   else
-    RELEASE_CONTEXT="[Release context: no release tags found — treat all changes as unreleased]"
+    RELEASE_CONTEXT="Release context: no release tags found — treat all changes as unreleased"
   fi
-  INPUT="${RELEASE_CONTEXT}"$'\n\n'"${INPUT}"
+  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"$'\n\n'"${INPUT}"
 
   local OUTPUT
   OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
   save_last_message pr "$OUTPUT"
+  local HEAD_SHA
+  HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || HEAD_SHA=""
   if [[ -n "$CURRENT_BRANCH" ]]; then
-    save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" ||
+    save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" ||
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
   printf '%s\n' "$OUTPUT"
