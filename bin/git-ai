@@ -325,23 +325,24 @@ ${INPUT}"
     save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" ||
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
-  printf '%s\n' "$OUTPUT"
-
-  if [[ -n "${EXISTING:-}" && "$OUTPUT" != "$EXISTING" ]]; then
-    local OLD_TMP NEW_TMP COLOR_FLAG
-    OLD_TMP=$(mktemp 2>/dev/null) || return 0
-    NEW_TMP=$(mktemp 2>/dev/null) || { rm -f "$OLD_TMP"; return 0; }
+  if [[ -n "${EXISTING:-}" && "$OUTPUT" != "$EXISTING" && -t 1 ]]; then
+    local OLD_TMP NEW_TMP
+    OLD_TMP=$(mktemp 2>/dev/null) || OLD_TMP=""
+    NEW_TMP=$(mktemp 2>/dev/null) || NEW_TMP=""
+    if [[ -z "$OLD_TMP" || -z "$NEW_TMP" ]]; then
+      rm -f "$OLD_TMP" "$NEW_TMP" 2>/dev/null
+      printf '%s\n' "$OUTPUT"
+      return 0
+    fi
     printf '%s\n' "$EXISTING" > "$OLD_TMP"
     printf '%s\n' "$OUTPUT"   > "$NEW_TMP"
-    if [[ -t 2 ]]; then COLOR_FLAG="--color=always"; else COLOR_FLAG="--color=never"; fi
-    {
-      echo ""
-      echo "git-ai: diff vs cached PR:"
-      git --no-pager diff --no-index "$COLOR_FLAG" \
-        --src-prefix=cached/ --dst-prefix=updated/ \
-        "$OLD_TMP" "$NEW_TMP" || true
-    } >&2
+    git --no-pager diff --no-index --color=always --word-diff=color \
+      -U9999 --src-prefix=cached/ --dst-prefix=updated/ \
+      "$OLD_TMP" "$NEW_TMP" 2>/dev/null |
+      awk 'seen {print; next} /@@ -[0-9]/ {seen=1}' || true
     rm -f "$OLD_TMP" "$NEW_TMP"
+  else
+    printf '%s\n' "$OUTPUT"
   fi
 }
 
