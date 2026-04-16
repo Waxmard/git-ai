@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from ._gemini import COMMIT_MODEL, MR_MODEL
@@ -34,20 +35,61 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
+def _format_api_error(exc: genai_errors.APIError) -> str:
+    code = getattr(exc, "code", None)
+    message = getattr(exc, "message", None) or str(exc)
+    if code in (401, 403):
+        return (
+            "Gemini auth rejected. Check GEMINI_API_KEY or application-default "
+            f"credentials. ({message})"
+        )
+    if code == 429:
+        return f"Gemini rate-limited. Try again shortly. ({message})"
+    if isinstance(code, int) and 500 <= code < 600:
+        return f"Gemini server error ({code}). Try again. ({message})"
+    return f"Gemini API error ({code}): {message}"
+
+
+def _safety_reason(response: types.GenerateContentResponse) -> str | None:
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    if prompt_feedback is not None:
+        block_reason = getattr(prompt_feedback, "block_reason", None)
+        if block_reason:
+            name = getattr(block_reason, "name", None) or str(block_reason)
+            return f"prompt blocked: {name}"
+
+    for candidate in getattr(response, "candidates", None) or []:
+        finish_reason = getattr(candidate, "finish_reason", None)
+        if finish_reason and finish_reason != types.FinishReason.STOP:
+            name = getattr(finish_reason, "name", None) or str(finish_reason)
+            return name
+    return None
+
+
 def _call_gemini(
     client: genai.Client, model: str, system_prompt: str, user_input: str
 ) -> str:
     """Call Gemini and return stripped text output."""
-    response = client.models.generate_content(
-        model=model,
-        contents=user_input,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-        ),
-    )
-    if response.text is None:
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=user_input,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+            ),
+        )
+    except genai_errors.APIError as e:
+        raise RuntimeError(_format_api_error(e)) from e
+    except Exception as e:
+        raise RuntimeError(f"Gemini call failed: {e}") from e
+
+    text = (response.text or "").strip()
+    if not text:
+        reason = _safety_reason(response)
+        if reason:
+            raise RuntimeError(f"Gemini blocked the response ({reason})")
         raise RuntimeError("Gemini returned an empty response")
-    return _strip_fences(response.text)
+    return _strip_fences(text)
 
 
 def generate_commit_message(
