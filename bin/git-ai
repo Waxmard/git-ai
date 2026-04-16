@@ -326,6 +326,23 @@ ${INPUT}"
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
   printf '%s\n' "$OUTPUT"
+
+  if [[ -n "${EXISTING:-}" && "$OUTPUT" != "$EXISTING" ]]; then
+    local OLD_TMP NEW_TMP COLOR_FLAG
+    OLD_TMP=$(mktemp 2>/dev/null) || return 0
+    NEW_TMP=$(mktemp 2>/dev/null) || { rm -f "$OLD_TMP"; return 0; }
+    printf '%s\n' "$EXISTING" > "$OLD_TMP"
+    printf '%s\n' "$OUTPUT"   > "$NEW_TMP"
+    if [[ -t 2 ]]; then COLOR_FLAG="--color=always"; else COLOR_FLAG="--color=never"; fi
+    {
+      echo ""
+      echo "git-ai: diff vs cached PR:"
+      git --no-pager diff --no-index "$COLOR_FLAG" \
+        --src-prefix=cached/ --dst-prefix=updated/ \
+        "$OLD_TMP" "$NEW_TMP" || true
+    } >&2
+    rm -f "$OLD_TMP" "$NEW_TMP"
+  fi
 }
 
 cmd_providers() {
