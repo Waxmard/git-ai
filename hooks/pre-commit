@@ -4,29 +4,32 @@
 set -o pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+LOG_DIR=$(mktemp -d)
+trap 'rm -rf "$LOG_DIR"' EXIT
 
-echo "==> pre-commit: lint..."
-if ! make -C "$REPO_ROOT" lint; then
-  echo "pre-commit: lint failed — commit aborted." >&2
-  exit 1
-fi
+echo "==> pre-commit: running checks..."
 
-echo "==> pre-commit: tests..."
-if ! make -C "$REPO_ROOT" test; then
-  echo "pre-commit: tests failed — commit aborted." >&2
-  exit 1
-fi
+make -C "$REPO_ROOT" lint          > "$LOG_DIR/lint.log"    2>&1 & PID_LINT=$!
+make -C "$REPO_ROOT" py-lint       > "$LOG_DIR/pylint.log"  2>&1 & PID_PYLINT=$!
+make -C "$REPO_ROOT" py-type-check > "$LOG_DIR/pytype.log"  2>&1 & PID_PYTYPE=$!
+make -C "$REPO_ROOT" test          > "$LOG_DIR/test.log"    2>&1 & PID_TEST=$!
+make -C "$REPO_ROOT" py-test       > "$LOG_DIR/pytest.log"  2>&1 & PID_PYTEST=$!
 
-echo "==> pre-commit: python lint..."
-if ! make -C "$REPO_ROOT" py-lint; then
-  echo "pre-commit: python lint failed — commit aborted." >&2
-  exit 1
-fi
+FAILED=0
+fail_if() {
+  local pid=$1 name=$2 log=$3
+  if ! wait "$pid"; then
+    echo "pre-commit: $name failed —" >&2
+    cat "$log" >&2
+    FAILED=1
+  fi
+}
 
-echo "==> pre-commit: python type-check..."
-if ! make -C "$REPO_ROOT" py-type-check; then
-  echo "pre-commit: python type-check failed — commit aborted." >&2
-  exit 1
-fi
+fail_if $PID_LINT   "lint"              "$LOG_DIR/lint.log"
+fail_if $PID_PYLINT "python lint"       "$LOG_DIR/pylint.log"
+fail_if $PID_PYTYPE "python type-check" "$LOG_DIR/pytype.log"
+fail_if $PID_TEST   "tests"             "$LOG_DIR/test.log"
+fail_if $PID_PYTEST "python tests"      "$LOG_DIR/pytest.log"
 
+[ $FAILED -eq 0 ] || exit 1
 echo "==> pre-commit: all checks passed."

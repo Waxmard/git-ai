@@ -6,7 +6,11 @@ export UV_CACHE_DIR := .uv-cache
 .PHONY: install uninstall lint test hooks sync py-format py-lint py-type-check py-test py-pre-commit
 
 test: $(BATS)
-	$(BATS) --recursive test/
+	@if command -v parallel >/dev/null 2>&1 || command -v rush >/dev/null 2>&1; then \
+		$(BATS) --jobs 4 --recursive test/; \
+	else \
+		$(BATS) --recursive test/; \
+	fi
 
 $(BATS):
 	npm ci
