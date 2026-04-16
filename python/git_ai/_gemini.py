@@ -23,7 +23,9 @@ def create_gemini_client() -> genai.Client:
     if api_key:
         return genai.Client(api_key=api_key)
 
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GOOGLE_VERTEX_PROJECT")
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get(
+        "GOOGLE_VERTEX_PROJECT"
+    )
     location = (
         os.environ.get("GOOGLE_CLOUD_LOCATION")
         or os.environ.get("GOOGLE_VERTEX_LOCATION")

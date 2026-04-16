@@ -17,4 +17,16 @@ if ! make -C "$REPO_ROOT" test; then
   exit 1
 fi
 
+echo "==> pre-commit: python lint..."
+if ! make -C "$REPO_ROOT" py-lint; then
+  echo "pre-commit: python lint failed — commit aborted." >&2
+  exit 1
+fi
+
+echo "==> pre-commit: python type-check..."
+if ! make -C "$REPO_ROOT" py-type-check; then
+  echo "pre-commit: python type-check failed — commit aborted." >&2
+  exit 1
+fi
+
 echo "==> pre-commit: all checks passed."

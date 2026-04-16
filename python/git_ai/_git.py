@@ -55,7 +55,9 @@ def get_release_context(repo_path: str | Path) -> str:
         text=True,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        return "Release context: no release tags found — treat all changes as unreleased"
+        return (
+            "Release context: no release tags found — treat all changes as unreleased"
+        )
 
     last_tag = result.stdout.strip()
     count = subprocess.run(
@@ -65,7 +67,10 @@ def get_release_context(repo_path: str | Path) -> str:
         text=True,
     )
     commits_since = count.stdout.strip() if count.returncode == 0 else "?"
-    return f"Release context: last tag {last_tag}, {commits_since} commits since — staged changes are unreleased"
+    return (
+        f"Release context: last tag {last_tag}, {commits_since} commits since"
+        " — staged changes are unreleased"
+    )
 
 
 def get_mr_release_context(repo_path: str | Path) -> str:
@@ -77,7 +82,9 @@ def get_mr_release_context(repo_path: str | Path) -> str:
         text=True,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        return "Release context: no release tags found — treat all changes as unreleased"
+        return (
+            "Release context: no release tags found — treat all changes as unreleased"
+        )
 
     last_tag = result.stdout.strip()
     count = subprocess.run(
@@ -91,19 +98,26 @@ def get_mr_release_context(repo_path: str | Path) -> str:
     semver_context = ""
     match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", last_tag)
     if match:
-        major, minor, patch = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        major = int(match.group(1))
+        minor = int(match.group(2))
+        patch = int(match.group(3))
         semver_context = (
             f". Next release: breaking→v{major + 1}.0.0, "
             f"feature→v{major}.{minor + 1}.0, "
             f"fix→v{major}.{minor}.{patch + 1}"
         )
 
-    return f"Release context: current version {last_tag}, {commits_since} commits since last release{semver_context}"
+    return (
+        f"Release context: current version {last_tag},"
+        f" {commits_since} commits since last release{semver_context}"
+    )
 
 
 def get_commit_log(repo_path: str | Path, base_branch: str) -> str:
     """Return commit log with GITAI_COMMIT subject prefixes."""
-    return _git(repo_path, "log", "--format=GITAI_COMMIT %s%n%b", f"{base_branch}..HEAD")
+    return _git(
+        repo_path, "log", "--format=GITAI_COMMIT %s%n%b", f"{base_branch}..HEAD"
+    )
 
 
 def get_diff_stat(repo_path: str | Path, base: str, three_dot: bool = True) -> str:

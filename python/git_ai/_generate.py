@@ -34,7 +34,9 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
-def _call_gemini(client: genai.Client, model: str, system_prompt: str, user_input: str) -> str:
+def _call_gemini(
+    client: genai.Client, model: str, system_prompt: str, user_input: str
+) -> str:
     """Call Gemini and return stripped text output."""
     response = client.models.generate_content(
         model=model,
@@ -43,6 +45,8 @@ def _call_gemini(client: genai.Client, model: str, system_prompt: str, user_inpu
             system_instruction=system_prompt,
         ),
     )
+    if response.text is None:
+        raise RuntimeError("Gemini returned an empty response")
     return _strip_fences(response.text)
 
 
