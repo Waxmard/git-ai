@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.1](https://github.com/Waxmard/git-ai/compare/v3.1.0...v3.1.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* add README metadata and sync lock version ([cfc4da9](https://github.com/Waxmard/git-ai/commit/cfc4da96f972a1e226b0a72f80423558e7c5dbbc))
+
 ## [3.1.0](https://github.com/Waxmard/git-ai/compare/v3.0.0...v3.1.0) (2026-04-16)
 
 
