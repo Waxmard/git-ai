@@ -49,7 +49,7 @@ py-lint:
 	$(UV) run ruff check python/
 
 py-type-check:
-	$(UV) run mypy python/git_ai
+	$(UV) run mypy python/git_ai test/python
 
 py-test:
 	$(UV) run pytest

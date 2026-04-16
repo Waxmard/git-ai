@@ -16,7 +16,10 @@ Homepage = "https://github.com/Waxmard/git-ai"
 where = ["python"]
 
 [tool.setuptools.package-data]
-"git_ai" = ["prompts/*.txt"]
+"git_ai" = ["prompts/*.txt", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["test/python"]
 
 [dependency-groups]
 dev = [
@@ -42,6 +45,3 @@ python_version = "3.10"
 strict = true
 warn_unused_configs = true
 
-[[tool.mypy.overrides]]
-module = ["google.genai", "google.genai.types"]
-ignore_missing_imports = true
