@@ -4,7 +4,13 @@
     ".": {
       "release-type": "node",
       "changelog-path": "CHANGELOG.md",
-      "extra-files": ["version.txt"],
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        }
+      ],
       "include-component-in-tag": false
     }
   }
