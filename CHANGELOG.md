@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.1.1](https://github.com/Waxmard/git-ai/compare/v3.1.0...v3.1.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* add README metadata and sync lock version ([cfc4da9](https://github.com/Waxmard/git-ai/commit/cfc4da96f972a1e226b0a72f80423558e7c5dbbc))
+
+## [3.1.0](https://github.com/Waxmard/git-ai/compare/v3.0.0...v3.1.0) (2026-04-16)
+
+
+### Features
+
+* add Python-backed generators and incremental PR draft caching ([#27](https://github.com/Waxmard/git-ai/issues/27)) ([75887ee](https://github.com/Waxmard/git-ai/commit/75887ee3ccb451680b91d36356217219c0be35f7))
+
 ## [3.0.0](https://github.com/Waxmard/git-ai/compare/v2.0.0...v3.0.0) (2026-04-15)
 
 

@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "waxmard-git-ai"
-version = "3.0.0"
+version = "3.1.1"
 description = "LLM-powered git workflow tools — generate commit messages and MR descriptions using Gemini"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["google-genai>=1.0"]
 
