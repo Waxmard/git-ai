@@ -66,6 +66,40 @@ save_cached_pr() {
   fi
 }
 
+render_pr_output() {
+  local existing="$1"
+  local output="$2"
+  local is_tty="${3:-false}"
+
+  if [[ -z "$existing" || "$is_tty" != "true" ]]; then
+    printf '%s\n' "$output"
+    return 0
+  fi
+
+  if [[ "$output" == "$existing" ]]; then
+    echo "git-ai: regenerated PR is unchanged; no diff changes to show" >&2
+    printf '%s\n' "$output"
+    return 0
+  fi
+
+  local old_tmp new_tmp
+  old_tmp=$(mktemp 2>/dev/null) || old_tmp=""
+  new_tmp=$(mktemp 2>/dev/null) || new_tmp=""
+  if [[ -z "$old_tmp" || -z "$new_tmp" ]]; then
+    rm -f "$old_tmp" "$new_tmp" 2>/dev/null
+    printf '%s\n' "$output"
+    return 0
+  fi
+
+  printf '%s\n' "$existing" > "$old_tmp"
+  printf '%s\n' "$output"   > "$new_tmp"
+  git --no-pager diff --no-index --color=always --word-diff=color \
+    -U9999 --src-prefix=cached/ --dst-prefix=updated/ \
+    "$old_tmp" "$new_tmp" 2>/dev/null |
+    awk 'seen {print; next} /@@ -[0-9]/ {seen=1}' || true
+  rm -f "$old_tmp" "$new_tmp"
+}
+
 # ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
@@ -325,25 +359,7 @@ ${INPUT}"
     save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" ||
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
-  if [[ -n "${EXISTING:-}" && "$OUTPUT" != "$EXISTING" && -t 1 ]]; then
-    local OLD_TMP NEW_TMP
-    OLD_TMP=$(mktemp 2>/dev/null) || OLD_TMP=""
-    NEW_TMP=$(mktemp 2>/dev/null) || NEW_TMP=""
-    if [[ -z "$OLD_TMP" || -z "$NEW_TMP" ]]; then
-      rm -f "$OLD_TMP" "$NEW_TMP" 2>/dev/null
-      printf '%s\n' "$OUTPUT"
-      return 0
-    fi
-    printf '%s\n' "$EXISTING" > "$OLD_TMP"
-    printf '%s\n' "$OUTPUT"   > "$NEW_TMP"
-    git --no-pager diff --no-index --color=always --word-diff=color \
-      -U9999 --src-prefix=cached/ --dst-prefix=updated/ \
-      "$OLD_TMP" "$NEW_TMP" 2>/dev/null |
-      awk 'seen {print; next} /@@ -[0-9]/ {seen=1}' || true
-    rm -f "$OLD_TMP" "$NEW_TMP"
-  else
-    printf '%s\n' "$OUTPUT"
-  fi
+  render_pr_output "${EXISTING:-}" "$OUTPUT" "$(if [[ -t 1 ]]; then printf 'true'; else printf 'false'; fi)"
 }
 
 cmd_providers() {
