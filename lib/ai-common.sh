@@ -43,23 +43,24 @@ save_last_choice() {
 }
 
 get_last_provider() {
-  get_last_choice "${1}-last-provider" "${2:-gemini}" "claude|gemini|codex"
+  get_last_choice "${1}-last-provider" "${2:-}" "vertex|gemini-api|claude-code|anthropic-api|codex|openai-api"
 }
 
 save_last_provider() {
   save_last_choice "${1}-last-provider" "$2"
 }
 
-get_last_tier() {
+get_last_model() {
   local tool_name="$1"
   local provider="$2"
   local fallback="$3"
-  get_last_choice "${tool_name}-${provider}-last-tier" "$fallback" \
-    "haiku|sonnet|opus|flash-lite|pro|mini|standard"
+  local valid
+  valid=$(models_for_provider "$provider" | paste -sd'|' -)
+  get_last_choice "${tool_name}-${provider}-last-model" "$fallback" "$valid"
 }
 
-save_last_tier() {
-  save_last_choice "${1}-${2}-last-tier" "$3"
+save_last_model() {
+  save_last_choice "${1}-${2}-last-model" "$3"
 }
 
 save_last_message() {
@@ -180,22 +181,70 @@ _gemini_has_adc() {
 
 provider_display_name() {
   case $1 in
-    claude) echo "Claude" ;;
-    gemini) echo "Gemini" ;;
-    codex)  echo "OpenAI (Codex)" ;;
-    last)   echo "Reuse last message" ;;
+    vertex)        echo "Vertex AI" ;;
+    gemini-api)    echo "Gemini API" ;;
+    claude-code)   echo "Claude Code" ;;
+    anthropic-api) echo "Anthropic API" ;;
+    codex)         echo "Codex CLI" ;;
+    openai-api)    echo "OpenAI API" ;;
+    last)          echo "Reuse last message" ;;
   esac
 }
 
-tier_display_name() {
+provider_is_valid() {
   case $1 in
-    haiku)      echo "Haiku" ;;
-    sonnet)     echo "Sonnet" ;;
-    opus)       echo "Opus" ;;
-    flash-lite) echo "Flash Lite" ;;
-    pro)        echo "Pro" ;;
-    mini)       echo "Mini" ;;
-    standard)   echo "Standard" ;;
+    vertex|gemini-api|claude-code|anthropic-api|codex|openai-api|last) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+provider_family() {
+  case $1 in
+    vertex|gemini-api) printf '%s\n' "gemini" ;;
+    claude-code|anthropic-api) printf '%s\n' "claude" ;;
+    codex|openai-api) printf '%s\n' "openai" ;;
+    *) return 1 ;;
+  esac
+}
+
+models_for_family() {
+  case $1 in
+    claude)
+      printf '%s\n' \
+        "claude-haiku-4-5-20251001" \
+        "claude-sonnet-4-6" \
+        "claude-opus-4-6"
+      ;;
+    gemini)
+      printf '%s\n' \
+        "gemini-3.1-flash-lite-preview" \
+        "gemini-3.1-pro-preview"
+      ;;
+    openai)
+      printf '%s\n' \
+        "gpt-5.4-mini" \
+        "gpt-5.4"
+      ;;
+  esac
+}
+
+models_for_provider() {
+  case $1 in
+    vertex)
+      models_for_family gemini
+      models_for_family claude
+      models_for_family openai
+      ;;
+    gemini-api)
+      models_for_family gemini
+      ;;
+    claude-code|anthropic-api)
+      models_for_family claude
+      ;;
+    codex|openai-api)
+      models_for_family openai
+      ;;
+    *) return 1 ;;
   esac
 }
 
@@ -214,13 +263,15 @@ order_by_recent() {
 
 list_providers() {
   local tool_name="${1:-}"
-  local all=(claude gemini codex)
+  local all=(vertex gemini-api claude-code anthropic-api codex openai-api)
 
   if [[ -n "$tool_name" ]]; then
     local last ordered=()
     last=$(get_last_provider "$tool_name")
-    while IFS= read -r p; do ordered+=("$p"); done < <(order_by_recent "$last" "${all[@]}")
-    all=("${ordered[@]}")
+    if [[ -n "$last" ]]; then
+      while IFS= read -r p; do ordered+=("$p"); done < <(order_by_recent "$last" "${all[@]}")
+      all=("${ordered[@]}")
+    fi
 
     local git_dir
     git_dir=$(git rev-parse --git-dir 2>/dev/null) && \
@@ -234,61 +285,67 @@ list_providers() {
   done
 }
 
-list_tiers() {
+list_models() {
   local provider="${1:-}"
   local tool_name="${2:-}"
   local all=()
 
-  case "$provider" in
-    claude) all=(haiku sonnet opus) ;;
-    gemini) all=(flash-lite pro) ;;
-    codex)  all=(mini standard) ;;
-    last)
-      printf '%s|%s\n' "n/a" "(reusing saved message)"
-      return
-      ;;
-    *) return ;;
-  esac
+  if [[ "$provider" == "last" ]]; then
+    printf '%s|%s\n' "n/a" "(reusing saved message)"
+    return
+  fi
+
+  while IFS= read -r model; do
+    [[ -n "$model" ]] && all+=("$model")
+  done < <(models_for_provider "$provider")
+  [[ ${#all[@]} -gt 0 ]] || return
 
   if [[ -n "$tool_name" ]]; then
     local last ordered=()
-    last=$(get_last_tier "$tool_name" "$provider" "${all[0]}")
-    while IFS= read -r t; do ordered+=("$t"); done < <(order_by_recent "$last" "${all[@]}")
+    last=$(get_last_model "$tool_name" "$provider" "${all[0]}")
+    while IFS= read -r model; do ordered+=("$model"); done < <(order_by_recent "$last" "${all[@]}")
     all=("${ordered[@]}")
   fi
 
-  for t in "${all[@]}"; do
-    printf '%s|%s\n' "$t" "$(tier_display_name "$t")"
+  for model in "${all[@]}"; do
+    printf '%s|%s\n' "$model" "$model"
   done
+}
+
+default_model_for_provider() {
+  local tool_name="$1"
+  local provider="$2"
+  local family
+  family=$(provider_family "$provider") || return 1
+
+  case "${tool_name}:${family}" in
+    pr:claude) printf '%s\n' "claude-opus-4-6" ;;
+    pr:gemini) printf '%s\n' "gemini-3.1-pro-preview" ;;
+    pr:openai) printf '%s\n' "gpt-5.4" ;;
+    *:claude) printf '%s\n' "claude-haiku-4-5-20251001" ;;
+    *:gemini) printf '%s\n' "gemini-3.1-flash-lite-preview" ;;
+    *:openai) printf '%s\n' "gpt-5.4-mini" ;;
+  esac
 }
 
 resolve_model() {
   local tool_name="$1"
   local provider="$2"
-  local tier="${3:-}"
+  local model="${3:-}"
 
-  if [[ -n "$tier" ]]; then
-    case "${provider}:${tier}" in
-      claude:haiku)      printf '%s\n' "claude-haiku-4-5-20251001" ;;
-      claude:sonnet)     printf '%s\n' "claude-sonnet-4-6" ;;
-      claude:opus)       printf '%s\n' "claude-opus-4-6" ;;
-      gemini:flash-lite) printf '%s\n' "gemini-3.1-flash-lite-preview" ;;
-      gemini:pro)        printf '%s\n' "gemini-3.1-pro-preview" ;;
-      codex:mini)        printf '%s\n' "gpt-5.4-mini" ;;
-      codex:standard)    printf '%s\n' "gpt-5.4" ;;
-      *) die "unknown model tier '$tier' for provider '$provider'" ;;
-    esac
-    return
+  if [[ -n "$model" ]]; then
+    if models_for_provider "$provider" | grep -Fxq "$model"; then
+      printf '%s\n' "$model"
+      return
+    fi
+    die "unknown model '$model' for provider '$provider'"
   fi
 
-  case "${tool_name}:${provider}" in
-    pr:claude) printf '%s\n' "claude-opus-4-6" ;;
-    pr:gemini) printf '%s\n' "gemini-3.1-pro-preview" ;;
-    pr:codex)  printf '%s\n' "gpt-5.4" ;;
-    *:claude) printf '%s\n' "claude-haiku-4-5-20251001" ;;
-    *:gemini) printf '%s\n' "gemini-3.1-flash-lite-preview" ;;
-    *:codex)  printf '%s\n' "gpt-5.4-mini" ;;
-  esac
+  if [[ "$provider" == "vertex" ]]; then
+    die "provider '$provider' requires an explicit model; run 'git-ai models $provider $tool_name'"
+  fi
+
+  default_model_for_provider "$tool_name" "$provider"
 }
 
 _run_anthropic_api() {
@@ -357,46 +414,76 @@ print(data["choices"][0]["message"]["content"])
 ' <<<"$response" || die "Failed to parse OpenAI API response"
 }
 
-# run_provider TOOL_NAME PROVIDER PROMPT INPUT [MODEL_TIER]
+# run_provider TOOL_NAME PROVIDER PROMPT INPUT [MODEL]
 # Runs the given LLM provider with the prompt and input, pipes through strip_fences.
 run_provider() {
   local tool_name="$1"
   local provider="$2"
   local prompt="$3"
   local input="$4"
-  local model_tier="${5:-}"
+  local selected_model="${5:-}"
   local output
   local model
-  model=$(resolve_model "$tool_name" "$provider" "$model_tier")
+  model=$(resolve_model "$tool_name" "$provider" "$selected_model")
 
   case $provider in
-    claude)
-      if command -v claude >/dev/null 2>&1; then
-        claude -p "$prompt" --max-turns 1 --model "$model" <<<"$input" | strip_fences ||
-          die "Claude generation failed"
-      elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-        _run_anthropic_api "$model" "$prompt" "$input" | strip_fences ||
-          die "Claude API generation failed"
-      else
-        die "Claude provider requires the Claude Code CLI or ANTHROPIC_API_KEY. See: https://claude.ai/code"
-      fi
+    claude-code)
+      command -v claude >/dev/null 2>&1 ||
+        die "Claude Code auth requires the Claude Code CLI. See: https://claude.ai/code"
+      claude -p "$prompt" --max-turns 1 --model "$model" <<<"$input" | strip_fences ||
+        die "Claude generation failed"
       ;;
-    gemini)
+    anthropic-api)
+      [[ -n "${ANTHROPIC_API_KEY:-}" ]] ||
+        die "Anthropic API auth requires ANTHROPIC_API_KEY."
+      _run_anthropic_api "$model" "$prompt" "$input" | strip_fences ||
+        die "Anthropic API generation failed"
+      ;;
+    vertex)
       load_gemini_env
+      _gemini_has_adc ||
+        die "Vertex auth not found. Configure gcloud ADC or GOOGLE_APPLICATION_CREDENTIALS."
+      local gemini_bin
+      gemini_bin=$(resolve_gemini_bin) || die "Gemini CLI not found. Set GEMINI_BIN or add gemini to PATH."
+      local gemini_output
       local gemini_err_file
       gemini_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-gemini.XXXXXX") ||
         die "failed to create temporary error file"
       trap 'rm -f "$gemini_err_file"' EXIT
+      gemini_output=$(
+        printf '%s\n' "$input" | "$gemini_bin" -p "$prompt" -m "$model" -e "" 2>"$gemini_err_file"
+      )
+      local gemini_status=$?
+
+      if [[ $gemini_status -ne 0 ]]; then
+        local gemini_error
+        gemini_error=$(<"$gemini_err_file")
+        rm -f "$gemini_err_file"
+
+        if [[ -n "$gemini_error" ]]; then
+          die "Gemini generation failed: $gemini_error"
+        fi
+
+        die "Gemini generation failed"
+      fi
+
+      rm -f "$gemini_err_file"
+      printf '%s\n' "$gemini_output" | strip_fences
+      ;;
+    gemini-api)
+      load_gemini_env
+      local gemini_api_key
+      gemini_api_key=$(resolve_gemini_api_key) ||
+        die "Gemini API auth not found. Set GEMINI_API_KEY or store 'gemini-api-key' in your keychain."
+      GEMINI_API_KEY="$gemini_api_key"
+      export GEMINI_API_KEY
       local gemini_bin
       gemini_bin=$(resolve_gemini_bin) || die "Gemini CLI not found. Set GEMINI_BIN or add gemini to PATH."
-      local gemini_api_key
-      if gemini_api_key=$(resolve_gemini_api_key); then
-        GEMINI_API_KEY="$gemini_api_key"
-        export GEMINI_API_KEY
-      elif ! _gemini_has_adc; then
-        die "Gemini auth not found. Options: set GEMINI_API_KEY, store 'gemini-api-key' in your keychain (macOS Keychain / secret-tool / pass / kwallet), or configure gcloud ADC / GOOGLE_APPLICATION_CREDENTIALS."
-      fi
       local gemini_output
+      local gemini_err_file
+      gemini_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-gemini.XXXXXX") ||
+        die "failed to create temporary error file"
+      trap 'rm -f "$gemini_err_file"' EXIT
       gemini_output=$(
         printf '%s\n' "$input" | "$gemini_bin" -p "$prompt" -m "$model" -e "" 2>"$gemini_err_file"
       )
@@ -418,39 +505,40 @@ run_provider() {
       printf '%s\n' "$gemini_output" | strip_fences
       ;;
     codex)
-      if command -v codex >/dev/null 2>&1; then
-        local codex_output_file
-        local codex_err_file
-        codex_output_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex.XXXXXX") ||
-          die "failed to create temporary output file"
-        codex_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex-err.XXXXXX") ||
-          die "failed to create temporary error file"
-        trap 'rm -f "$codex_output_file" "$codex_err_file"' EXIT
-        codex exec --model "$model" --output-last-message "$codex_output_file" "$prompt
+      command -v codex >/dev/null 2>&1 ||
+        die "Codex auth requires the Codex CLI. See: https://github.com/openai/codex"
+      local codex_output_file
+      local codex_err_file
+      codex_output_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex.XXXXXX") ||
+        die "failed to create temporary output file"
+      codex_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex-err.XXXXXX") ||
+        die "failed to create temporary error file"
+      trap 'rm -f "$codex_output_file" "$codex_err_file"' EXIT
+      codex exec --model "$model" --output-last-message "$codex_output_file" "$prompt
 
 $input" >/dev/null 2>"$codex_err_file" || {
-          local codex_error
-          codex_error=$(<"$codex_err_file")
-          rm -f "$codex_output_file" "$codex_err_file"
-          [[ -n "$codex_error" ]] && die "Codex generation failed: $codex_error"
-          die "Codex generation failed"
-        }
-        rm -f "$codex_err_file"
-        output=$(<"$codex_output_file")
-        rm -f "$codex_output_file"
-        [[ -n "$output" ]] || die "Codex generation failed: empty response"
-        printf '\n%s\n' "$output" | strip_fences
-      elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
-        _run_openai_api "$model" "$prompt" "$input" | strip_fences ||
-          die "OpenAI API generation failed"
-      else
-        die "Codex provider requires the Codex CLI or OPENAI_API_KEY. See: https://github.com/openai/codex"
-      fi
+        local codex_error
+        codex_error=$(<"$codex_err_file")
+        rm -f "$codex_output_file" "$codex_err_file"
+        [[ -n "$codex_error" ]] && die "Codex generation failed: $codex_error"
+        die "Codex generation failed"
+      }
+      rm -f "$codex_err_file"
+      output=$(<"$codex_output_file")
+      rm -f "$codex_output_file"
+      [[ -n "$output" ]] || die "Codex generation failed: empty response"
+      printf '\n%s\n' "$output" | strip_fences
+      ;;
+    openai-api)
+      [[ -n "${OPENAI_API_KEY:-}" ]] ||
+        die "OpenAI API auth requires OPENAI_API_KEY."
+      _run_openai_api "$model" "$prompt" "$input" | strip_fences ||
+        die "OpenAI API generation failed"
       ;;
     *)
       die "unknown provider: $provider"
       ;;
   esac
   save_last_provider "$tool_name" "$provider"
-  [[ -n "$model_tier" ]] && save_last_tier "$tool_name" "$provider" "$model_tier"
+  [[ -n "$selected_model" ]] && save_last_model "$tool_name" "$provider" "$selected_model"
 }

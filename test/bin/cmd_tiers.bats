@@ -14,45 +14,45 @@ teardown() {
   rm -rf "$TEST_REPO"
 }
 
-@test "cmd_tiers: claude returns haiku, sonnet, opus" {
-  run cmd_tiers "claude" "commit"
+@test "cmd_models: vertex returns all models" {
+  run cmd_models "vertex" "commit"
   assert_success
-  assert_output --partial "haiku|"
-  assert_output --partial "sonnet|"
-  assert_output --partial "opus|"
+  assert_output --partial "gemini-3.1-flash-lite-preview|"
+  assert_output --partial "claude-sonnet-4-6|"
+  assert_output --partial "gpt-5.4|"
 }
 
-@test "cmd_tiers: gemini returns flash-lite, pro" {
-  run cmd_tiers "gemini" "commit"
+@test "cmd_models: gemini-api returns gemini models" {
+  run cmd_models "gemini-api" "commit"
   assert_success
-  assert_output --partial "flash-lite|"
-  assert_output --partial "pro|"
+  assert_output --partial "gemini-3.1-flash-lite-preview|"
+  assert_output --partial "gemini-3.1-pro-preview|"
 }
 
-@test "cmd_tiers: codex returns mini, standard" {
-  run cmd_tiers "codex" "commit"
+@test "cmd_models: codex returns openai models" {
+  run cmd_models "codex" "commit"
   assert_success
-  assert_output --partial "mini|"
-  assert_output --partial "standard|"
+  assert_output --partial "gpt-5.4-mini|"
+  assert_output --partial "gpt-5.4|"
 }
 
-@test "cmd_tiers: last provider returns single reuse-message line" {
-  run cmd_tiers "last" "commit"
+@test "cmd_models: last provider returns single reuse-message line" {
+  run cmd_models "last" "commit"
   assert_success
   assert_output --partial "n/a|"
 }
 
-@test "cmd_tiers: outputs pipe-delimited tier|display lines" {
-  run cmd_tiers "claude" "commit"
+@test "cmd_models: outputs pipe-delimited model|display lines" {
+  run cmd_models "claude-code" "commit"
   assert_success
   while IFS= read -r line; do
     [[ "$line" == *"|"* ]] || fail "line missing pipe delimiter: $line"
   done <<< "$output"
 }
 
-@test "cmd_tiers: last tier appears first after save" {
-  save_last_tier "commit" "claude" "opus"
-  run cmd_tiers "claude" "commit"
+@test "cmd_models: last model appears first after save" {
+  save_last_model "commit" "claude-code" "claude-opus-4-6"
+  run cmd_models "claude-code" "commit"
   assert_success
-  assert_line --index 0 "opus|Opus"
+  assert_line --index 0 "claude-opus-4-6|claude-opus-4-6"
 }

@@ -6,50 +6,57 @@ setup() {
   source "${REPO_ROOT}/lib/ai-common.sh"
 }
 
-@test "tier_display_name: haiku" {
-  run tier_display_name "haiku"
+@test "models_for_provider: claude-code includes sonnet" {
+  run models_for_provider "claude-code"
   assert_success
-  assert_output "Haiku"
+  assert_output --partial "claude-sonnet-4-6"
 }
 
-@test "tier_display_name: sonnet" {
-  run tier_display_name "sonnet"
+@test "models_for_provider: gemini-api includes pro" {
+  run models_for_provider "gemini-api"
   assert_success
-  assert_output "Sonnet"
+  assert_output --partial "gemini-3.1-pro-preview"
 }
 
-@test "tier_display_name: opus" {
-  run tier_display_name "opus"
+@test "models_for_provider: openai-api includes gpt-5.4" {
+  run models_for_provider "openai-api"
   assert_success
-  assert_output "Opus"
+  assert_output --partial "gpt-5.4"
 }
 
-@test "tier_display_name: flash-lite" {
-  run tier_display_name "flash-lite"
+@test "models_for_provider: vertex includes all families" {
+  run models_for_provider "vertex"
   assert_success
-  assert_output "Flash Lite"
+  assert_output --partial "gemini-3.1-flash-lite-preview"
+  assert_output --partial "claude-opus-4-6"
+  assert_output --partial "gpt-5.4-mini"
 }
 
-@test "tier_display_name: pro" {
-  run tier_display_name "pro"
-  assert_success
-  assert_output "Pro"
+@test "models_for_provider: unknown exits non-zero" {
+  run models_for_provider "unknown"
+  assert_failure
 }
 
-@test "tier_display_name: mini" {
-  run tier_display_name "mini"
+@test "default_model_for_provider: pr+anthropic-api uses opus" {
+  run default_model_for_provider "pr" "anthropic-api"
   assert_success
-  assert_output "Mini"
+  assert_output "claude-opus-4-6"
 }
 
-@test "tier_display_name: standard" {
-  run tier_display_name "standard"
+@test "default_model_for_provider: commit+openai-api uses mini" {
+  run default_model_for_provider "commit" "openai-api"
   assert_success
-  assert_output "Standard"
+  assert_output "gpt-5.4-mini"
 }
 
-@test "tier_display_name: unknown produces no output" {
-  run tier_display_name "unknown"
+@test "provider_family: vertex maps to gemini runtime" {
+  run provider_family "vertex"
   assert_success
-  assert_output ""
+  assert_output "gemini"
+}
+
+@test "provider_family: codex maps to openai runtime" {
+  run provider_family "codex"
+  assert_success
+  assert_output "openai"
 }
