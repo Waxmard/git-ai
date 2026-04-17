@@ -93,10 +93,10 @@ render_pr_output() {
 
   printf '%s\n' "$existing" > "$old_tmp"
   printf '%s\n' "$output"   > "$new_tmp"
-  git --no-pager diff --no-index --color=always --word-diff=color \
+  git --no-pager diff --no-index --color=always \
     -U9999 --src-prefix=cached/ --dst-prefix=updated/ \
     "$old_tmp" "$new_tmp" 2>/dev/null |
-    awk 'seen {print; next} /@@ -[0-9]/ {seen=1}' || true
+    awk '/@@ -[0-9]/ {seen=1} seen {print}' || true
   rm -f "$old_tmp" "$new_tmp"
 }
 

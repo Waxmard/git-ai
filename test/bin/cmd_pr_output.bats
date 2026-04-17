@@ -65,3 +65,21 @@ run_render_pr_output() {
   assert_success
   assert_output ""
 }
+
+@test "render_pr_output: changed cached PR in tty mode prints visible line diff" {
+  run_render_pr_output $'refactor: title\n\n### Refactors\n- existing bullet' $'refactor: title\n\n### Refactors\n- existing bullet\n- new bullet' "true"
+
+  [ "$STATUS" -eq 0 ]
+  run cat "$STDOUT_FILE"
+  assert_success
+  assert_output --partial "@@ -1,4 +1,5 @@"
+  assert_output --partial $'\e[32m+\e[m'
+  assert_output --partial "- new bullet"
+  refute_output --partial "diff --git"
+  refute_output --partial "index "
+  refute_output --partial "--- "
+  refute_output --partial "+++ "
+  run cat "$STDERR_FILE"
+  assert_success
+  assert_output ""
+}
