@@ -368,7 +368,9 @@ ${INPUT}"
     save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" ||
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
-  render_pr_output "${EXISTING:-}" "$OUTPUT" "$(if [[ -t 1 ]]; then printf 'true'; else printf 'false'; fi)"
+  local IS_TTY=false
+  [[ -t 1 ]] && IS_TTY=true
+  render_pr_output "${EXISTING:-}" "$OUTPUT" "$IS_TTY"
 }
 
 cmd_providers() {
