@@ -19,8 +19,18 @@ teardown() {
   while IFS= read -r line; do
     [[ "$line" == *"|"* ]] || fail "line missing pipe: $line"
   done <<< "$output"
-  assert_output --partial "vertex:gemini-3.1-pro-preview|Vertex AI · gemini-3.1-pro-preview"
-  assert_output --partial "claude-code:claude-haiku-4-5-20251001|Claude Code · claude-haiku-4-5-20251001"
+  assert_output --partial "vertex:gemini-3.1-pro-preview|gemini-3.1-pro-preview · Vertex AI"
+  # Display strips the trailing date suffix from claude-haiku-4-5-20251001
+  assert_output --partial "claude-code:claude-haiku-4-5-20251001|claude-haiku-4-5 · Claude Code"
+}
+
+@test "list_options: date suffix stripped from display, kept in value" {
+  run list_options commit
+  assert_success
+  # Value portion still has the full model ID
+  assert_output --partial "anthropic-api:claude-haiku-4-5-20251001|"
+  # Label portion shows short form without -20251001
+  refute_output --partial "· claude-haiku-4-5-20251001"
 }
 
 @test "list_options commit: no last entry when no saved message" {
@@ -48,8 +58,8 @@ teardown() {
   push_choice_history commit "claude-code:claude-sonnet-4-6"
   run list_options commit
   assert_success
-  assert_line --index 0 "claude-code:claude-sonnet-4-6|Claude Code · claude-sonnet-4-6"
-  assert_line --index 1 "codex:gpt-5.4|Codex CLI · gpt-5.4"
+  assert_line --index 0 "claude-code:claude-sonnet-4-6|claude-sonnet-4-6 · Claude Code"
+  assert_line --index 1 "codex:gpt-5.4|gpt-5.4 · Codex CLI"
 }
 
 @test "list_options: stale last history entry is skipped when no saved message" {
@@ -59,7 +69,7 @@ teardown() {
   assert_success
   # "last" pushed to history but saved message never existed — should be skipped
   refute_output --partial "last|reuse saved message"
-  assert_line --index 0 "claude-code:claude-opus-4-6|Claude Code · claude-opus-4-6"
+  assert_line --index 0 "claude-code:claude-opus-4-6|claude-opus-4-6 · Claude Code"
 }
 
 @test "list_options: last entry floats when both in history and saved message exists" {

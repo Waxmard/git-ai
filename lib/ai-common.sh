@@ -365,12 +365,15 @@ list_options() {
     fi
   fi
 
-  local provider model display
+  local provider model display short
   for provider in "${providers[@]}"; do
     display=$(provider_display_name "$provider")
     while IFS= read -r model; do
       [[ -n "$model" ]] || continue
-      table+="${provider}:${model}"$'\t'"${display} · ${model}"$'\n'
+      # Strip trailing YYYYMMDD date suffix from display (e.g. claude-haiku-4-5-20251001
+      # → claude-haiku-4-5). Value keeps the full ID so resolve_model still matches.
+      short="${model%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
+      table+="${provider}:${model}"$'\t'"${short} · ${display}"$'\n'
     done < <(models_for_provider "$provider")
   done
 

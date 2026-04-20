@@ -34,7 +34,7 @@ setup() {
   rm -rf "$repo"
   assert_success
   assert_output --partial "vertex:"
-  assert_output --partial "|Vertex AI · "
+  assert_output --partial " · Vertex AI"
 }
 
 @test "git-ai: unknown subcommand exits 1" {

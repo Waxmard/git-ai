@@ -40,5 +40,5 @@ teardown() {
   push_choice_history commit "codex:gpt-5.4-mini"
   run cmd_options commit
   assert_success
-  assert_line --index 0 "codex:gpt-5.4-mini|Codex CLI · gpt-5.4-mini"
+  assert_line --index 0 "codex:gpt-5.4-mini|gpt-5.4-mini · Codex CLI"
 }
