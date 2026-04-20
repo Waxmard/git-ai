@@ -83,3 +83,25 @@ run_render_pr_output() {
   assert_success
   assert_output ""
 }
+
+@test "render_pr_output: changed line shows '+- (changed)' marker above new content" {
+  run_render_pr_output $'feat: title\n- old bullet' $'feat: title\n- new bullet' "true"
+
+  [ "$STATUS" -eq 0 ]
+  run cat "$STDOUT_FILE"
+  assert_success
+  assert_output --partial $'\e[32m+- (changed)\e[m'
+  assert_output --partial "- new bullet"
+  refute_output --partial "+- new bullet"
+  refute_output --partial "- old bullet"
+}
+
+@test "render_pr_output: new line marker and content appear on separate lines" {
+  run_render_pr_output $'feat: a\n- one' $'feat: a\n- one\n- two' "true"
+
+  [ "$STATUS" -eq 0 ]
+  run cat "$STDOUT_FILE"
+  assert_success
+  assert_output --partial $'\e[32m+\e[m\n- two'
+  refute_output --partial "+- two"
+}

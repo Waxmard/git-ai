@@ -93,10 +93,36 @@ render_pr_output() {
 
   printf '%s\n' "$existing" > "$old_tmp"
   printf '%s\n' "$output"   > "$new_tmp"
-  git --no-pager diff --no-index --color=always \
+  git --no-pager diff --no-index --color=never \
     -U9999 --src-prefix=cached/ --dst-prefix=updated/ \
     "$old_tmp" "$new_tmp" 2>/dev/null |
-    awk '/@@ -[0-9]/ {seen=1} seen {print}' || true
+    awk '
+      function flush_group(    i, changed_count) {
+        changed_count = (minus_count < plus_count ? minus_count : plus_count)
+        for (i = changed_count; i < minus_count; i++) {
+          print minus_lines[i]
+        }
+        for (i = 0; i < plus_count; i++) {
+          if (i < changed_count) {
+            printf "\033[32m+- (changed)\033[m\n"
+          } else {
+            printf "\033[32m+\033[m\n"
+          }
+          print plus_lines[i]
+        }
+        split("", minus_lines)
+        split("", plus_lines)
+        minus_count = 0
+        plus_count = 0
+      }
+      BEGIN { seen = 0; minus_count = 0; plus_count = 0 }
+      !seen { if (/^@@ -[0-9]/) { seen = 1; print } ; next }
+      /^@@ / { flush_group(); print; next }
+      /^-/ { minus_lines[minus_count++] = $0; next }
+      /^\+/ { plus_lines[plus_count++] = substr($0, 2); next }
+      { flush_group(); print }
+      END { flush_group() }
+    ' || true
   rm -f "$old_tmp" "$new_tmp"
 }
 
