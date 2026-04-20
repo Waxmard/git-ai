@@ -22,6 +22,21 @@ setup() {
   assert_output --partial "models"
 }
 
+@test "git-ai: usage mentions options" {
+  run "$GIT_AI"
+  assert_output --partial "options"
+}
+
+@test "git-ai options: commit emits pipe-delimited lines" {
+  local repo
+  repo=$(make_test_repo)
+  run bash -c "cd '$repo' && '$GIT_AI' options commit"
+  rm -rf "$repo"
+  assert_success
+  assert_output --partial "vertex:"
+  assert_output --partial "|Vertex AI · "
+}
+
 @test "git-ai: unknown subcommand exits 1" {
   run "$GIT_AI" boguscommand
   assert_failure 1

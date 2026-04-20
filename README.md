@@ -82,9 +82,22 @@ git-ai mr [...]   # alias for pr
 - Non-`vertex` auth methods default to a stronger model when `model-id` is omitted
 - `vertex` always requires an explicit model ID
 
+### options
+
+List every auth-method / model combo as a flat pipe-delimited list, LRU-sorted. Primary input for the fzf-based Lazygit integration; also useful for custom pickers.
+
+```bash
+git-ai options [commit|pr]
+```
+
+- Emits one `provider:model|<label>` line per selectable combo
+- For `commit`, also emits `last|reuse saved message` when a saved message exists
+- Most-recent picks (from `.git/{tool}-choice-history`) float to the top; remaining combos follow in default order
+- `git-ai commit <provider:model>` and `git-ai pr <provider:model>` accept the emitted value directly
+
 ### providers / models
 
-List available auth methods and models, ordered by last-used. Primarily for Lazygit integration.
+List available auth methods and models, ordered by last-used. Kept for scripting and as a fallback when `options` isn't a fit.
 
 `last` is only a commit provider option; PR refinement reuses cached prior output automatically.
 
@@ -108,31 +121,22 @@ Last-used auth method and model are saved per repo in `.git/`, so repeated runs 
 
 ## Lazygit integration
 
-Add to `~/.config/lazygit/config.yml`:
+Covers `git-ai commit` only — run `git-ai pr <provider:model>` from the terminal for PR generation.
+
+Requires [fzf](https://github.com/junegunn/fzf) on your PATH. Add the following under `customCommands:` in `~/.config/lazygit/config.yml`:
 
 ```yaml
 customCommands:
   - key: "<c-g>"
-    description: "AI commit message"
-    command: 'git commit -m "$(git-ai commit {{.Form.Provider}} {{.Form.Model}})" --edit'
+    description: "AI commit message (git-ai + fzf)"
     context: "files"
-    prompts:
-      - type: "menuFromCommand"
-        title: "Select Auth Method"
-        key: "Provider"
-        command: "git-ai providers commit"
-        filter: '(?P<value>[^|]+)\|(?P<label>.+)'
-        valueFormat: '{{ .value }}'
-        labelFormat: '{{ .label }}'
-      - type: "menuFromCommand"
-        title: "Select Model"
-        key: "Model"
-        command: "git-ai models {{.Form.Provider}} commit"
-        filter: '(?P<value>[^|]+)\|(?P<label>.+)'
-        valueFormat: '{{ .value }}'
-        labelFormat: '{{ .label }}'
+    command: |
+      choice=$(git-ai options commit | fzf --delimiter='|' --with-nth=2 --no-sort --tiebreak=index --prompt='git-ai> ') || exit 0
+      git commit -m "$(git-ai commit "${choice%%|*}")" --edit
     output: terminal
 ```
+
+Pressing `<c-g>` in the files panel opens an fzf picker showing every auth+model combo (plus `reuse saved message` when available). Typeahead narrows instantly; Enter commits with the generated message. Selections float to the top of the list on subsequent invocations.
 
 ## Python library
 

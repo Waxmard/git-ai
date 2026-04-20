@@ -67,6 +67,38 @@ save_last_message() {
   save_last_choice "${1}-last-message" "$2"
 }
 
+# .git/{tool}-choice-history — newline-separated LRU of picks (most recent first).
+CHOICE_HISTORY_CAP=30
+
+get_choice_history() {
+  local tool_name="$1"
+  local git_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 0
+  local history_file="${git_dir}/${tool_name}-choice-history"
+  [[ -r "$history_file" ]] || return 0
+  cat "$history_file"
+}
+
+push_choice_history() {
+  local tool_name="$1"
+  local value="$2"
+  [[ -n "$value" ]] || return 0
+  local git_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 0
+  local history_file="${git_dir}/${tool_name}-choice-history"
+
+  local -a entries=("$value")
+  if [[ -r "$history_file" ]]; then
+    local existing
+    while IFS= read -r existing; do
+      [[ -n "$existing" && "$existing" != "$value" ]] || continue
+      entries+=("$existing")
+      [[ ${#entries[@]} -lt $CHOICE_HISTORY_CAP ]] || break
+    done <"$history_file"
+  fi
+  printf '%s\n' "${entries[@]}" >"$history_file" 2>/dev/null || true
+}
+
 load_gemini_env() {
   if [[ -n "${GOOGLE_CLOUD_PROJECT:-}" ]]; then
     export GOOGLE_CLOUD_PROJECT
@@ -310,6 +342,64 @@ list_models() {
   for model in "${all[@]}"; do
     printf '%s|%s\n' "$model" "$model"
   done
+}
+
+# list_options TOOL
+# Emits one "value|label" line per selectable combo for TOOL (commit|pr).
+# Values are either "last" (commit only, when saved message exists) or
+# "provider:model". History-ordered entries come first, then remaining
+# combos in provider-major / model-minor default order.
+list_options() {
+  local tool_name="${1:-commit}"
+  local providers=(vertex gemini-api claude-code anthropic-api codex openai-api)
+
+  # Build candidate table as a newline-delimited "value<TAB>label" string
+  # (bash 3.2 on macOS has no associative arrays).
+  local table=""
+
+  if [[ "$tool_name" == "commit" ]]; then
+    local git_dir
+    if git_dir=$(git rev-parse --git-dir 2>/dev/null) && \
+       [[ -r "${git_dir}/commit-last-message" ]]; then
+      table+=$'last\treuse saved message\n'
+    fi
+  fi
+
+  local provider model display
+  for provider in "${providers[@]}"; do
+    display=$(provider_display_name "$provider")
+    while IFS= read -r model; do
+      [[ -n "$model" ]] || continue
+      table+="${provider}:${model}"$'\t'"${display} · ${model}"$'\n'
+    done < <(models_for_provider "$provider")
+  done
+
+  # Emit history entries first (only those present in the candidate table),
+  # then remaining candidates in their default order. Track emitted values
+  # in a newline-delimited string so we can check membership without
+  # associative arrays.
+  local emitted=$'\n'
+  local entry label
+
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    case "$emitted" in
+      *$'\n'"$entry"$'\n'*) continue ;;
+    esac
+    label=$(printf '%s\n' "$table" | awk -F'\t' -v v="$entry" '$1 == v {print $2; exit}')
+    [[ -n "$label" ]] || continue
+    printf '%s|%s\n' "$entry" "$label"
+    emitted+="$entry"$'\n'
+  done < <(get_choice_history "$tool_name")
+
+  while IFS=$'\t' read -r entry label; do
+    [[ -n "$entry" ]] || continue
+    case "$emitted" in
+      *$'\n'"$entry"$'\n'*) continue ;;
+    esac
+    printf '%s|%s\n' "$entry" "$label"
+    emitted+="$entry"$'\n'
+  done <<< "$table"
 }
 
 default_model_for_provider() {
