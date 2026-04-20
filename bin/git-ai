@@ -220,7 +220,7 @@ cmd_pr() {
 
   # Each commit prefixed with GITAI_COMMIT to distinguish subjects from body lines
   local LOG
-  LOG=$(git log --format="GITAI_COMMIT %s%n%b" "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
+  LOG=$(git log --first-parent --no-merges --format="GITAI_COMMIT %s%n%b" "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
   [[ -z "$LOG" ]] && die "no commits ahead of $BASE"
 
   # Count how many commits follow conventional commit format (subject lines only)
@@ -254,7 +254,7 @@ cmd_pr() {
 
   # Narrow LOG to new commits only when incremental (CONVENTIONAL_COUNT already from full log)
   if [[ "$INPUT_BASE" != "$BASE" ]]; then
-    LOG=$(git log --format="GITAI_COMMIT %s%n%b" "${INPUT_BASE}..HEAD" 2>/dev/null) || LOG=""
+    LOG=$(git log --first-parent --no-merges --format="GITAI_COMMIT %s%n%b" "${INPUT_BASE}..HEAD" 2>/dev/null) || LOG=""
   fi
 
   # No new commits since last generation — output cached PR directly, skip LLM call

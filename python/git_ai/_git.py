@@ -117,7 +117,12 @@ def get_mr_release_context(repo_path: str | Path) -> str:
 def get_commit_log(repo_path: str | Path, base_branch: str) -> str:
     """Return commit log with GITAI_COMMIT subject prefixes."""
     return _git(
-        repo_path, "log", "--format=GITAI_COMMIT %s%n%b", f"{base_branch}..HEAD"
+        repo_path,
+        "log",
+        "--first-parent",
+        "--no-merges",
+        "--format=GITAI_COMMIT %s%n%b",
+        f"{base_branch}..HEAD",
     )
 
 
