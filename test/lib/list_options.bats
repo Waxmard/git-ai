@@ -6,11 +6,14 @@ setup() {
   TEST_REPO="$(make_test_repo)"
   cd "$TEST_REPO"
   source "${REPO_ROOT}/lib/ai-common.sh"
+  # Isolate from any real ~/.config/git-ai/options.conf
+  export XDG_CONFIG_HOME="$(mktemp -d)"
 }
 
 teardown() {
   cd /tmp
-  rm -rf "$TEST_REPO"
+  rm -rf "$TEST_REPO" "$XDG_CONFIG_HOME"
+  unset XDG_CONFIG_HOME
 }
 
 @test "list_options commit: emits pipe-delimited provider:model combos" {

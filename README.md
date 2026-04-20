@@ -119,6 +119,27 @@ git-ai models <auth-method> [commit|pr]
 
 Last-used auth method and model are saved per repo in `.git/`, so repeated runs remember your selection.
 
+## Narrowing the picker list
+
+By default `git-ai options` enumerates every supported provider/model combo — 19 entries. Most users only have access to two or three. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
+
+```ini
+[claude-code]
+claude-haiku-4-5-20251001
+claude-sonnet-4-6
+
+[codex]
+gpt-5.4-mini
+
+# Empty section hides this provider entirely
+[vertex]
+```
+
+- `[provider]` headers must be one of: `vertex`, `gemini-api`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
+- Model IDs under a header are passed through to the provider verbatim, so you can list future model IDs (e.g. a newly released `claude-sonnet-5-0`) without waiting for a git-ai release.
+- Delete the file to restore the full shipped catalog.
+- See [`examples/options.conf`](examples/options.conf) for a starter.
+
 ## Lazygit integration
 
 Covers `git-ai commit` only — run `git-ai pr <provider:model>` from the terminal for PR generation.

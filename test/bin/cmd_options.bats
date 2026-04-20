@@ -7,11 +7,13 @@ setup() {
   cd "$TEST_REPO"
   source "${REPO_ROOT}/lib/ai-common.sh"
   source "${REPO_ROOT}/bin/git-ai"
+  export XDG_CONFIG_HOME="$(mktemp -d)"
 }
 
 teardown() {
   cd /tmp
-  rm -rf "$TEST_REPO"
+  rm -rf "$TEST_REPO" "$XDG_CONFIG_HOME"
+  unset XDG_CONFIG_HOME
 }
 
 @test "cmd_options commit: outputs pipe-delimited lines" {

@@ -28,10 +28,11 @@ setup() {
 }
 
 @test "git-ai options: commit emits pipe-delimited lines" {
-  local repo
+  local repo xdg
   repo=$(make_test_repo)
-  run bash -c "cd '$repo' && '$GIT_AI' options commit"
-  rm -rf "$repo"
+  xdg=$(mktemp -d)
+  run bash -c "cd '$repo' && XDG_CONFIG_HOME='$xdg' '$GIT_AI' options commit"
+  rm -rf "$repo" "$xdg"
   assert_success
   assert_output --partial "vertex:"
   assert_output --partial " · Vertex AI"

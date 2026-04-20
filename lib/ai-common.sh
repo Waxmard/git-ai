@@ -344,11 +344,51 @@ list_models() {
   done
 }
 
+# Path to user options config. XDG spec: $XDG_CONFIG_HOME/git-ai/options.conf,
+# falling back to ~/.config/git-ai/options.conf.
+user_options_path() {
+  local xdg="${XDG_CONFIG_HOME:-$HOME/.config}"
+  printf '%s/git-ai/options.conf\n' "$xdg"
+}
+
+# Parse the user options file and emit one "provider:model" line per enabled
+# combo. Empty sections drop that provider entirely. Unknown provider section
+# names are silently ignored. Custom model IDs (not in the shipped catalog)
+# are passed through as-is.
+parse_user_options() {
+  local path="${1:-$(user_options_path)}"
+  [[ -r "$path" ]] || return 0
+
+  local line trimmed section=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Strip inline # comment then surrounding whitespace.
+    trimmed="${line%%#*}"
+    trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [[ -n "$trimmed" ]] || continue
+
+    if [[ "$trimmed" =~ ^\[([^][]+)\]$ ]]; then
+      local candidate="${BASH_REMATCH[1]}"
+      if provider_is_valid "$candidate" && [[ "$candidate" != "last" ]]; then
+        section="$candidate"
+      else
+        section=""
+      fi
+      continue
+    fi
+
+    [[ -n "$section" ]] || continue
+    printf '%s:%s\n' "$section" "$trimmed"
+  done <"$path"
+}
+
 # list_options TOOL
 # Emits one "value|label" line per selectable combo for TOOL (commit|pr).
 # Values are either "last" (commit only, when saved message exists) or
 # "provider:model". History-ordered entries come first, then remaining
-# combos in provider-major / model-minor default order.
+# combos in provider-major / model-minor default order. If a user options
+# file exists at $XDG_CONFIG_HOME/git-ai/options.conf it fully replaces the
+# default provider/model catalog for this listing.
 list_options() {
   local tool_name="${1:-commit}"
   local providers=(vertex gemini-api claude-code anthropic-api codex openai-api)
@@ -365,17 +405,27 @@ list_options() {
     fi
   fi
 
+  local user_entries=""
+  user_entries=$(parse_user_options)
+
   local provider model display short
-  for provider in "${providers[@]}"; do
-    display=$(provider_display_name "$provider")
-    while IFS= read -r model; do
-      [[ -n "$model" ]] || continue
-      # Strip trailing YYYYMMDD date suffix from display (e.g. claude-haiku-4-5-20251001
-      # → claude-haiku-4-5). Value keeps the full ID so resolve_model still matches.
+  if [[ -n "$user_entries" ]]; then
+    while IFS=':' read -r provider model; do
+      [[ -n "$provider" && -n "$model" ]] || continue
+      display=$(provider_display_name "$provider")
       short="${model%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
       table+="${provider}:${model}"$'\t'"${short} · ${display}"$'\n'
-    done < <(models_for_provider "$provider")
-  done
+    done <<< "$user_entries"
+  else
+    for provider in "${providers[@]}"; do
+      display=$(provider_display_name "$provider")
+      while IFS= read -r model; do
+        [[ -n "$model" ]] || continue
+        short="${model%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
+        table+="${provider}:${model}"$'\t'"${short} · ${display}"$'\n'
+      done < <(models_for_provider "$provider")
+    done
+  fi
 
   # Emit history entries first (only those present in the candidate table),
   # then remaining candidates in their default order. Track emitted values
@@ -428,6 +478,12 @@ resolve_model() {
 
   if [[ -n "$model" ]]; then
     if models_for_provider "$provider" | grep -Fxq "$model"; then
+      printf '%s\n' "$model"
+      return
+    fi
+    # Permit custom model IDs declared in the user options file — this lets
+    # the config add future model IDs without a git-ai release.
+    if parse_user_options | grep -Fxq "${provider}:${model}"; then
       printf '%s\n' "$model"
       return
     fi
