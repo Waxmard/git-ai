@@ -356,7 +356,8 @@ user_options_path() {
 # names are silently ignored. Custom model IDs (not in the shipped catalog)
 # are passed through as-is.
 parse_user_options() {
-  local path="${1:-$(user_options_path)}"
+  local path
+  path=$(user_options_path)
   [[ -r "$path" ]] || return 0
 
   local line trimmed section=""
