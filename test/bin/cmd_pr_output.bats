@@ -73,8 +73,7 @@ run_render_pr_output() {
   run cat "$STDOUT_FILE"
   assert_success
   assert_output --partial "@@ -1,4 +1,5 @@"
-  assert_output --partial $'\e[32m+\e[m'
-  assert_output --partial "- new bullet"
+  assert_output --partial $'\e[32m+ - new bullet\e[m'
   refute_output --partial "diff --git"
   refute_output --partial "index "
   refute_output --partial "--- "
@@ -84,24 +83,42 @@ run_render_pr_output() {
   assert_output ""
 }
 
-@test "render_pr_output: changed line shows '+- (changed)' marker above new content" {
+@test "render_pr_output: changed line shows '~' prefix with new content on same line" {
   run_render_pr_output $'feat: title\n- old bullet' $'feat: title\n- new bullet' "true"
 
   [ "$STATUS" -eq 0 ]
   run cat "$STDOUT_FILE"
   assert_success
-  assert_output --partial $'\e[32m+- (changed)\e[m'
-  assert_output --partial "- new bullet"
-  refute_output --partial "+- new bullet"
+  assert_output --partial $'\e[32m~ - new bullet\e[m'
+  refute_output --partial "+- (changed)"
   refute_output --partial "- old bullet"
 }
 
-@test "render_pr_output: new line marker and content appear on separate lines" {
+@test "render_pr_output: added line shows '+' prefix and content on same line" {
   run_render_pr_output $'feat: a\n- one' $'feat: a\n- one\n- two' "true"
 
   [ "$STATUS" -eq 0 ]
   run cat "$STDOUT_FILE"
   assert_success
-  assert_output --partial $'\e[32m+\e[m\n- two'
+  assert_output --partial $'\e[32m+ - two\e[m'
   refute_output --partial "+- two"
+}
+
+@test "render_pr_output: removed line shows '-' prefix with red color" {
+  run_render_pr_output $'feat: a\n- one\n- two' $'feat: a\n- one' "true"
+
+  [ "$STATUS" -eq 0 ]
+  run cat "$STDOUT_FILE"
+  assert_success
+  assert_output --partial $'\e[31m- - two\e[m'
+}
+
+@test "render_pr_output: context lines keep two-space prefix" {
+  run_render_pr_output $'feat: a\n- one' $'feat: a\n- one\n- two' "true"
+
+  [ "$STATUS" -eq 0 ]
+  run cat "$STDOUT_FILE"
+  assert_success
+  assert_output --partial $'\n  feat: a\n'
+  assert_output --partial $'\n  - one\n'
 }
