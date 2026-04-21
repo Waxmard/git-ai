@@ -6,6 +6,7 @@ Runs standalone (invoked by bin/git-ai as a script) or importable as
 from __future__ import annotations
 
 import difflib
+import os
 import sys
 from argparse import ArgumentParser
 from pathlib import Path
@@ -76,16 +77,40 @@ def render_pr_diff(existing: str, updated: str, *, color: bool) -> str:
     return "\n".join(out) + "\n"
 
 
+def _color_enabled() -> bool:
+    """Respect an explicit override; otherwise honour stdout isatty()."""
+    forced = os.environ.get("GIT_AI_FORCE_COLOR")
+    if forced == "1":
+        return True
+    if forced == "0":
+        return False
+    return sys.stdout.isatty()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(prog="git_ai._pr_render")
-    parser.add_argument("--color", action="store_true")
     parser.add_argument("existing", help="Path to cached PR text")
     parser.add_argument("updated", help="Path to updated PR text")
     args = parser.parse_args(argv)
 
     existing = Path(args.existing).read_text(encoding="utf-8")
     updated = Path(args.updated).read_text(encoding="utf-8")
-    sys.stdout.write(render_pr_diff(existing, updated, color=args.color))
+
+    color = _color_enabled()
+
+    # No prior PR or non-interactive stdout: emit the updated text verbatim.
+    if not existing.strip() or not color:
+        sys.stdout.write(updated)
+        return 0
+
+    if existing == updated:
+        sys.stderr.write(
+            "git-ai: regenerated PR is unchanged; no diff changes to show\n"
+        )
+        sys.stdout.write(updated)
+        return 0
+
+    sys.stdout.write(render_pr_diff(existing, updated, color=color))
     return 0
 
 

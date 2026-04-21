@@ -406,7 +406,7 @@ list_options() {
     fi
   fi
 
-  local user_entries=""
+  local user_entries
   user_entries=$(parse_user_options)
 
   local provider model display short
@@ -461,6 +461,24 @@ list_options() {
 # the '|' delimiter). Returns non-zero if fzf is missing, GIT_AI_NO_FZF is
 # set, or the user cancels. Caller is responsible for the tty check — this
 # function is invoked inside $(...) so its own stdout is never a tty.
+# pick_or_recall_provider TOOL [IS_TTY]
+# On an interactive stdout, offers the fzf picker; otherwise (or on cancel)
+# falls back to the tool's saved provider. Prints "provider" or
+# "provider:model". Non-zero if neither a pick nor a saved provider exists.
+# IS_TTY must be evaluated by the caller (this runs in $(...) with fd 1 piped).
+pick_or_recall_provider() {
+  local tool_name="$1"
+  local is_tty="${2:-false}"
+  local picked
+  if [[ "$is_tty" == "true" ]] && picked=$(pick_via_fzf "$tool_name"); then
+    printf '%s\n' "$picked"
+    return 0
+  fi
+  picked=$(get_last_provider "$tool_name")
+  [[ -n "$picked" ]] || return 1
+  printf '%s\n' "$picked"
+}
+
 pick_via_fzf() {
   local tool_name="${1:-commit}"
   command -v fzf >/dev/null 2>&1 || return 127
@@ -514,6 +532,27 @@ resolve_model() {
   fi
 
   default_model_for_provider "$tool_name" "$provider"
+}
+
+_run_gemini_cli() {
+  local model="$1"
+  local prompt="$2"
+  local input="$3"
+  local gemini_bin err_file out status err
+  gemini_bin=$(resolve_gemini_bin) || die "Gemini CLI not found. Set GEMINI_BIN or add gemini to PATH."
+  err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-gemini.XXXXXX") ||
+    die "failed to create temporary error file"
+  trap 'rm -f "$err_file"' EXIT
+  out=$(printf '%s\n' "$input" | "$gemini_bin" -p "$prompt" -m "$model" -e "" 2>"$err_file")
+  status=$?
+  if [[ $status -ne 0 ]]; then
+    err=$(<"$err_file")
+    rm -f "$err_file"
+    [[ -n "$err" ]] && die "Gemini generation failed: $err"
+    die "Gemini generation failed"
+  fi
+  rm -f "$err_file"
+  printf '%s\n' "$out"
 }
 
 _run_anthropic_api() {
@@ -611,66 +650,15 @@ run_provider() {
       load_gemini_env
       _gemini_has_adc ||
         die "Vertex auth not found. Configure gcloud ADC or GOOGLE_APPLICATION_CREDENTIALS."
-      local gemini_bin
-      gemini_bin=$(resolve_gemini_bin) || die "Gemini CLI not found. Set GEMINI_BIN or add gemini to PATH."
-      local gemini_output
-      local gemini_err_file
-      gemini_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-gemini.XXXXXX") ||
-        die "failed to create temporary error file"
-      trap 'rm -f "$gemini_err_file"' EXIT
-      gemini_output=$(
-        printf '%s\n' "$input" | "$gemini_bin" -p "$prompt" -m "$model" -e "" 2>"$gemini_err_file"
-      )
-      local gemini_status=$?
-
-      if [[ $gemini_status -ne 0 ]]; then
-        local gemini_error
-        gemini_error=$(<"$gemini_err_file")
-        rm -f "$gemini_err_file"
-
-        if [[ -n "$gemini_error" ]]; then
-          die "Gemini generation failed: $gemini_error"
-        fi
-
-        die "Gemini generation failed"
-      fi
-
-      rm -f "$gemini_err_file"
-      printf '%s\n' "$gemini_output" | strip_fences
+      _run_gemini_cli "$model" "$prompt" "$input" | strip_fences
       ;;
     gemini-api)
       load_gemini_env
       local gemini_api_key
       gemini_api_key=$(resolve_gemini_api_key) ||
         die "Gemini API auth not found. Set GEMINI_API_KEY or store 'gemini-api-key' in your keychain."
-      GEMINI_API_KEY="$gemini_api_key"
-      export GEMINI_API_KEY
-      local gemini_bin
-      gemini_bin=$(resolve_gemini_bin) || die "Gemini CLI not found. Set GEMINI_BIN or add gemini to PATH."
-      local gemini_output
-      local gemini_err_file
-      gemini_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-gemini.XXXXXX") ||
-        die "failed to create temporary error file"
-      trap 'rm -f "$gemini_err_file"' EXIT
-      gemini_output=$(
-        printf '%s\n' "$input" | "$gemini_bin" -p "$prompt" -m "$model" -e "" 2>"$gemini_err_file"
-      )
-      local gemini_status=$?
-
-      if [[ $gemini_status -ne 0 ]]; then
-        local gemini_error
-        gemini_error=$(<"$gemini_err_file")
-        rm -f "$gemini_err_file"
-
-        if [[ -n "$gemini_error" ]]; then
-          die "Gemini generation failed: $gemini_error"
-        fi
-
-        die "Gemini generation failed"
-      fi
-
-      rm -f "$gemini_err_file"
-      printf '%s\n' "$gemini_output" | strip_fences
+      export GEMINI_API_KEY="$gemini_api_key"
+      _run_gemini_cli "$model" "$prompt" "$input" | strip_fences
       ;;
     codex)
       command -v codex >/dev/null 2>&1 ||
@@ -709,4 +697,5 @@ $input" >/dev/null 2>"$codex_err_file" || {
   esac
   save_last_provider "$tool_name" "$provider"
   [[ -n "$selected_model" ]] && save_last_model "$tool_name" "$provider" "$selected_model"
+  push_choice_history "$tool_name" "${provider}:${model}"
 }

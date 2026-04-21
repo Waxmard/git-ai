@@ -18,14 +18,17 @@ run_render_pr_output() {
   local output="$2"
   local is_tty="$3"
 
+  local force_color=0
+  [[ "$is_tty" == "true" ]] && force_color=1
+
   STDOUT_FILE="$(mktemp)"
   STDERR_FILE="$(mktemp)"
 
-  EXISTING="$existing" OUTPUT="$output" IS_TTY="$is_tty" \
+  EXISTING="$existing" OUTPUT="$output" GIT_AI_FORCE_COLOR="$force_color" \
     bash -lc '
       source "$REPO_ROOT/lib/ai-common.sh"
       source "$REPO_ROOT/bin/git-ai"
-      render_pr_output "$EXISTING" "$OUTPUT" "$IS_TTY"
+      render_pr_output "$EXISTING" "$OUTPUT"
     ' >"$STDOUT_FILE" 2>"$STDERR_FILE"
   STATUS="$?"
 }

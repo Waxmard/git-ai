@@ -9,8 +9,10 @@ setup() {
   source "${REPO_ROOT}/bin/git-ai"
 
   # Stub run_provider so cmd_commit / cmd_pr are exercised without hitting a real LLM.
+  # Mirrors the real side effect of writing to choice history on success.
   run_provider() {
     printf 'STUB provider=%s model=%s tool=%s\n' "$2" "$5" "$1"
+    push_choice_history "$1" "$2:$5"
   }
   export -f run_provider
 

@@ -121,7 +121,7 @@ Last-used auth method and model are saved per repo in `.git/`, so repeated runs 
 
 ## Narrowing the picker list
 
-By default `git-ai options` enumerates every supported provider/model combo — 19 entries. Most users only have access to two or three. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
+By default `git-ai options` enumerates every supported provider/model combo. Most users only have access to a couple. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
 
 ```ini
 [claude-code]
