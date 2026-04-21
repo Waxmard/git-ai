@@ -456,6 +456,24 @@ list_options() {
   done <<< "$table"
 }
 
+# pick_via_fzf TOOL
+# Launch fzf over list_options output, echo the selected value (text before
+# the '|' delimiter). Returns non-zero if fzf is missing, GIT_AI_NO_FZF is
+# set, or the user cancels. Caller is responsible for the tty check — this
+# function is invoked inside $(...) so its own stdout is never a tty.
+pick_via_fzf() {
+  local tool_name="${1:-commit}"
+  command -v fzf >/dev/null 2>&1 || return 127
+  [[ -z "${GIT_AI_NO_FZF:-}" ]] || return 1
+
+  local choice
+  choice=$(list_options "$tool_name" | fzf \
+    --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
+    --prompt="git-ai ${tool_name}> " --height=40% --reverse) || return 1
+  [[ -n "$choice" ]] || return 1
+  printf '%s\n' "${choice%%|*}"
+}
+
 default_model_for_provider() {
   local tool_name="$1"
   local provider="$2"

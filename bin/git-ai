@@ -118,8 +118,18 @@ cmd_commit() {
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
   if [[ -z "$PROVIDER" ]]; then
-    PROVIDER=$(get_last_provider commit)
-    [[ -n "$PROVIDER" ]] || die "no saved auth method; run 'git-ai providers commit' and then 'git-ai models <auth-method> commit'"
+    local PICKED
+    if [[ -t 1 ]] && PICKED=$(pick_via_fzf commit); then
+      if [[ "$PICKED" == *:* ]]; then
+        PROVIDER="${PICKED%%:*}"
+        MODEL="${PICKED#*:}"
+      else
+        PROVIDER="$PICKED"
+      fi
+    else
+      PROVIDER=$(get_last_provider commit)
+      [[ -n "$PROVIDER" ]] || die "no saved auth method; run 'git-ai providers commit' and then 'git-ai models <auth-method> commit'"
+    fi
   fi
   provider_is_valid "$PROVIDER" || die "unknown auth method: $PROVIDER"
 
@@ -194,8 +204,14 @@ cmd_pr() {
   done
 
   if [[ -z "$PROVIDER" ]]; then
-    PROVIDER=$(get_last_provider pr)
-    [[ -n "$PROVIDER" ]] || die "no saved auth method; run 'git-ai providers pr' and then 'git-ai models <auth-method> pr'"
+    local PICKED
+    if [[ -t 1 ]] && PICKED=$(pick_via_fzf pr) && [[ "$PICKED" == *:* ]]; then
+      PROVIDER="${PICKED%%:*}"
+      MODEL="${PICKED#*:}"
+    else
+      PROVIDER=$(get_last_provider pr)
+      [[ -n "$PROVIDER" ]] || die "no saved auth method; run 'git-ai providers pr' and then 'git-ai models <auth-method> pr'"
+    fi
   fi
 
   local PROMPT_TWO_PASS PROMPT_FALLBACK PROMPT_TWO_PASS_UPDATE PROMPT_FALLBACK_UPDATE

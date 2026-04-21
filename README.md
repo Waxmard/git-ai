@@ -140,9 +140,13 @@ gpt-5.4-mini
 - Delete the file to restore the full shipped catalog.
 - See [`examples/options.conf`](examples/options.conf) for a starter.
 
-## Lazygit integration
+## Terminal picker
 
-Covers `git-ai commit` only — run `git-ai pr <provider:model>` from the terminal for PR generation.
+Running `git-ai commit` or `git-ai pr` without a provider argument launches an inline [fzf](https://github.com/junegunn/fzf) picker over the same provider/model combos Lazygit uses. History entries float to the top. Pass `provider` or `provider:model` to skip the picker. Flags still parse, so `git-ai pr --base staging` opens the picker then runs against the chosen base.
+
+Set `GIT_AI_NO_FZF=1` (or pipe stdout) to disable the picker for scripting. If fzf isn't installed, the tools fall back to the last saved choice.
+
+## Lazygit integration
 
 Requires [fzf](https://github.com/junegunn/fzf) on your PATH. Add the following under `customCommands:` in `~/.config/lazygit/config.yml`:
 
