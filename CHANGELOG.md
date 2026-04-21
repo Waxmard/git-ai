@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.0.0](https://github.com/Waxmard/git-ai/compare/v3.1.1...v4.0.0) (2026-04-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* introduce user-configurable provider/model selection and enhanced PR rendering ([#32](https://github.com/Waxmard/git-ai/issues/32))
+
+### Features
+
+* introduce user-configurable provider/model selection and enhanced PR rendering ([#32](https://github.com/Waxmard/git-ai/issues/32)) ([3620d3c](https://github.com/Waxmard/git-ai/commit/3620d3c143bbfbe4e2a95613bbbb5fc407695603))
+
 ## [3.1.1](https://github.com/Waxmard/git-ai/compare/v3.1.0...v3.1.1) (2026-04-16)
 
 
