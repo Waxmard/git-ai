@@ -163,7 +163,9 @@ cmd_pr() {
       vertex|gemini-api|claude-code|anthropic-api|codex|openai-api)
         PROVIDER="$1"
         shift
-        if [[ -n "${1:-}" ]] && models_for_provider "$PROVIDER" | grep -Fxq "$1"; then
+        # Accept any non-flag token as the model ID; resolve_model validates
+        # against both built-ins and custom entries in options.conf.
+        if [[ -n "${1:-}" && "$1" != --* ]]; then
           MODEL="$1"
           shift
         fi
@@ -218,10 +220,6 @@ cmd_pr() {
   LOG=$(git log --first-parent --no-merges --format='%s%n%b%x1e' "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
   [[ -z "$LOG" ]] && die "no commits ahead of $BASE"
 
-  # Two-pass decision is made over the full range and sticks through narrowing.
-  local TWO_PASS_MODE
-  TWO_PASS_MODE=$(printf '%s' "$LOG" | "${GIT_AI_PYTHON:-python3}" "$PR_DRAFT_PY" | head -n 1)
-
   local EXISTING="" CACHED_SHA=""
   if [[ "$FRESH" != "true" && -n "$CURRENT_BRANCH" ]]; then
     EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
@@ -244,6 +242,11 @@ cmd_pr() {
     return 0
   fi
 
+  # Two-pass decision reflects the narrowed LOG (the commits being summarized).
+  local PR_DRAFT_OUTPUT TWO_PASS_MODE
+  PR_DRAFT_OUTPUT=$(printf '%s' "$LOG" | "${GIT_AI_PYTHON:-python3}" "$PR_DRAFT_PY")
+  TWO_PASS_MODE=$(printf '%s\n' "$PR_DRAFT_OUTPUT" | head -n 1)
+
   # Three-dot merge-base diff for full range; two-dot exact range for incremental
   local DIFF_STAT
   if [[ "$INPUT_BASE" == "$BASE" ]]; then
@@ -256,7 +259,7 @@ cmd_pr() {
 
   if [[ "$TWO_PASS_MODE" == "yes" ]]; then
     local DRAFT_BODY
-    DRAFT_BODY=$(printf '%s' "$LOG" | "${GIT_AI_PYTHON:-python3}" "$PR_DRAFT_PY" | tail -n +2)
+    DRAFT_BODY=$(printf '%s\n' "$PR_DRAFT_OUTPUT" | tail -n +2)
     PROMPT="$PROMPT_TWO_PASS"
     INPUT="<draft>
 $DRAFT_BODY
