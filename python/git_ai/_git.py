@@ -28,6 +28,36 @@ def _git(repo_path: str | Path, *args: str) -> str:
     return result.stdout
 
 
+def get_git_dir(repo_path: str | Path) -> str:
+    """Return the repository git dir path."""
+    git_dir = _git(repo_path, "rev-parse", "--git-dir").strip()
+    git_dir_path = Path(git_dir)
+    if git_dir_path.is_absolute():
+        return str(git_dir_path)
+    return str((Path(repo_path) / git_dir_path).resolve())
+
+
+def get_current_branch(repo_path: str | Path) -> str | None:
+    """Return the current branch name, or None when detached."""
+    branch = _git(repo_path, "branch", "--show-current").strip()
+    return branch or None
+
+
+def get_head_sha(repo_path: str | Path) -> str:
+    """Return HEAD commit SHA."""
+    return _git(repo_path, "rev-parse", "HEAD").strip()
+
+
+def git_ref_exists(repo_path: str | Path, ref: str) -> bool:
+    """Return True when ref resolves to a commit in this repo."""
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{ref}^{{commit}}"],
+        cwd=str(repo_path),
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
 def check_git_repo(repo_path: str | Path) -> None:
     """Raise RuntimeError if not inside a git repository."""
     result = subprocess.run(
@@ -114,14 +144,17 @@ def get_mr_release_context(repo_path: str | Path) -> str:
     )
 
 
-def get_commit_log(repo_path: str | Path, base_branch: str) -> str:
-    """Return commit log with GITAI_COMMIT subject prefixes."""
+def get_commit_log(
+    repo_path: str | Path, base_branch: str, *, rs_delimited: bool = False
+) -> str:
+    """Return commit log with configurable formatting."""
+    fmt = "%s%n%b%x1e" if rs_delimited else "GITAI_COMMIT %s%n%b"
     return _git(
         repo_path,
         "log",
         "--first-parent",
         "--no-merges",
-        "--format=GITAI_COMMIT %s%n%b",
+        f"--format={fmt}",
         f"{base_branch}..HEAD",
     )
 

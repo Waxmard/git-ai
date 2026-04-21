@@ -11,17 +11,14 @@ from google.genai import types
 from ._gemini import COMMIT_MODEL, MR_MODEL, create_gemini_client
 from ._git import (
     DEFAULT_RELEASE_CONTEXT,
-    build_draft_body,
     check_git_repo,
-    count_conventional_commits,
     derive_diff_stat,
-    get_commit_log,
-    get_diff,
-    get_diff_stat,
-    get_mr_release_context,
+    get_git_dir,
     get_release_context,
     get_staged_diff,
 )
+from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
+from ._pr_prompt_build import build_mr_prompt_input
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -215,47 +212,14 @@ def generate_mr_description_from_data(
     if diff_stat is None:
         diff_stat = derive_diff_stat(diff)
 
-    log = commit_log or ""
-    conventional_count, total_count = count_conventional_commits(log)
-    two_pass = total_count > 0 and conventional_count * 2 >= total_count
-
-    if two_pass:
-        draft = build_draft_body(log)
-        if existing_pr:
-            prompt = _load_prompt("pr-two-pass-update.txt")
-            user_input = (
-                f"<existing_pr>\n{existing_pr}\n</existing_pr>\n\n"
-                f"<draft>\n{draft}\n</draft>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>"
-            )
-        else:
-            prompt = _load_prompt("pr-two-pass.txt")
-            user_input = (
-                f"<draft>\n{draft}\n</draft>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>"
-            )
-    else:
-        clean_log = "\n".join(
-            line[len("GITAI_COMMIT "):] if line.startswith("GITAI_COMMIT ") else line
-            for line in log.splitlines()
-        )
-        if existing_pr:
-            prompt = _load_prompt("pr-fallback-update.txt")
-            user_input = (
-                f"<existing_pr>\n{existing_pr}\n</existing_pr>\n\n"
-                f"<commit_log>\n{clean_log}\n</commit_log>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>\n"
-                f"<diff>\n{diff}\n</diff>"
-            )
-        else:
-            prompt = _load_prompt("pr-fallback.txt")
-            user_input = (
-                f"<commit_log>\n{clean_log}\n</commit_log>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>\n"
-                f"<diff>\n{diff}\n</diff>"
-            )
-
-    user_input = f"<release_context>{release_context}</release_context>\n\n{user_input}"
+    prompt_name, user_input = build_mr_prompt_input(
+        diff=diff,
+        commit_log=commit_log,
+        diff_stat=diff_stat,
+        release_context=release_context,
+        existing_pr=existing_pr,
+    )
+    prompt = _load_prompt(prompt_name)
     return _call_gemini(client, model, prompt, user_input)
 
 
@@ -264,6 +228,8 @@ def generate_mr_description(
     base_branch: str = "main",
     client: genai.Client | None = None,
     existing_pr: str | None = None,
+    fresh: bool = False,
+    previous_head_sha: str | None = None,
     model: str | None = None,
 ) -> str:
     """Generate a PR/MR title and description.
@@ -273,6 +239,8 @@ def generate_mr_description(
         base_branch: Branch to compare against.
         client: Gemini client. If None, create_gemini_client() is called.
         existing_pr: Existing PR text for incremental updates (preserves wording).
+        fresh: Ignore cached repo-mode state and regenerate from base_branch.
+        previous_head_sha: Explicit prior generated HEAD SHA to update from.
         model: Gemini model ID. Defaults to MR_MODEL (pro).
 
     Returns:
@@ -283,22 +251,31 @@ def generate_mr_description(
         ValueError: if auth is not configured and client is None.
     """
     repo_path = Path(repo_path)
-    check_git_repo(repo_path)
-
-    log = get_commit_log(repo_path, base_branch)
-    if not log.strip():
-        raise RuntimeError(f"No commits ahead of {base_branch}")
-
-    diff = get_diff(repo_path, base_branch)
-    diff_stat = get_diff_stat(repo_path, base_branch)
-    release_context = get_mr_release_context(repo_path)
-
-    return generate_mr_description_from_data(
-        diff=diff,
-        commit_log=log,
-        diff_stat=diff_stat,
-        release_context=release_context,
+    context = prepare_repo_pr_context(
+        repo_path,
+        base_branch=base_branch,
         existing_pr=existing_pr,
+        previous_head_sha=previous_head_sha,
+        fresh=fresh,
+    )
+    if context.no_changes:
+        return context.existing_pr or ""
+
+    output = generate_mr_description_from_data(
+        diff=context.diff,
+        commit_log=context.commit_log,
+        diff_stat=context.diff_stat,
+        release_context=context.release_context,
+        existing_pr=context.existing_pr,
         client=client,
         model=model,
     )
+    if context.current_branch:
+        save_cached_pr(
+            get_git_dir(repo_path),
+            context.current_branch,
+            base_branch,
+            output,
+            context.head_sha,
+        )
+    return output

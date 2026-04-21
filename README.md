@@ -68,7 +68,7 @@ git-ai commit [auth-method] [model-id]
 Generate a PR title and body from the current branch.
 
 ```bash
-git-ai pr [auth-method] [model-id] [--base <branch>] [--fresh]
+git-ai pr [auth-method] [model-id] [--base <branch>] [--fresh] [--from-sha <commit>]
 git-ai mr [...]   # alias for pr
 ```
 
@@ -78,6 +78,7 @@ git-ai mr [...]   # alias for pr
 - Use `--base` to override (e.g. `--base dev`)
 - Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
 - Use `--fresh` to ignore the saved output and regenerate from scratch
+- Use `--from-sha` to override the saved HEAD and regenerate only from commits after a specific prior generated commit
 - No default auth method on a fresh repo; choose one explicitly
 - Non-`vertex` auth methods default to a stronger model when `model-id` is omitted
 - `vertex` always requires an explicit model ID
@@ -179,6 +180,13 @@ from git_ai import generate_commit_message, generate_mr_description
 
 msg = generate_commit_message(".")
 pr = generate_mr_description(".", base_branch="main")
+pr = generate_mr_description(".", base_branch="main", fresh=True)
+pr = generate_mr_description(
+    ".",
+    base_branch="main",
+    existing_pr=existing_pr_text,
+    previous_head_sha=last_generated_head_sha,
+)
 ```
 
 **Data-mode** (no local checkout required — pass raw diff strings, e.g. fetched from the GitHub/GitLab API):
@@ -205,6 +213,10 @@ pr_text = generate_mr_description_from_data(
 ```
 
 `diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Pass `model=` to override the default Gemini model (`COMMIT_MODEL` / `MR_MODEL`).
+
+Repo-mode now uses the same incremental PR efficiency path as the CLI: it reuses `.git/pr-cache/` automatically, returns the cached PR unchanged when `HEAD` has not advanced, and narrows generation to commits after the last generated `HEAD` when possible. Pass `fresh=True` to disable that behavior for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
+
+Data-mode remains stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description_from_data(..., existing_pr=...)`.
 
 ## Compatibility
 
