@@ -1,6 +1,6 @@
 # git-ai
 
-LLM-powered git workflow tools. Generate commit messages and PR titles using Claude, Gemini, or Codex from the CLI, Lazygit, and other git environments that expose normal Git state.
+LLM-powered git workflow tools. Generate commit messages and PR titles using explicit auth methods and model IDs from the CLI, Lazygit, and other git environments that expose normal Git state.
 
 ## Install
 
@@ -17,17 +17,20 @@ make uninstall
 
 ## Prerequisites
 
-At least one provider must be available:
+At least one auth method must be available:
 
-| Provider | CLI | Auth |
-|----------|-----|------|
-| `claude` | [Claude Code CLI](https://claude.ai/code) — run `claude login` | Claude Code CLI session, or `ANTHROPIC_API_KEY` |
-| `gemini` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `GEMINI_API_KEY`, system keychain, or Google ADC |
-| `codex`  | [Codex CLI](https://github.com/openai/codex) — run `codex login` | Codex CLI session, or `OPENAI_API_KEY` |
+| Auth Method | Runtime | Auth |
+|-------------|---------|------|
+| `vertex` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Google ADC / Vertex credentials |
+| `gemini-api` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `GEMINI_API_KEY` or system keychain |
+| `claude-code` | [Claude Code CLI](https://claude.ai/code) | Claude Code CLI session |
+| `anthropic-api` | `curl` + `python3` | `ANTHROPIC_API_KEY` |
+| `codex` | [Codex CLI](https://github.com/openai/codex) | Codex CLI session |
+| `openai-api` | `curl` + `python3` | `OPENAI_API_KEY` |
 
-`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` modes require `curl` and `python3`, both standard on macOS and most Linux systems.
+`anthropic-api` and `openai-api` require `curl` and `python3`, both standard on macOS and most Linux systems.
 
-### Gemini auth
+### Gemini API auth
 
 git-ai tries these in order until one succeeds:
 
@@ -50,13 +53,14 @@ Both `git-ai` and `aigit` work identically — use whichever you prefer.
 Generate a commit message from staged changes.
 
 ```bash
-git-ai commit [claude|gemini|codex] [tier]
+git-ai commit [auth-method] [model-id]
 ```
 
 - Reads `git diff --staged` and produces a Conventional Commits message
 - Includes a description body for non-trivial changes
-- Default provider: `gemini`
-- Default tiers: `haiku`, `flash-lite`, `mini` (lightweight models for speed)
+- No default auth method on a fresh repo; choose one explicitly
+- Non-`vertex` auth methods default to a lightweight model when `model-id` is omitted
+- `vertex` always requires an explicit model ID
 - Pass `last` as the provider to reuse the previously generated message
 
 ### pr
@@ -64,7 +68,7 @@ git-ai commit [claude|gemini|codex] [tier]
 Generate a PR title and body from the current branch.
 
 ```bash
-git-ai pr [claude|gemini|codex] [tier] [--base <branch>] [--fresh]
+git-ai pr [auth-method] [model-id] [--base <branch>] [--fresh]
 git-ai mr [...]   # alias for pr
 ```
 
@@ -74,60 +78,90 @@ git-ai mr [...]   # alias for pr
 - Use `--base` to override (e.g. `--base dev`)
 - Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
 - Use `--fresh` to ignore the saved output and regenerate from scratch
-- Default provider: `gemini` (defaults to `pro`/`opus` tier — stronger models for PR-level summaries)
+- No default auth method on a fresh repo; choose one explicitly
+- Non-`vertex` auth methods default to a stronger model when `model-id` is omitted
+- `vertex` always requires an explicit model ID
 
-### providers / tiers
+### options
 
-List available providers and tiers, ordered by last-used. Primarily for Lazygit integration.
+List every auth-method / model combo as a flat pipe-delimited list, LRU-sorted. Primary input for the fzf-based Lazygit integration; also useful for custom pickers.
+
+```bash
+git-ai options [commit|pr]
+```
+
+- Emits one `provider:model|<label>` line per selectable combo
+- For `commit`, also emits `last|reuse saved message` when a saved message exists
+- Most-recent picks (from `.git/{tool}-choice-history`) float to the top; remaining combos follow in default order
+- `git-ai commit <provider:model>` and `git-ai pr <provider:model>` accept the emitted value directly
+
+### providers / models
+
+List available auth methods and models, ordered by last-used. Kept for scripting and as a fallback when `options` isn't a fit.
 
 `last` is only a commit provider option; PR refinement reuses cached prior output automatically.
 
 ```bash
 git-ai providers [commit|pr]
-git-ai tiers <provider> [commit|pr]
+git-ai models <auth-method> [commit|pr]
 ```
 
-## Providers
+## Auth Methods And Models
 
-| Provider | Tier | Model | Auth |
-|----------|------|-------|------|
-| `claude` | `haiku` | claude-haiku-4-5-20251001 | Claude Code CLI login, or `ANTHROPIC_API_KEY` |
-| `claude` | `sonnet` | claude-sonnet-4-6 | Claude Code CLI login, or `ANTHROPIC_API_KEY` |
-| `claude` | `opus` | claude-opus-4-6 | Claude Code CLI login, or `ANTHROPIC_API_KEY` |
-| `gemini` | `flash-lite` | gemini-3.1-flash-lite-preview | `GEMINI_API_KEY`, system keychain, or Google ADC |
-| `gemini` | `pro` | gemini-3.1-pro-preview | `GEMINI_API_KEY`, system keychain, or Google ADC |
-| `codex` | `mini` | gpt-5.4-mini | Codex CLI login, or `OPENAI_API_KEY` |
-| `codex` | `standard` | gpt-5.4 | Codex CLI login, or `OPENAI_API_KEY` |
+| Auth Method | Models |
+|-------------|--------|
+| `vertex` | `gemini-3.1-flash-lite-preview`, `gemini-3.1-pro-preview`, `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-6`, `gpt-5.4-mini`, `gpt-5.4` |
+| `gemini-api` | `gemini-3.1-flash-lite-preview`, `gemini-3.1-pro-preview` |
+| `claude-code` | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-6` |
+| `anthropic-api` | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-6` |
+| `codex` | `gpt-5.4-mini`, `gpt-5.4` |
+| `openai-api` | `gpt-5.4-mini`, `gpt-5.4` |
 
-Last-used provider and tier are saved per repo in `.git/`, so repeated runs remember your selection.
+Last-used auth method and model are saved per repo in `.git/`, so repeated runs remember your selection.
+
+## Narrowing the picker list
+
+By default `git-ai options` enumerates every supported provider/model combo. Most users only have access to a couple. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
+
+```ini
+[claude-code]
+claude-haiku-4-5-20251001
+claude-sonnet-4-6
+
+[codex]
+gpt-5.4-mini
+
+# Empty section hides this provider entirely
+[vertex]
+```
+
+- `[provider]` headers must be one of: `vertex`, `gemini-api`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
+- Model IDs under a header are passed through to the provider verbatim, so you can list future model IDs (e.g. a newly released `claude-sonnet-5-0`) without waiting for a git-ai release.
+- Delete the file to restore the full shipped catalog.
+- See [`examples/options.conf`](examples/options.conf) for a starter.
+
+## Terminal picker
+
+Running `git-ai commit` or `git-ai pr` without a provider argument launches an inline [fzf](https://github.com/junegunn/fzf) picker over the same provider/model combos Lazygit uses. History entries float to the top. Pass `provider` or `provider:model` to skip the picker. Flags still parse, so `git-ai pr --base staging` opens the picker then runs against the chosen base.
+
+Set `GIT_AI_NO_FZF=1` (or pipe stdout) to disable the picker for scripting. If fzf isn't installed, the tools fall back to the last saved choice.
 
 ## Lazygit integration
 
-Add to `~/.config/lazygit/config.yml`:
+Requires [fzf](https://github.com/junegunn/fzf) on your PATH. Add the following under `customCommands:` in `~/.config/lazygit/config.yml`:
 
 ```yaml
 customCommands:
   - key: "<c-g>"
-    description: "AI commit message"
-    command: 'git commit -m "$(git-ai commit {{.Form.Provider}} {{.Form.Tier}})" --edit'
+    description: "AI commit message (git-ai + fzf)"
     context: "files"
-    prompts:
-      - type: "menuFromCommand"
-        title: "Select AI Provider"
-        key: "Provider"
-        command: "git-ai providers commit"
-        filter: '(?P<value>[^|]+)\|(?P<label>.+)'
-        valueFormat: '{{ .value }}'
-        labelFormat: '{{ .label }}'
-      - type: "menuFromCommand"
-        title: "Select Model Tier"
-        key: "Tier"
-        command: "git-ai tiers {{.Form.Provider}} commit"
-        filter: '(?P<value>[^|]+)\|(?P<label>.+)'
-        valueFormat: '{{ .value }}'
-        labelFormat: '{{ .label }}'
+    command: |
+      choice=$(git-ai options commit | fzf --delimiter='|' --with-nth=2 --no-sort --tiebreak=index --prompt='git-ai> ') || exit 0
+      git commit -m "$(git-ai commit "${choice%%|*}")" --edit
     output: terminal
 ```
+
+Pressing `<c-g>` in the files panel opens an fzf picker showing every auth+model combo (plus `reuse saved message` when available). Typeahead narrows instantly; Enter commits with the generated message. Selections float to the top of the list on subsequent invocations.
 
 ## Python library
 

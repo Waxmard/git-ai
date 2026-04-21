@@ -1,7 +1,7 @@
 #!/bin/bash
 set -o pipefail
 # git-ai - LLM-powered git workflow tools
-# Usage: git-ai <commit|pr|providers|tiers> [...]
+# Usage: git-ai <commit|pr|providers|models> [...]
 
 SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 # shellcheck source=lib/ai-common.sh
@@ -66,23 +66,57 @@ save_cached_pr() {
   fi
 }
 
+render_pr_output() {
+  local existing="$1"
+  local output="$2"
+  local old_tmp new_tmp
+  old_tmp=$(mktemp 2>/dev/null) || { printf '%s\n' "$output"; return 0; }
+  new_tmp=$(mktemp 2>/dev/null) || { rm -f "$old_tmp"; printf '%s\n' "$output"; return 0; }
+  printf '%s\n' "$existing" > "$old_tmp"
+  printf '%s\n' "$output"   > "$new_tmp"
+  "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_render.py" \
+    "$old_tmp" "$new_tmp" \
+    || printf '%s\n' "$output"
+  rm -f "$old_tmp" "$new_tmp"
+}
+
 # ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
 
 cmd_commit() {
-  local PROVIDER MODEL_TIER
-  PROVIDER=${1:-$(get_last_provider commit)}
-  MODEL_TIER="${2:-}"
+  local PROVIDER MODEL
+  PROVIDER="${1:-}"
+  MODEL="${2:-}"
+  # Accept single-arg "provider:model" form (used by the lazygit fzf flow).
+  if [[ -z "$MODEL" && "$PROVIDER" == *:* ]]; then
+    MODEL="${PROVIDER#*:}"
+    PROVIDER="${PROVIDER%%:*}"
+  fi
   local PROMPT
   PROMPT=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/commit.txt") || die "failed to read commit prompt"
 
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
+  if [[ -z "$PROVIDER" ]]; then
+    local IS_TTY=false PICKED
+    [[ -t 1 ]] && IS_TTY=true
+    PICKED=$(pick_or_recall_provider commit "$IS_TTY") || \
+      die "no saved auth method; run 'git-ai providers commit' and then 'git-ai models <auth-method> commit'"
+    if [[ "$PICKED" == *:* ]]; then
+      PROVIDER="${PICKED%%:*}"
+      MODEL="${PICKED#*:}"
+    else
+      PROVIDER="$PICKED"
+    fi
+  fi
+  provider_is_valid "$PROVIDER" || die "unknown auth method: $PROVIDER"
+
   if [[ "$PROVIDER" == "last" ]]; then
     local GIT_DIR
     GIT_DIR=$(git rev-parse --git-dir)
     [[ -r "${GIT_DIR}/commit-last-message" ]] || die "no saved commit message"
+    push_choice_history commit "last"
     cat "${GIT_DIR}/commit-last-message"
     return 0
   fi
@@ -104,15 +138,15 @@ cmd_commit() {
 ${STAGED_DIFF}
 </diff>"
 
-  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
+  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL") || exit $?
   save_last_message commit "$generated"
   printf '%s\n' "$generated"
 }
 
 cmd_pr() {
-  local PROVIDER MODEL_TIER BASE FRESH
-  PROVIDER=$(get_last_provider pr)
-  MODEL_TIER=""
+  local PROVIDER MODEL BASE FRESH
+  PROVIDER=""
+  MODEL=""
   BASE=""
   FRESH=false
 
@@ -126,21 +160,39 @@ cmd_pr() {
         FRESH=true
         shift
         ;;
-      claude|gemini|codex)
+      vertex|gemini-api|claude-code|anthropic-api|codex|openai-api)
         PROVIDER="$1"
         shift
-        case "${1:-}" in
-          haiku|sonnet|opus|flash-lite|pro|mini|standard)
-            MODEL_TIER="$1"
-            shift
-            ;;
-        esac
+        # Accept any non-flag token as the model ID; resolve_model validates
+        # against both built-ins and custom entries in options.conf.
+        if [[ -n "${1:-}" && "$1" != --* ]]; then
+          MODEL="$1"
+          shift
+        fi
+        ;;
+      vertex:*|gemini-api:*|claude-code:*|anthropic-api:*|codex:*|openai-api:*)
+        PROVIDER="${1%%:*}"
+        MODEL="${1#*:}"
+        shift
         ;;
       *)
         die "unknown argument: $1"
         ;;
     esac
   done
+
+  if [[ -z "$PROVIDER" ]]; then
+    local IS_TTY=false PICKED
+    [[ -t 1 ]] && IS_TTY=true
+    PICKED=$(pick_or_recall_provider pr "$IS_TTY") || \
+      die "no saved auth method; run 'git-ai providers pr' and then 'git-ai models <auth-method> pr'"
+    if [[ "$PICKED" == *:* ]]; then
+      PROVIDER="${PICKED%%:*}"
+      MODEL="${PICKED#*:}"
+    else
+      PROVIDER="$PICKED"
+    fi
+  fi
 
   local PROMPT_TWO_PASS PROMPT_FALLBACK PROMPT_TWO_PASS_UPDATE PROMPT_FALLBACK_UPDATE
   PROMPT_TWO_PASS=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/pr-two-pass.txt") || die "failed to read pr-two-pass prompt"
@@ -162,51 +214,38 @@ cmd_pr() {
     BASE=${BASE:-main}
   fi
 
-  # Each commit prefixed with GITAI_COMMIT to distinguish subjects from body lines
+  # Commit log with RS (\x1e) between commits so Python can split on it.
+  local PR_DRAFT_PY="${SCRIPT_DIR}/../python/git_ai/_pr_draft.py"
   local LOG
-  LOG=$(git log --format="GITAI_COMMIT %s%n%b" "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
+  LOG=$(git log --first-parent --no-merges --format='%s%n%b%x1e' "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
   [[ -z "$LOG" ]] && die "no commits ahead of $BASE"
 
-  # Count how many commits follow conventional commit format (subject lines only)
-  local CONVENTIONAL_COUNT=0
-  local TOTAL_COUNT=0
-  while IFS= read -r line; do
-    [[ "$line" == "GITAI_COMMIT "* ]] || continue
-    local msg type
-    msg="${line#GITAI_COMMIT }"
-    type=$(printf '%s' "$msg" | sed 's/[!(].*//' | sed 's/:.*//')
-    TOTAL_COUNT=$((TOTAL_COUNT + 1))
-    case "$type" in
-      feat|fix|refactor|docs|chore|ci|test|style|perf|build)
-        CONVENTIONAL_COUNT=$((CONVENTIONAL_COUNT + 1)) ;;
-    esac
-  done <<< "$LOG"
-
-  # Load cached PR and SHA if available (not --fresh)
   local EXISTING="" CACHED_SHA=""
   if [[ "$FRESH" != "true" && -n "$CURRENT_BRANCH" ]]; then
     EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
     CACHED_SHA=$(load_cached_pr_sha "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
   fi
 
-  # Use cached SHA as input base for incremental mode; falls back to BASE if SHA is
-  # missing or no longer in repo (e.g. after rebase/force-push)
+  # Incremental base is the cached HEAD SHA when still reachable; otherwise BASE.
   local INPUT_BASE="$BASE"
   if [[ -n "$CACHED_SHA" ]] && git cat-file -e "${CACHED_SHA}^{commit}" 2>/dev/null; then
     INPUT_BASE="$CACHED_SHA"
   fi
 
-  # Narrow LOG to new commits only when incremental (CONVENTIONAL_COUNT already from full log)
   if [[ "$INPUT_BASE" != "$BASE" ]]; then
-    LOG=$(git log --format="GITAI_COMMIT %s%n%b" "${INPUT_BASE}..HEAD" 2>/dev/null) || LOG=""
+    LOG=$(git log --first-parent --no-merges --format='%s%n%b%x1e' "${INPUT_BASE}..HEAD" 2>/dev/null) || LOG=""
   fi
 
-  # No new commits since last generation — output cached PR directly, skip LLM call
   if [[ -n "$EXISTING" && -z "$LOG" && "$INPUT_BASE" != "$BASE" ]]; then
     echo "git-ai: no new commits since last generation, using cached output (use --fresh to regenerate)" >&2
     printf '%s\n' "$EXISTING"
     return 0
   fi
+
+  # Two-pass decision reflects the narrowed LOG (the commits being summarized).
+  local PR_DRAFT_OUTPUT TWO_PASS_MODE
+  PR_DRAFT_OUTPUT=$(printf '%s' "$LOG" | "${GIT_AI_PYTHON:-python3}" "$PR_DRAFT_PY")
+  TWO_PASS_MODE=$(printf '%s\n' "$PR_DRAFT_OUTPUT" | head -n 1)
 
   # Three-dot merge-base diff for full range; two-dot exact range for incremental
   local DIFF_STAT
@@ -218,46 +257,9 @@ cmd_pr() {
 
   local PROMPT INPUT
 
-  if (( TOTAL_COUNT > 0 && CONVENTIONAL_COUNT * 2 >= TOTAL_COUNT )); then
-    # Two-pass: auto-draft from commit messages, LLM polishes (no diff sent)
-
-    # Collect commits of a given type into a section; body lines indented under bullet
-    draft_section() {
-      local header="$1"
-      local type="$2"
-      local lines=""
-      local capturing=false
-
-      while IFS= read -r line; do
-        if [[ "$line" == "GITAI_COMMIT "* ]]; then
-          capturing=false
-          local msg t desc
-          msg="${line#GITAI_COMMIT }"
-          t=$(printf '%s' "$msg" | sed 's/[!(].*//' | sed 's/:.*//')
-          if [[ "$t" == "$type" ]]; then
-            desc="${msg#*: }"
-            lines+="- ${desc}"$'\n'
-            capturing=true
-          fi
-        elif [[ "$capturing" == true && -n "$line" ]]; then
-          lines+="  ${line}"$'\n'
-        fi
-      done <<< "$LOG"
-
-      [[ -n "$lines" ]] && printf '### %s\n%s' "$header" "$lines"
-    }
-
-    local DRAFT_BODY=""
-    local args header type section
-    for args in "Features feat" "Bug Fixes fix" "Refactors refactor" "Docs docs" \
-                "Chores chore" "Continuous Integration ci" "Tests test" \
-                "Style style" "Performance perf" "Build build"; do
-      header="${args% *}"
-      type="${args##* }"
-      section=$(draft_section "$header" "$type")
-      [[ -n "$section" ]] && DRAFT_BODY+="${section}"$'\n\n'
-    done
-
+  if [[ "$TWO_PASS_MODE" == "yes" ]]; then
+    local DRAFT_BODY
+    DRAFT_BODY=$(printf '%s\n' "$PR_DRAFT_OUTPUT" | tail -n +2)
     PROMPT="$PROMPT_TWO_PASS"
     INPUT="<draft>
 $DRAFT_BODY
@@ -265,9 +267,7 @@ $DRAFT_BODY
 <changed_files>
 $DIFF_STAT
 </changed_files>"
-
   else
-    # Fallback: commits don't consistently use conventional format — pass diff directly
     local DIFF
     if [[ "$INPUT_BASE" == "$BASE" ]]; then
       DIFF=$(git diff -U0 "$BASE"...HEAD 2>/dev/null) || die "failed to read diff against $BASE"
@@ -275,9 +275,10 @@ $DIFF_STAT
       DIFF=$(git diff -U0 "${INPUT_BASE}..HEAD" 2>/dev/null) || die "failed to read diff since last generation"
     fi
     PROMPT="$PROMPT_FALLBACK"
-    # Strip GITAI_COMMIT prefix so the LLM sees a clean commit log
+    local COMMIT_LOG
+    COMMIT_LOG=$(printf '%s' "$LOG" | tr -d '\036')
     INPUT="<commit_log>
-$(printf '%s\n' "$LOG" | sed 's/^GITAI_COMMIT //')
+${COMMIT_LOG}
 </commit_log>
 <changed_files>
 $DIFF_STAT
@@ -294,7 +295,7 @@ ${EXISTING}
 </existing_pr>
 
 ${INPUT}"
-    if (( TOTAL_COUNT > 0 && CONVENTIONAL_COUNT * 2 >= TOTAL_COUNT )); then
+    if [[ "$TWO_PASS_MODE" == "yes" ]]; then
       PROMPT="$PROMPT_TWO_PASS_UPDATE"
     else
       PROMPT="$PROMPT_FALLBACK_UPDATE"
@@ -317,7 +318,7 @@ ${INPUT}"
   INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"$'\n\n'"${INPUT}"
 
   local OUTPUT
-  OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL_TIER") || exit $?
+  OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL") || exit $?
   save_last_message pr "$OUTPUT"
   local HEAD_SHA
   HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || HEAD_SHA=""
@@ -325,15 +326,19 @@ ${INPUT}"
     save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" ||
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
-  printf '%s\n' "$OUTPUT"
+  render_pr_output "${EXISTING:-}" "$OUTPUT"
 }
 
 cmd_providers() {
   list_providers "${1:-commit}"
 }
 
-cmd_tiers() {
-  list_tiers "${1:-}" "${2:-commit}"
+cmd_models() {
+  list_models "${1:-}" "${2:-commit}"
+}
+
+cmd_options() {
+  list_options "${1:-commit}"
 }
 
 # ---------------------------------------------------------------------------
@@ -348,8 +353,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     commit)    cmd_commit "$@" ;;
     pr|mr)     cmd_pr "$@" ;;
     providers) cmd_providers "$@" ;;
-    tiers)     cmd_tiers "$@" ;;
-    "")        die "usage: git-ai <commit|pr|providers|tiers> [...]" ;;
+    models)    cmd_models "$@" ;;
+    options)   cmd_options "$@" ;;
+    tiers)     die "'tiers' has been removed; use 'models' instead" ;;
+    "")        die "usage: git-ai <commit|pr|providers|models|options> [...]" ;;
     *)         die "unknown command: $CMD" ;;
   esac
 fi

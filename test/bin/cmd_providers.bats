@@ -23,27 +23,27 @@ teardown() {
   done <<< "$output"
 }
 
-@test "cmd_providers: contains claude" {
+@test "cmd_providers: contains vertex" {
   run cmd_providers "commit"
   assert_success
-  assert_output --partial "claude|"
+  assert_output --partial "vertex|"
 }
 
-@test "cmd_providers: contains gemini" {
+@test "cmd_providers: contains gemini-api" {
   run cmd_providers "commit"
   assert_success
-  assert_output --partial "gemini|"
+  assert_output --partial "gemini-api|"
 }
 
-@test "cmd_providers: contains codex" {
+@test "cmd_providers: contains anthropic-api" {
   run cmd_providers "commit"
   assert_success
-  assert_output --partial "codex|"
+  assert_output --partial "anthropic-api|"
 }
 
 @test "cmd_providers: last provider appears first after save" {
   save_last_provider "commit" "codex"
   run cmd_providers "commit"
   assert_success
-  assert_line --index 0 "codex|OpenAI (Codex)"
+  assert_line --index 0 "codex|Codex CLI"
 }
