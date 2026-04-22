@@ -15,7 +15,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Waxmard/git-ai.git"
+    "url": "git+https://github.com/Waxmard/git-ai.git"
   },
   "homepage": "https://github.com/Waxmard/git-ai#readme",
   "bin": {
