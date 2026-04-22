@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.0](https://github.com/Waxmard/git-ai/compare/v4.0.0...v4.1.0) (2026-04-22)
+
+
+### Features
+
+* improve PR draft generation with incremental regeneration support ([#34](https://github.com/Waxmard/git-ai/issues/34)) ([839008a](https://github.com/Waxmard/git-ai/commit/839008a2f31cfbc9ec2d765513ed65b38632fcdb))
+
 ## [4.0.0](https://github.com/Waxmard/git-ai/compare/v3.1.1...v4.0.0) (2026-04-21)
 
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "waxmard-git-ai"
-version = "4.0.0"
+version = "4.1.0"
 description = "Provider-agnostic prompt/styling toolkit for LLM-powered git workflow tools (commit messages, MR descriptions)"
 readme = "README.md"
 requires-python = ">=3.10"
