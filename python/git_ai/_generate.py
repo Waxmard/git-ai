@@ -4,6 +4,7 @@ git_ai handles prompt assembly, diff-stat derivation, cache management, and
 output styling. It is **provider-agnostic**: callers supply a ``generate``
 callable that does the actual LLM call, so git_ai carries no LLM SDK deps.
 """
+
 from __future__ import annotations
 
 import re

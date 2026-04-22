@@ -1,4 +1,5 @@
 """Shared incremental PR-generation helpers for repo-mode callers."""
+
 from __future__ import annotations
 
 import importlib
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
         get_git_dir,
         get_head_sha,
         get_mr_release_context,
+        git_is_ancestor,
         git_ref_exists,
     )
 elif __package__ in (None, ""):
@@ -32,6 +34,7 @@ elif __package__ in (None, ""):
     get_git_dir = _git.get_git_dir
     get_head_sha = _git.get_head_sha
     get_mr_release_context = _git.get_mr_release_context
+    git_is_ancestor = _git.git_is_ancestor
     git_ref_exists = _git.git_ref_exists
 else:
     from ._git import (
@@ -43,6 +46,7 @@ else:
         get_git_dir,
         get_head_sha,
         get_mr_release_context,
+        git_is_ancestor,
         git_ref_exists,
     )
 
@@ -64,16 +68,12 @@ class RepoPrContext:
         return json.dumps(asdict(self), ensure_ascii=True)
 
 
-def branch_cache_dir(
-    git_dir: str | Path, branch_name: str, base_branch: str
-) -> Path:
+def branch_cache_dir(git_dir: str | Path, branch_name: str, base_branch: str) -> Path:
     key = _git_hash_object(f"{branch_name}\n{base_branch}\n")
     return Path(git_dir) / "pr-cache" / key
 
 
-def branch_cache_path(
-    git_dir: str | Path, branch_name: str, base_branch: str
-) -> Path:
+def branch_cache_path(git_dir: str | Path, branch_name: str, base_branch: str) -> Path:
     return branch_cache_dir(git_dir, branch_name, base_branch) / "last-output"
 
 
@@ -143,8 +143,16 @@ def prepare_repo_pr_context(
             raise ValueError(
                 f"previous_head_sha {previous_head_sha!r} not found in repo"
             )
+        if not git_is_ancestor(repo_path, previous_head_sha, "HEAD"):
+            raise ValueError(
+                f"previous_head_sha {previous_head_sha!r} is not an ancestor of HEAD"
+            )
         input_base = previous_head_sha
-    elif cached_sha and git_ref_exists(repo_path, cached_sha):
+    elif (
+        cached_sha
+        and git_ref_exists(repo_path, cached_sha)
+        and git_is_ancestor(repo_path, cached_sha, "HEAD")
+    ):
         input_base = cached_sha
 
     commit_log = get_commit_log(repo_path, input_base)

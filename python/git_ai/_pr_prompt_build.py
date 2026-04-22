@@ -1,4 +1,5 @@
 """Lightweight PR prompt selection and input assembly helpers."""
+
 from __future__ import annotations
 
 import importlib
@@ -67,7 +68,7 @@ def build_mr_prompt_input(
             )
     else:
         clean_log = "\n".join(
-            line[len("GITAI_COMMIT "):] if line.startswith("GITAI_COMMIT ") else line
+            line[len("GITAI_COMMIT ") :] if line.startswith("GITAI_COMMIT ") else line
             for line in log.splitlines()
         )
         if existing_pr:
@@ -99,7 +100,7 @@ def _to_rs_delimited_log(log: str) -> str:
         if line.startswith("GITAI_COMMIT "):
             if current:
                 blocks.append("\n".join(current))
-            current = [line[len("GITAI_COMMIT "):]]
+            current = [line[len("GITAI_COMMIT ") :]]
         else:
             current.append(line)
     if current:

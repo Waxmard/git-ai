@@ -12,6 +12,7 @@ from git_ai._pr_incremental import (
     load_cached_pr,
     load_cached_pr_sha,
     prepare_repo_pr_context,
+    save_cached_pr,
 )
 
 
@@ -205,3 +206,42 @@ def test_generate_mr_description_previous_head_sha_overrides_cache(
     # two-pass prompt strips type prefix into <draft>; check description word
     assert "add second" in user_input
     assert "add first" not in user_input
+
+
+def test_prepare_repo_pr_context_raises_on_non_ancestor_previous_head_sha(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+    # orphan branch commit exists in repo but shares no history with feature/test
+    subprocess.run(["git", "checkout", "--orphan", "orphan-tmp"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "orphan"], cwd=repo, check=True)
+    orphan_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", "feature/test"], cwd=repo, check=True)
+
+    with pytest.raises(ValueError, match="not an ancestor"):
+        prepare_repo_pr_context(repo, base_branch="main", previous_head_sha=orphan_sha)
+
+
+def test_prepare_repo_pr_context_non_ancestor_cached_sha_falls_back(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+    # create an orphan SHA to plant in the cache
+    subprocess.run(["git", "checkout", "--orphan", "orphan-tmp2"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "orphan"], cwd=repo, check=True)
+    orphan_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", "feature/test"], cwd=repo, check=True)
+
+    git_dir = Path(repo) / ".git"
+    save_cached_pr(git_dir, "feature/test", "main", "old pr text", orphan_sha)
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert ctx.input_base == "main"
+    assert ctx.no_changes is False
+    assert "feat: add first" in ctx.commit_log

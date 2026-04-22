@@ -1,4 +1,5 @@
 """Git helper utilities for git-ai."""
+
 from __future__ import annotations
 
 import re
@@ -52,6 +53,18 @@ def git_ref_exists(repo_path: str | Path, ref: str) -> bool:
     """Return True when ref resolves to a commit in this repo."""
     result = subprocess.run(
         ["git", "cat-file", "-e", f"{ref}^{{commit}}"],
+        cwd=str(repo_path),
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def git_is_ancestor(
+    repo_path: str | Path, ancestor_ref: str, descendant_ref: str
+) -> bool:
+    """Return True if ancestor_ref is an ancestor of descendant_ref."""
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref],
         cwd=str(repo_path),
         capture_output=True,
     )
@@ -175,7 +188,7 @@ def count_conventional_commits(log: str) -> tuple[int, int]:
     for line in log.splitlines():
         if not line.startswith("GITAI_COMMIT "):
             continue
-        msg = line[len("GITAI_COMMIT "):]
+        msg = line[len("GITAI_COMMIT ") :]
         type_match = re.match(r"^([a-z]+)[!(:]", msg)
         total += 1
         if type_match and type_match.group(1) in _CONVENTIONAL_TYPES:
@@ -291,7 +304,7 @@ def build_draft_body(log: str) -> str:
         for line in log.splitlines():
             if line.startswith("GITAI_COMMIT "):
                 capturing = False
-                msg = line[len("GITAI_COMMIT "):]
+                msg = line[len("GITAI_COMMIT ") :]
                 type_match = re.match(r"^([a-z]+)[!(:]", msg)
                 if type_match and type_match.group(1) == commit_type:
                     desc = msg.split(": ", 1)[-1] if ": " in msg else msg

@@ -1,4 +1,5 @@
 """Provider-agnostic prompt/styling toolkit for LLM-powered git workflows."""
+
 from ._generate import (
     Completion,
     MrDescription,
