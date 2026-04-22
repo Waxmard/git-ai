@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.2](https://github.com/Waxmard/git-ai/compare/v4.1.1...v4.1.2) (2026-04-22)
+
+
+### Bug Fixes
+
+* include merge commits in commit logs and update npm publish to Node 22 ([#37](https://github.com/Waxmard/git-ai/issues/37)) ([dce6e9a](https://github.com/Waxmard/git-ai/commit/dce6e9a3038ccaebc1659d8b49b2dbdaa8ccecd7))
+
 ## [4.1.1](https://github.com/Waxmard/git-ai/compare/v4.1.0...v4.1.1) (2026-04-22)
 
 
