@@ -138,15 +138,16 @@ def prepare_repo_pr_context(
     effective_existing = existing_pr if existing_pr is not None else cached_pr
 
     input_base = base_branch
-    requested_sha = previous_head_sha if previous_head_sha else cached_sha
-    if requested_sha and git_ref_exists(repo_path, requested_sha):
-        input_base = requested_sha
+    if previous_head_sha:
+        if not git_ref_exists(repo_path, previous_head_sha):
+            raise ValueError(
+                f"previous_head_sha {previous_head_sha!r} not found in repo"
+            )
+        input_base = previous_head_sha
+    elif cached_sha and git_ref_exists(repo_path, cached_sha):
+        input_base = cached_sha
 
-    commit_log = get_commit_log(
-        repo_path,
-        input_base,
-        rs_delimited=input_base != base_branch,
-    )
+    commit_log = get_commit_log(repo_path, input_base)
     if input_base != base_branch and effective_existing and not commit_log.strip():
         return RepoPrContext(
             base_branch=base_branch,

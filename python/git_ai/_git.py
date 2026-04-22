@@ -144,17 +144,14 @@ def get_mr_release_context(repo_path: str | Path) -> str:
     )
 
 
-def get_commit_log(
-    repo_path: str | Path, base_branch: str, *, rs_delimited: bool = False
-) -> str:
-    """Return commit log with configurable formatting."""
-    fmt = "%s%n%b%x1e" if rs_delimited else "GITAI_COMMIT %s%n%b"
+def get_commit_log(repo_path: str | Path, base_branch: str) -> str:
+    """Return commit log in GITAI_COMMIT-prefixed format."""
     return _git(
         repo_path,
         "log",
         "--first-parent",
         "--no-merges",
-        f"--format={fmt}",
+        "--format=GITAI_COMMIT %s%n%b",
         f"{base_branch}..HEAD",
     )
 

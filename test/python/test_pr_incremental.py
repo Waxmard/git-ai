@@ -74,6 +74,51 @@ def test_prepare_repo_pr_context_uses_incremental_range_from_explicit_sha(
     assert "fix: add second" in context.commit_log
     assert "feat: add first" not in context.commit_log
     assert "two.txt" in context.diff_stat
+    # log must be GITAI_COMMIT-prefixed so build_mr_prompt_input can detect
+    # conventional commits and choose two-pass vs fallback correctly
+    assert "GITAI_COMMIT" in context.commit_log
+
+
+def test_prepare_repo_pr_context_raises_on_unresolvable_previous_head_sha(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+
+    with pytest.raises(ValueError, match="not found in repo"):
+        prepare_repo_pr_context(
+            repo,
+            base_branch="main",
+            previous_head_sha="deadbeef00000000",
+        )
+
+
+def test_prepare_repo_pr_context_incremental_enables_two_pass(
+    tmp_path: Path,
+) -> None:
+    from git_ai._pr_prompt_build import build_mr_prompt_input
+
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+    first_sha = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "two.txt", "two\n", "feat: add second")
+
+    context = prepare_repo_pr_context(
+        repo,
+        base_branch="main",
+        existing_pr="feat: old title\n\n### Features\n- old",
+        previous_head_sha=first_sha,
+    )
+
+    _, user_input = build_mr_prompt_input(
+        diff=context.diff,
+        commit_log=context.commit_log,
+        diff_stat=context.diff_stat,
+        existing_pr=context.existing_pr,
+    )
+    # conventional commits on incremental path must reach the two-pass prompt
+    assert "<draft>" in user_input
+    assert "<commit_log>" not in user_input
 
 
 def test_prepare_repo_pr_context_short_circuits_when_no_new_commits(
@@ -157,5 +202,6 @@ def test_generate_mr_description_previous_head_sha_overrides_cache(
     assert len(gen.calls) == 1
     _, user_input = gen.calls[0]
     assert "<existing_pr>" in user_input
-    assert "fix: add second" in user_input
-    assert "feat: add first" not in user_input
+    # two-pass prompt strips type prefix into <draft>; check description word
+    assert "add second" in user_input
+    assert "add first" not in user_input
