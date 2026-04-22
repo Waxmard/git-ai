@@ -68,7 +68,7 @@ git-ai commit [auth-method] [model-id]
 Generate a PR title and body from the current branch.
 
 ```bash
-git-ai pr [auth-method] [model-id] [--base <branch>] [--fresh]
+git-ai pr [auth-method] [model-id] [--base <branch>] [--fresh] [--from-sha <commit>]
 git-ai mr [...]   # alias for pr
 ```
 
@@ -78,6 +78,7 @@ git-ai mr [...]   # alias for pr
 - Use `--base` to override (e.g. `--base dev`)
 - Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
 - Use `--fresh` to ignore the saved output and regenerate from scratch
+- Use `--from-sha` to override the saved HEAD and regenerate only from commits after a specific prior generated commit
 - No default auth method on a fresh repo; choose one explicitly
 - Non-`vertex` auth methods default to a stronger model when `model-id` is omitted
 - `vertex` always requires an explicit model ID
@@ -106,18 +107,85 @@ git-ai providers [commit|pr]
 git-ai models <auth-method> [commit|pr]
 ```
 
-## Auth Methods And Models
+## Python library
 
-| Auth Method | Models |
-|-------------|--------|
-| `vertex` | `gemini-3.1-flash-lite-preview`, `gemini-3.1-pro-preview`, `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-6`, `gpt-5.4-mini`, `gpt-5.4` |
-| `gemini-api` | `gemini-3.1-flash-lite-preview`, `gemini-3.1-pro-preview` |
-| `claude-code` | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-6` |
-| `anthropic-api` | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-6` |
-| `codex` | `gpt-5.4-mini`, `gpt-5.4` |
-| `openai-api` | `gpt-5.4-mini`, `gpt-5.4` |
+git-ai is also distributed as a Python package (`waxmard-git-ai`) so other tools can reuse the same commit-message and MR-description generation without shelling out.
 
-Last-used auth method and model are saved per repo in `.git/`, so repeated runs remember your selection.
+```bash
+pip install waxmard-git-ai
+# or: uv add waxmard-git-ai
+```
+
+The Python package is **provider-agnostic**: it owns prompt assembly, diff-stat derivation, fence-stripping, and cache management, but not the LLM call. Consumers pass a `generate: Callable[[str, str], str]` that takes `(system_prompt, user_input)` and returns raw model text. Bring your own Claude / Gemini / OpenAI / anything.
+
+`generate_mr_description` handles both repo-mode and data-mode through one entry point and returns an `MrDescription(text, diff)` — `text` is the full PR, `diff` is a marker-style rendering of what changed vs. `existing_pr` (or `None` when there's no prior PR or the output matches it).
+
+**Bring-your-own provider** — example with the Google Gemini SDK:
+
+```python
+from google import genai
+from google.genai import types
+from git_ai import generate_mr_description
+
+client = genai.Client()
+
+def generate(system_prompt: str, user_input: str) -> str:
+    resp = client.models.generate_content(
+        model="gemini-3.1-pro-preview",
+        contents=user_input,
+        config=types.GenerateContentConfig(system_instruction=system_prompt),
+    )
+    return resp.text or ""
+```
+
+Swap the body for `anthropic`, `openai`, `vertexai`, or any other SDK — git_ai never imports them.
+
+**Repo-mode** (reads staged diff / base..HEAD from a local checkout):
+
+```python
+from git_ai import generate_commit_message, generate_mr_description
+
+msg = generate_commit_message(".", generate=generate)
+pr = generate_mr_description(".", base_branch="main", generate=generate)
+pr = generate_mr_description(".", base_branch="main", fresh=True, generate=generate)
+pr = generate_mr_description(
+    ".",
+    base_branch="main",
+    existing_pr=existing_pr_text,
+    previous_head_sha=last_generated_head_sha,
+    generate=generate,
+)
+print(pr.text)       # full PR (title line + body)
+print(pr.diff or "") # marker-style delta vs existing_pr, if any
+```
+
+**Data-mode** (no local checkout required — pass raw diff strings, e.g. fetched from the GitHub/GitLab API):
+
+```python
+from git_ai import (
+    format_commit_log,
+    generate_commit_message_from_diff,
+    generate_mr_description,
+)
+
+commit_msg = generate_commit_message_from_diff(diff_text, generate=generate)
+
+log = format_commit_log((c.title, c.message) for c in mr_commits)
+pr = generate_mr_description(
+    diff=diff_text,
+    commit_log=log,
+    existing_pr=current_pr_body or None,
+    generate=generate,
+)
+# pr.text -> full updated PR to post as title + description
+# pr.diff -> compact "what changed since last PR" markers, or None
+```
+
+`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Model selection, retries, auth, and error handling are the consumer's responsibility (inside `generate`).
+
+Repo-mode uses the same incremental PR efficiency path as the CLI: it reuses `.git/pr-cache/` automatically, returns the cached PR unchanged when `HEAD` has not advanced, and narrows generation to commits after the last generated `HEAD` when possible. Pass `fresh=True` to disable that behavior for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
+
+Data-mode is stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description(diff=..., existing_pr=..., generate=...)`.
 
 ## Narrowing the picker list
 
@@ -162,49 +230,6 @@ customCommands:
 ```
 
 Pressing `<c-g>` in the files panel opens an fzf picker showing every auth+model combo (plus `reuse saved message` when available). Typeahead narrows instantly; Enter commits with the generated message. Selections float to the top of the list on subsequent invocations.
-
-## Python library
-
-git-ai is also distributed as a Python package (`waxmard-git-ai`) so other tools can reuse the same commit-message and MR-description generation without shelling out. Gemini only.
-
-```bash
-pip install waxmard-git-ai
-# or: uv add waxmard-git-ai
-```
-
-**Repo-mode** (reads staged diff / base..HEAD from a local checkout):
-
-```python
-from git_ai import generate_commit_message, generate_mr_description
-
-msg = generate_commit_message(".")
-pr = generate_mr_description(".", base_branch="main")
-```
-
-**Data-mode** (no local checkout required — pass raw diff strings, e.g. fetched from the GitHub/GitLab API):
-
-```python
-from git_ai import (
-    create_gemini_client,
-    format_commit_log,
-    generate_commit_message_from_diff,
-    generate_mr_description_from_data,
-)
-
-client = create_gemini_client()
-
-commit_msg = generate_commit_message_from_diff(diff_text, client=client)
-
-log = format_commit_log((c.title, c.message) for c in mr_commits)
-pr_text = generate_mr_description_from_data(
-    diff=diff_text,
-    commit_log=log,
-    existing_pr=current_pr_body or None,
-    client=client,
-)
-```
-
-`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Pass `model=` to override the default Gemini model (`COMMIT_MODEL` / `MR_MODEL`).
 
 ## Compatibility
 

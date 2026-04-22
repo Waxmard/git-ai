@@ -9,6 +9,7 @@ writes to stdout:
 The two-pass path drafts a conventional-commit-style changelog body that the
 LLM only has to polish; the fallback path sends the raw diff instead.
 """
+
 from __future__ import annotations
 
 import re
@@ -17,8 +18,16 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 
 _CONVENTIONAL_TYPES = {
-    "feat", "fix", "refactor", "docs", "chore",
-    "ci", "test", "style", "perf", "build",
+    "feat",
+    "fix",
+    "refactor",
+    "docs",
+    "chore",
+    "ci",
+    "test",
+    "style",
+    "perf",
+    "build",
 }
 
 _SECTIONS: list[tuple[str, str]] = [

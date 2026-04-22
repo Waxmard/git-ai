@@ -9,6 +9,17 @@ trap 'rm -rf "$LOG_DIR"' EXIT
 
 echo "==> pre-commit: running checks..."
 
+echo "==> pre-commit: auto-fixing Python..."
+if ! make -C "$REPO_ROOT" py-format > "$LOG_DIR/pyformat.log" 2>&1; then
+  echo "pre-commit: py-format failed —" >&2
+  cat "$LOG_DIR/pyformat.log" >&2
+  exit 1
+fi
+if ! git -C "$REPO_ROOT" diff --quiet -- python/; then
+  echo "==> pre-commit: py-format applied fixes, re-staging python/..."
+  git -C "$REPO_ROOT" add -u -- python/
+fi
+
 make -C "$REPO_ROOT" lint          > "$LOG_DIR/lint.log"    2>&1 & PID_LINT=$!
 make -C "$REPO_ROOT" py-lint       > "$LOG_DIR/pylint.log"  2>&1 & PID_PYLINT=$!
 make -C "$REPO_ROOT" py-type-check > "$LOG_DIR/pytype.log"  2>&1 & PID_PYTYPE=$!

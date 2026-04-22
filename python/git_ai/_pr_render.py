@@ -3,6 +3,7 @@
 Runs standalone (invoked by bin/git-ai as a script) or importable as
 ``git_ai._pr_render.render_pr_diff``.
 """
+
 from __future__ import annotations
 
 import difflib

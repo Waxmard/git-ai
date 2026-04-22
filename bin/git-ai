@@ -22,10 +22,16 @@ branch_cache_path() {
   local git_dir="$1"
   local branch_name="$2"
   local base_branch="$3"
-  local cache_key
+  "${GIT_AI_PYTHON:-python3}" - <<'PY' "$SCRIPT_DIR" "$git_dir" "$branch_name" "$base_branch" || return 1
+import sys
+from pathlib import Path
 
-  cache_key=$(printf '%s\n%s\n' "$branch_name" "$base_branch" | git hash-object --stdin) || return 1
-  printf '%s\n' "${git_dir}/pr-cache/${cache_key}/last-output"
+script_dir, git_dir, branch_name, base_branch = sys.argv[1:]
+sys.path.insert(0, str(Path(script_dir).resolve().parent / "python" / "git_ai"))
+from _pr_incremental import branch_cache_path
+
+print(branch_cache_path(git_dir, branch_name, base_branch))
+PY
 }
 
 load_cached_pr() {
@@ -55,15 +61,24 @@ save_cached_pr() {
   local base_branch="$3"
   local output="$4"
   local head_sha="${5:-}"
-  local cache_file cache_dir
-
-  cache_file=$(branch_cache_path "$git_dir" "$branch_name" "$base_branch") || return 1
-  cache_dir=$(dirname "$cache_file")
-  mkdir -p "$cache_dir" || return 1
-  printf '%s\n' "$output" >"$cache_file"
+  local output_file
+  output_file=$(mktemp) || return 1
+  printf '%s\n' "$output" >"$output_file"
+  local save_cmd=(
+    "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_repo_cli.py" save-cache
+    --git-dir "$git_dir"
+    --branch-name "$branch_name"
+    --base-branch "$base_branch"
+    --output-file "$output_file"
+  )
   if [[ -n "$head_sha" ]]; then
-    printf '%s\n' "$head_sha" >"${cache_dir}/last-head-sha"
+    save_cmd+=(--head-sha "$head_sha")
   fi
+  "${save_cmd[@]}" || {
+      rm -f "$output_file"
+      return 1
+    }
+  rm -f "$output_file"
 }
 
 render_pr_output() {
@@ -144,11 +159,12 @@ ${STAGED_DIFF}
 }
 
 cmd_pr() {
-  local PROVIDER MODEL BASE FRESH
+  local PROVIDER MODEL BASE FRESH FROM_SHA
   PROVIDER=""
   MODEL=""
   BASE=""
   FRESH=false
+  FROM_SHA=""
 
   while [[ $# -gt 0 ]]; do
     case $1 in
@@ -159,6 +175,10 @@ cmd_pr() {
       --fresh)
         FRESH=true
         shift
+        ;;
+      --from-sha)
+        FROM_SHA="$2"
+        shift 2
         ;;
       vertex|gemini-api|claude-code|anthropic-api|codex|openai-api)
         PROVIDER="$1"
@@ -204,129 +224,96 @@ cmd_pr() {
   local GIT_DIR
   GIT_DIR=$(git rev-parse --git-dir)
 
-  local CURRENT_BRANCH=""
-  if CURRENT_BRANCH=$(current_branch_name); then
-    :
-  fi
-
   if [[ -z "$BASE" ]]; then
     BASE=$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p')
     BASE=${BASE:-main}
   fi
-
-  # Commit log with RS (\x1e) between commits so Python can split on it.
-  local PR_DRAFT_PY="${SCRIPT_DIR}/../python/git_ai/_pr_draft.py"
-  local LOG
-  LOG=$(git log --first-parent --no-merges --format='%s%n%b%x1e' "$BASE"..HEAD 2>/dev/null) || die "failed to read commit log against $BASE"
-  [[ -z "$LOG" ]] && die "no commits ahead of $BASE"
-
-  local EXISTING="" CACHED_SHA=""
-  if [[ "$FRESH" != "true" && -n "$CURRENT_BRANCH" ]]; then
-    EXISTING=$(load_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
-    CACHED_SHA=$(load_cached_pr_sha "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" || true)
+  local PREP_OUTPUT PREP_FILE
+  PREP_FILE=$(mktemp) || die "failed to allocate temp file"
+  local prep_cmd=(
+    "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_repo_cli.py" prepare
+    --repo-path "."
+    --base-branch "$BASE"
+    --format shell
+  )
+  if [[ "$FRESH" == "true" ]]; then
+    prep_cmd+=(--fresh)
   fi
-
-  # Incremental base is the cached HEAD SHA when still reachable; otherwise BASE.
-  local INPUT_BASE="$BASE"
-  if [[ -n "$CACHED_SHA" ]] && git cat-file -e "${CACHED_SHA}^{commit}" 2>/dev/null; then
-    INPUT_BASE="$CACHED_SHA"
+  if [[ -n "$FROM_SHA" ]]; then
+    prep_cmd+=(--previous-head-sha "$FROM_SHA")
   fi
+  PREP_OUTPUT=$("${prep_cmd[@]}") || {
+      rm -f "$PREP_FILE"
+      die "failed to prepare PR context"
+    }
+  printf '%s\n' "$PREP_OUTPUT" >"$PREP_FILE"
+  # Variables set by sourced prep file (BASE_BRANCH/INPUT_BASE consumed but not referenced directly)
+  local CURRENT_BRANCH HEAD_SHA EXISTING_PR COMMIT_LOG DIFF DIFF_STAT RELEASE_CONTEXT NO_CHANGES
+  # shellcheck disable=SC1090
+  source "$PREP_FILE"
+  rm -f "$PREP_FILE"
 
-  if [[ "$INPUT_BASE" != "$BASE" ]]; then
-    LOG=$(git log --first-parent --no-merges --format='%s%n%b%x1e' "${INPUT_BASE}..HEAD" 2>/dev/null) || LOG=""
-  fi
-
-  if [[ -n "$EXISTING" && -z "$LOG" && "$INPUT_BASE" != "$BASE" ]]; then
+  if [[ "$NO_CHANGES" == "true" ]]; then
     echo "git-ai: no new commits since last generation, using cached output (use --fresh to regenerate)" >&2
-    printf '%s\n' "$EXISTING"
+    printf '%s\n' "$EXISTING_PR"
     return 0
   fi
 
-  # Two-pass decision reflects the narrowed LOG (the commits being summarized).
-  local PR_DRAFT_OUTPUT TWO_PASS_MODE
-  PR_DRAFT_OUTPUT=$(printf '%s' "$LOG" | "${GIT_AI_PYTHON:-python3}" "$PR_DRAFT_PY")
-  TWO_PASS_MODE=$(printf '%s\n' "$PR_DRAFT_OUTPUT" | head -n 1)
+  local BUILD_FILE PROMPT_NAME PROMPT INPUT DIFF_FILE LOG_FILE STAT_FILE RELEASE_FILE EXISTING_FILE
+  BUILD_FILE=$(mktemp) || die "failed to allocate temp file"
+  DIFF_FILE=$(mktemp) || die "failed to allocate temp file"
+  LOG_FILE=$(mktemp) || die "failed to allocate temp file"
+  STAT_FILE=$(mktemp) || die "failed to allocate temp file"
+  RELEASE_FILE=$(mktemp) || die "failed to allocate temp file"
+  EXISTING_FILE=$(mktemp) || die "failed to allocate temp file"
+  printf '%s' "$DIFF" >"$DIFF_FILE"
+  printf '%s' "$COMMIT_LOG" >"$LOG_FILE"
+  printf '%s' "$DIFF_STAT" >"$STAT_FILE"
+  printf '%s' "$RELEASE_CONTEXT" >"$RELEASE_FILE"
+  printf '%s' "$EXISTING_PR" >"$EXISTING_FILE"
+  "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_repo_cli.py" build-input \
+    --diff-file "$DIFF_FILE" \
+    --commit-log-file "$LOG_FILE" \
+    --diff-stat-file "$STAT_FILE" \
+    --release-context-file "$RELEASE_FILE" \
+    --existing-pr-file "$EXISTING_FILE" >"$BUILD_FILE" || {
+      rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE"
+      die "failed to build PR prompt input"
+    }
+  PROMPT_NAME=$("${GIT_AI_PYTHON:-python3}" - <<'PY' "$BUILD_FILE"
+import json, sys
+from pathlib import Path
+print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["prompt_name"])
+PY
+)
+  INPUT=$("${GIT_AI_PYTHON:-python3}" - <<'PY' "$BUILD_FILE"
+import json, sys
+from pathlib import Path
+print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["user_input"])
+PY
+)
+  rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE"
 
-  # Three-dot merge-base diff for full range; two-dot exact range for incremental
-  local DIFF_STAT
-  if [[ "$INPUT_BASE" == "$BASE" ]]; then
-    DIFF_STAT=$(git diff --stat "$BASE"...HEAD 2>/dev/null) || die "failed to read diff stat against $BASE"
-  else
-    DIFF_STAT=$(git diff --stat "${INPUT_BASE}..HEAD" 2>/dev/null) || die "failed to read diff stat since last generation"
-  fi
+  case "$PROMPT_NAME" in
+    pr-two-pass.txt) PROMPT="$PROMPT_TWO_PASS" ;;
+    pr-fallback.txt) PROMPT="$PROMPT_FALLBACK" ;;
+    pr-two-pass-update.txt) PROMPT="$PROMPT_TWO_PASS_UPDATE" ;;
+    pr-fallback-update.txt) PROMPT="$PROMPT_FALLBACK_UPDATE" ;;
+    *) die "unknown prompt selected: $PROMPT_NAME" ;;
+  esac
 
-  local PROMPT INPUT
-
-  if [[ "$TWO_PASS_MODE" == "yes" ]]; then
-    local DRAFT_BODY
-    DRAFT_BODY=$(printf '%s\n' "$PR_DRAFT_OUTPUT" | tail -n +2)
-    PROMPT="$PROMPT_TWO_PASS"
-    INPUT="<draft>
-$DRAFT_BODY
-</draft>
-<changed_files>
-$DIFF_STAT
-</changed_files>"
-  else
-    local DIFF
-    if [[ "$INPUT_BASE" == "$BASE" ]]; then
-      DIFF=$(git diff -U0 "$BASE"...HEAD 2>/dev/null) || die "failed to read diff against $BASE"
-    else
-      DIFF=$(git diff -U0 "${INPUT_BASE}..HEAD" 2>/dev/null) || die "failed to read diff since last generation"
-    fi
-    PROMPT="$PROMPT_FALLBACK"
-    local COMMIT_LOG
-    COMMIT_LOG=$(printf '%s' "$LOG" | tr -d '\036')
-    INPUT="<commit_log>
-${COMMIT_LOG}
-</commit_log>
-<changed_files>
-$DIFF_STAT
-</changed_files>
-<diff>
-$DIFF
-</diff>"
-  fi
-
-  if [[ -n "${EXISTING:-}" ]]; then
+  if [[ -n "${EXISTING_PR:-}" && -n "${CURRENT_BRANCH:-}" ]]; then
     echo "git-ai: updating existing PR draft for ${CURRENT_BRANCH} (use --fresh to regenerate)" >&2
-    INPUT="<existing_pr>
-${EXISTING}
-</existing_pr>
-
-${INPUT}"
-    if [[ "$TWO_PASS_MODE" == "yes" ]]; then
-      PROMPT="$PROMPT_TWO_PASS_UPDATE"
-    else
-      PROMPT="$PROMPT_FALLBACK_UPDATE"
-    fi
   fi
-
-  local LAST_TAG COMMITS_SINCE RELEASE_CONTEXT SEMVER_CONTEXT
-  LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-  if [[ -n "$LAST_TAG" ]]; then
-    COMMITS_SINCE=$(git rev-list --count "${LAST_TAG}..HEAD" 2>/dev/null || echo "?")
-    SEMVER_CONTEXT=""
-    if [[ "$LAST_TAG" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-      local MAJOR="${BASH_REMATCH[1]}" MINOR="${BASH_REMATCH[2]}" PATCH="${BASH_REMATCH[3]}"
-      SEMVER_CONTEXT=". Next release: breaking→v$((MAJOR+1)).0.0, feature→v${MAJOR}.$((MINOR+1)).0, fix→v${MAJOR}.${MINOR}.$((PATCH+1))"
-    fi
-    RELEASE_CONTEXT="Release context: current version ${LAST_TAG}, ${COMMITS_SINCE} commits since last release${SEMVER_CONTEXT}"
-  else
-    RELEASE_CONTEXT="Release context: no release tags found — treat all changes as unreleased"
-  fi
-  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"$'\n\n'"${INPUT}"
 
   local OUTPUT
   OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL") || exit $?
   save_last_message pr "$OUTPUT"
-  local HEAD_SHA
-  HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || HEAD_SHA=""
   if [[ -n "$CURRENT_BRANCH" ]]; then
     save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" ||
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
-  render_pr_output "${EXISTING:-}" "$OUTPUT"
+  render_pr_output "${EXISTING_PR:-}" "$OUTPUT"
 }
 
 cmd_providers() {

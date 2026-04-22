@@ -1,21 +1,22 @@
-"""git-ai Python package — LLM-powered git workflow tools."""
-from ._gemini import COMMIT_MODEL, MR_MODEL, create_gemini_client
+"""Provider-agnostic prompt/styling toolkit for LLM-powered git workflows."""
+
 from ._generate import (
+    Completion,
+    MrDescription,
     generate_commit_message,
     generate_commit_message_from_diff,
     generate_mr_description,
-    generate_mr_description_from_data,
 )
 from ._git import derive_diff_stat, format_commit_log
+from ._pr_render import render_pr_diff
 
 __all__ = [
-    "COMMIT_MODEL",
-    "MR_MODEL",
-    "create_gemini_client",
+    "Completion",
+    "MrDescription",
     "derive_diff_stat",
     "format_commit_log",
     "generate_commit_message",
     "generate_commit_message_from_diff",
     "generate_mr_description",
-    "generate_mr_description_from_data",
+    "render_pr_diff",
 ]

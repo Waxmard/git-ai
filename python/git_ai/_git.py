@@ -1,4 +1,5 @@
 """Git helper utilities for git-ai."""
+
 from __future__ import annotations
 
 import re
@@ -26,6 +27,48 @@ def _git(repo_path: str | Path, *args: str) -> str:
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout
+
+
+def get_git_dir(repo_path: str | Path) -> str:
+    """Return the repository git dir path."""
+    git_dir = _git(repo_path, "rev-parse", "--git-dir").strip()
+    git_dir_path = Path(git_dir)
+    if git_dir_path.is_absolute():
+        return str(git_dir_path)
+    return str((Path(repo_path) / git_dir_path).resolve())
+
+
+def get_current_branch(repo_path: str | Path) -> str | None:
+    """Return the current branch name, or None when detached."""
+    branch = _git(repo_path, "branch", "--show-current").strip()
+    return branch or None
+
+
+def get_head_sha(repo_path: str | Path) -> str:
+    """Return HEAD commit SHA."""
+    return _git(repo_path, "rev-parse", "HEAD").strip()
+
+
+def git_ref_exists(repo_path: str | Path, ref: str) -> bool:
+    """Return True when ref resolves to a commit in this repo."""
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{ref}^{{commit}}"],
+        cwd=str(repo_path),
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def git_is_ancestor(
+    repo_path: str | Path, ancestor_ref: str, descendant_ref: str
+) -> bool:
+    """Return True if ancestor_ref is an ancestor of descendant_ref."""
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref],
+        cwd=str(repo_path),
+        capture_output=True,
+    )
+    return result.returncode == 0
 
 
 def check_git_repo(repo_path: str | Path) -> None:
@@ -115,7 +158,7 @@ def get_mr_release_context(repo_path: str | Path) -> str:
 
 
 def get_commit_log(repo_path: str | Path, base_branch: str) -> str:
-    """Return commit log with GITAI_COMMIT subject prefixes."""
+    """Return commit log in GITAI_COMMIT-prefixed format."""
     return _git(
         repo_path,
         "log",
@@ -145,7 +188,7 @@ def count_conventional_commits(log: str) -> tuple[int, int]:
     for line in log.splitlines():
         if not line.startswith("GITAI_COMMIT "):
             continue
-        msg = line[len("GITAI_COMMIT "):]
+        msg = line[len("GITAI_COMMIT ") :]
         type_match = re.match(r"^([a-z]+)[!(:]", msg)
         total += 1
         if type_match and type_match.group(1) in _CONVENTIONAL_TYPES:
@@ -261,7 +304,7 @@ def build_draft_body(log: str) -> str:
         for line in log.splitlines():
             if line.startswith("GITAI_COMMIT "):
                 capturing = False
-                msg = line[len("GITAI_COMMIT "):]
+                msg = line[len("GITAI_COMMIT ") :]
                 type_match = re.match(r"^([a-z]+)[!(:]", msg)
                 if type_match and type_match.group(1) == commit_type:
                     desc = msg.split(": ", 1)[-1] if ": " in msg else msg

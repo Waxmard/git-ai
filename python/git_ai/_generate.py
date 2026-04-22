@@ -1,29 +1,48 @@
-"""Core generation functions for commit messages and MR descriptions."""
+"""Core generation functions for commit messages and MR descriptions.
+
+git_ai handles prompt assembly, diff-stat derivation, cache management, and
+output styling. It is **provider-agnostic**: callers supply a ``generate``
+callable that does the actual LLM call, so git_ai carries no LLM SDK deps.
+"""
+
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types
-
-from ._gemini import COMMIT_MODEL, MR_MODEL, create_gemini_client
 from ._git import (
     DEFAULT_RELEASE_CONTEXT,
-    build_draft_body,
     check_git_repo,
-    count_conventional_commits,
     derive_diff_stat,
-    get_commit_log,
-    get_diff,
-    get_diff_stat,
-    get_mr_release_context,
+    get_git_dir,
     get_release_context,
     get_staged_diff,
 )
+from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
+from ._pr_prompt_build import build_mr_prompt_input
+from ._pr_render import render_pr_diff
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+Completion = Callable[[str, str], str]
+"""Consumer-supplied LLM call: ``(system_prompt, user_input) -> raw text``."""
+
+
+@dataclass(frozen=True)
+class MrDescription:
+    """Result of :func:`generate_mr_description`.
+
+    ``text`` is the full generated PR (first line is the title, remainder is
+    the body). ``diff`` is a plain-text rendering (via
+    :func:`git_ai.render_pr_diff`) of the delta between ``existing_pr`` and
+    ``text``, using ``~ ``/``+ ``/``- `` markers. It is ``None`` when no
+    ``existing_pr`` was supplied or when the regenerated PR is unchanged.
+    """
+
+    text: str
+    diff: str | None
 
 
 def _load_prompt(name: str) -> str:
@@ -37,95 +56,42 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
-def _format_api_error(exc: genai_errors.APIError) -> str:
-    code = getattr(exc, "code", None)
-    message = getattr(exc, "message", None) or str(exc)
-    if code in (401, 403):
-        return (
-            "Gemini auth rejected. Check GEMINI_API_KEY or application-default "
-            f"credentials. ({message})"
-        )
-    if code == 429:
-        return f"Gemini rate-limited. Try again shortly. ({message})"
-    if isinstance(code, int) and 500 <= code < 600:
-        return f"Gemini server error ({code}). Try again. ({message})"
-    return f"Gemini API error ({code}): {message}"
-
-
-def _safety_reason(response: types.GenerateContentResponse) -> str | None:
-    prompt_feedback = getattr(response, "prompt_feedback", None)
-    if prompt_feedback is not None:
-        block_reason = getattr(prompt_feedback, "block_reason", None)
-        if block_reason:
-            name = getattr(block_reason, "name", None) or str(block_reason)
-            return f"prompt blocked: {name}"
-
-    for candidate in getattr(response, "candidates", None) or []:
-        finish_reason = getattr(candidate, "finish_reason", None)
-        if finish_reason and finish_reason != types.FinishReason.STOP:
-            name = getattr(finish_reason, "name", None) or str(finish_reason)
-            return name
-    return None
-
-
-def _call_gemini(
-    client: genai.Client, model: str, system_prompt: str, user_input: str
-) -> str:
-    """Call Gemini and return stripped text output."""
-    try:
-        response = client.models.generate_content(
-            model=model,
-            contents=user_input,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-            ),
-        )
-    except genai_errors.APIError as e:
-        raise RuntimeError(_format_api_error(e)) from e
-    except Exception as e:
-        raise RuntimeError(f"Gemini call failed: {e}") from e
-
-    text = (response.text or "").strip()
+def _invoke(generate: Completion, system_prompt: str, user_input: str) -> str:
+    """Call the consumer's ``generate`` fn, strip fences, reject empty."""
+    raw = generate(system_prompt, user_input)
+    text = _strip_fences((raw or "").strip())
     if not text:
-        reason = _safety_reason(response)
-        if reason:
-            raise RuntimeError(f"Gemini blocked the response ({reason})")
-        raise RuntimeError("Gemini returned an empty response")
-    return _strip_fences(text)
+        raise RuntimeError("generate() returned an empty response")
+    return text
 
 
 def generate_commit_message_from_diff(
     diff: str,
     *,
+    generate: Completion,
     release_context: str | None = None,
-    client: genai.Client | None = None,
-    model: str | None = None,
 ) -> str:
     """Generate a Conventional Commits message from a raw unified diff.
 
     Args:
         diff: Unified diff string (as produced by ``git diff`` or a comparable
             source such as GitLab's MR diff API).
-        release_context: Optional release-context blurb (e.g. ``"Release
-            context: current version v1.2.3, 5 commits since"``). Defaults to
-            a generic "no release tags found" string.
-        client: Gemini client. If ``None``, ``create_gemini_client()`` is used.
-        model: Gemini model ID. Defaults to :data:`COMMIT_MODEL`.
+        generate: Consumer-supplied ``(system_prompt, user_input) -> str``
+            function. git_ai builds the prompts and lets the caller own the
+            LLM call.
+        release_context: Optional release-context blurb. Defaults to a generic
+            "no release tags found" string.
 
     Returns:
         Generated commit message string.
 
     Raises:
-        ValueError: if ``diff`` is empty or auth is not configured.
-        RuntimeError: if the Gemini call fails or returns empty.
+        ValueError: if ``diff`` is empty.
+        RuntimeError: if ``generate`` returns an empty string.
     """
     if not diff.strip():
         raise ValueError("diff is empty")
 
-    if client is None:
-        client = create_gemini_client()
-    if model is None:
-        model = COMMIT_MODEL
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
 
@@ -133,172 +99,153 @@ def generate_commit_message_from_diff(
         f"<release_context>{release_context}</release_context>\n\n"
         f"<diff>\n{diff}\n</diff>"
     )
-    prompt = _load_prompt("commit.txt")
-    return _call_gemini(client, model, prompt, user_input)
+    return _invoke(generate, _load_prompt("commit.txt"), user_input)
 
 
 def generate_commit_message(
     repo_path: str | Path = ".",
-    client: genai.Client | None = None,
-    model: str | None = None,
+    *,
+    generate: Completion,
 ) -> str:
     """Generate a Conventional Commits commit message for staged changes.
 
     Args:
         repo_path: Path to the git repository.
-        client: Gemini client. If None, create_gemini_client() is called.
-        model: Gemini model ID. Defaults to COMMIT_MODEL (flash-lite).
+        generate: Consumer-supplied ``(system_prompt, user_input) -> str``.
 
     Returns:
         Generated commit message string.
 
     Raises:
-        RuntimeError: if not in a git repo or nothing is staged.
-        ValueError: if auth is not configured and client is None.
+        RuntimeError: if not in a git repo or nothing is staged, or the
+            consumer's ``generate`` returns empty.
     """
     repo_path = Path(repo_path)
     check_git_repo(repo_path)
 
-    staged_diff = get_staged_diff(repo_path)
-    release_context = get_release_context(repo_path)
-
     return generate_commit_message_from_diff(
-        staged_diff,
-        release_context=release_context,
-        client=client,
-        model=model,
+        get_staged_diff(repo_path),
+        generate=generate,
+        release_context=get_release_context(repo_path),
     )
 
 
-def generate_mr_description_from_data(
+def _generate_mr_text(
     *,
+    generate: Completion,
     diff: str,
-    commit_log: str | None = None,
-    diff_stat: str | None = None,
-    release_context: str | None = None,
-    existing_pr: str | None = None,
-    client: genai.Client | None = None,
-    model: str | None = None,
+    commit_log: str | None,
+    diff_stat: str | None,
+    release_context: str | None,
+    existing_pr: str | None,
 ) -> str:
-    """Generate a PR/MR title and description from pre-fetched git data.
-
-    Args:
-        diff: Unified diff between base and HEAD.
-        commit_log: Commit log in ``GITAI_COMMIT <subject>\\n<body>\\n`` format
-            (see :func:`format_commit_log`). If ``None`` or empty, the
-            two-pass path is skipped and the fallback prompt is used.
-        diff_stat: Pre-computed diff stat. If ``None``, it is derived from
-            ``diff`` via :func:`derive_diff_stat`.
-        release_context: Optional release-context blurb. Defaults to a generic
-            "no release tags found" string.
-        existing_pr: Existing PR text for incremental updates (preserves
-            wording).
-        client: Gemini client. If ``None``, ``create_gemini_client()`` is used.
-        model: Gemini model ID. Defaults to :data:`MR_MODEL`.
-
-    Returns:
-        Generated PR text — first line is the title, remainder is the body.
-
-    Raises:
-        ValueError: if ``diff`` is empty or auth is not configured.
-        RuntimeError: if the Gemini call fails or returns empty.
-    """
     if not diff.strip():
         raise ValueError("diff is empty")
-
-    if client is None:
-        client = create_gemini_client()
-    if model is None:
-        model = MR_MODEL
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
     if diff_stat is None:
         diff_stat = derive_diff_stat(diff)
 
-    log = commit_log or ""
-    conventional_count, total_count = count_conventional_commits(log)
-    two_pass = total_count > 0 and conventional_count * 2 >= total_count
-
-    if two_pass:
-        draft = build_draft_body(log)
-        if existing_pr:
-            prompt = _load_prompt("pr-two-pass-update.txt")
-            user_input = (
-                f"<existing_pr>\n{existing_pr}\n</existing_pr>\n\n"
-                f"<draft>\n{draft}\n</draft>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>"
-            )
-        else:
-            prompt = _load_prompt("pr-two-pass.txt")
-            user_input = (
-                f"<draft>\n{draft}\n</draft>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>"
-            )
-    else:
-        clean_log = "\n".join(
-            line[len("GITAI_COMMIT "):] if line.startswith("GITAI_COMMIT ") else line
-            for line in log.splitlines()
-        )
-        if existing_pr:
-            prompt = _load_prompt("pr-fallback-update.txt")
-            user_input = (
-                f"<existing_pr>\n{existing_pr}\n</existing_pr>\n\n"
-                f"<commit_log>\n{clean_log}\n</commit_log>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>\n"
-                f"<diff>\n{diff}\n</diff>"
-            )
-        else:
-            prompt = _load_prompt("pr-fallback.txt")
-            user_input = (
-                f"<commit_log>\n{clean_log}\n</commit_log>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>\n"
-                f"<diff>\n{diff}\n</diff>"
-            )
-
-    user_input = f"<release_context>{release_context}</release_context>\n\n{user_input}"
-    return _call_gemini(client, model, prompt, user_input)
-
-
-def generate_mr_description(
-    repo_path: str | Path = ".",
-    base_branch: str = "main",
-    client: genai.Client | None = None,
-    existing_pr: str | None = None,
-    model: str | None = None,
-) -> str:
-    """Generate a PR/MR title and description.
-
-    Args:
-        repo_path: Path to the git repository.
-        base_branch: Branch to compare against.
-        client: Gemini client. If None, create_gemini_client() is called.
-        existing_pr: Existing PR text for incremental updates (preserves wording).
-        model: Gemini model ID. Defaults to MR_MODEL (pro).
-
-    Returns:
-        Generated PR text — first line is the title, remainder is the body.
-
-    Raises:
-        RuntimeError: if not in a git repo or no commits ahead of base_branch.
-        ValueError: if auth is not configured and client is None.
-    """
-    repo_path = Path(repo_path)
-    check_git_repo(repo_path)
-
-    log = get_commit_log(repo_path, base_branch)
-    if not log.strip():
-        raise RuntimeError(f"No commits ahead of {base_branch}")
-
-    diff = get_diff(repo_path, base_branch)
-    diff_stat = get_diff_stat(repo_path, base_branch)
-    release_context = get_mr_release_context(repo_path)
-
-    return generate_mr_description_from_data(
+    prompt_name, user_input = build_mr_prompt_input(
         diff=diff,
-        commit_log=log,
+        commit_log=commit_log,
         diff_stat=diff_stat,
         release_context=release_context,
         existing_pr=existing_pr,
-        client=client,
-        model=model,
     )
+    return _invoke(generate, _load_prompt(prompt_name), user_input)
+
+
+def _build_mr_result(text: str, existing_pr: str | None) -> MrDescription:
+    if not existing_pr:
+        return MrDescription(text=text, diff=None)
+    rendered = render_pr_diff(existing_pr, text, color=False)
+    return MrDescription(text=text, diff=rendered or None)
+
+
+def generate_mr_description(
+    repo_path: str | Path | None = None,
+    base_branch: str = "main",
+    *,
+    generate: Completion,
+    diff: str | None = None,
+    commit_log: str | None = None,
+    diff_stat: str | None = None,
+    release_context: str | None = None,
+    existing_pr: str | None = None,
+    fresh: bool = False,
+    previous_head_sha: str | None = None,
+) -> MrDescription:
+    """Generate a PR/MR title and description.
+
+    Two invocation styles share this entry point:
+
+    * **Repo-mode** — pass ``repo_path`` pointing at a local git checkout.
+      ``diff``/``commit_log``/``diff_stat``/``release_context`` are derived
+      from git, and output is cached under ``.git/pr-cache/``. ``fresh`` and
+      ``previous_head_sha`` control the incremental cache behaviour.
+    * **Data-mode** — pass ``diff`` directly (plus optional ``commit_log``,
+      ``diff_stat``, ``release_context``, ``existing_pr``) when you already
+      have the MR payload in hand and have no local checkout. No caching is
+      performed; persistence is the caller's responsibility.
+
+    ``generate`` is the consumer-supplied ``(system_prompt, user_input) ->
+    str`` callable. git_ai is provider-agnostic — bring your own LLM.
+
+    Returns an :class:`MrDescription` with the full PR text plus, when an
+    ``existing_pr`` is available (directly or via cache), a plain-text
+    marker-style rendering of what changed between old and new PRs.
+
+    Raises:
+        ValueError: if neither or both of ``repo_path`` and ``diff`` are
+            supplied, or if ``diff`` is empty in data-mode.
+        RuntimeError: if ``generate`` returns an empty string or — in
+            repo-mode — the repo has no commits ahead of ``base_branch``.
+    """
+    if repo_path is not None and diff is not None:
+        raise ValueError(
+            "Pass either repo_path (repo-mode) or diff (data-mode), not both"
+        )
+    if repo_path is None and diff is None:
+        raise ValueError("Provide repo_path (repo-mode) or diff (data-mode)")
+
+    if repo_path is not None:
+        repo_path = Path(repo_path)
+        context = prepare_repo_pr_context(
+            repo_path,
+            base_branch=base_branch,
+            existing_pr=existing_pr,
+            previous_head_sha=previous_head_sha,
+            fresh=fresh,
+        )
+        if context.no_changes:
+            return MrDescription(text=context.existing_pr or "", diff=None)
+
+        text = _generate_mr_text(
+            generate=generate,
+            diff=context.diff,
+            commit_log=context.commit_log,
+            diff_stat=context.diff_stat,
+            release_context=context.release_context,
+            existing_pr=context.existing_pr,
+        )
+        if context.current_branch:
+            save_cached_pr(
+                get_git_dir(repo_path),
+                context.current_branch,
+                base_branch,
+                text,
+                context.head_sha,
+            )
+        return _build_mr_result(text, context.existing_pr)
+
+    assert diff is not None
+    text = _generate_mr_text(
+        generate=generate,
+        diff=diff,
+        commit_log=commit_log,
+        diff_stat=diff_stat,
+        release_context=release_context,
+        existing_pr=existing_pr,
+    )
+    return _build_mr_result(text, existing_pr)
