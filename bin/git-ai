@@ -247,6 +247,8 @@ cmd_pr() {
       die "failed to prepare PR context"
     }
   printf '%s\n' "$PREP_OUTPUT" >"$PREP_FILE"
+  # Variables set by sourced prep file (BASE_BRANCH/INPUT_BASE consumed but not referenced directly)
+  local CURRENT_BRANCH HEAD_SHA EXISTING_PR COMMIT_LOG DIFF DIFF_STAT RELEASE_CONTEXT NO_CHANGES
   # shellcheck disable=SC1090
   source "$PREP_FILE"
   rm -f "$PREP_FILE"
