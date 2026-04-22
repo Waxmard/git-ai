@@ -107,66 +107,9 @@ git-ai providers [commit|pr]
 git-ai models <auth-method> [commit|pr]
 ```
 
-## Auth Methods And Models
-
-| Auth Method | Models |
-|-------------|--------|
-| `vertex` | `gemini-3.1-flash-lite-preview`, `gemini-3.1-pro-preview`, `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-6`, `gpt-5.4-mini`, `gpt-5.4` |
-| `gemini-api` | `gemini-3.1-flash-lite-preview`, `gemini-3.1-pro-preview` |
-| `claude-code` | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-6` |
-| `anthropic-api` | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-6` |
-| `codex` | `gpt-5.4-mini`, `gpt-5.4` |
-| `openai-api` | `gpt-5.4-mini`, `gpt-5.4` |
-
-Last-used auth method and model are saved per repo in `.git/`, so repeated runs remember your selection.
-
-## Narrowing the picker list
-
-By default `git-ai options` enumerates every supported provider/model combo. Most users only have access to a couple. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
-
-```ini
-[claude-code]
-claude-haiku-4-5-20251001
-claude-sonnet-4-6
-
-[codex]
-gpt-5.4-mini
-
-# Empty section hides this provider entirely
-[vertex]
-```
-
-- `[provider]` headers must be one of: `vertex`, `gemini-api`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
-- Model IDs under a header are passed through to the provider verbatim, so you can list future model IDs (e.g. a newly released `claude-sonnet-5-0`) without waiting for a git-ai release.
-- Delete the file to restore the full shipped catalog.
-- See [`examples/options.conf`](examples/options.conf) for a starter.
-
-## Terminal picker
-
-Running `git-ai commit` or `git-ai pr` without a provider argument launches an inline [fzf](https://github.com/junegunn/fzf) picker over the same provider/model combos Lazygit uses. History entries float to the top. Pass `provider` or `provider:model` to skip the picker. Flags still parse, so `git-ai pr --base staging` opens the picker then runs against the chosen base.
-
-Set `GIT_AI_NO_FZF=1` (or pipe stdout) to disable the picker for scripting. If fzf isn't installed, the tools fall back to the last saved choice.
-
-## Lazygit integration
-
-Requires [fzf](https://github.com/junegunn/fzf) on your PATH. Add the following under `customCommands:` in `~/.config/lazygit/config.yml`:
-
-```yaml
-customCommands:
-  - key: "<c-g>"
-    description: "AI commit message (git-ai + fzf)"
-    context: "files"
-    command: |
-      choice=$(git-ai options commit | fzf --delimiter='|' --with-nth=2 --no-sort --tiebreak=index --prompt='git-ai> ') || exit 0
-      git commit -m "$(git-ai commit "${choice%%|*}")" --edit
-    output: terminal
-```
-
-Pressing `<c-g>` in the files panel opens an fzf picker showing every auth+model combo (plus `reuse saved message` when available). Typeahead narrows instantly; Enter commits with the generated message. Selections float to the top of the list on subsequent invocations.
-
 ## Python library
 
-git-ai is also distributed as a Python package (`waxmard-git-ai`) so other tools can reuse the same commit-message and MR-description generation without shelling out. Gemini only.
+git-ai is also distributed as a Python package (`waxmard-git-ai`) so other tools can reuse the same commit-message and MR-description generation without shelling out.
 
 ```bash
 pip install waxmard-git-ai
@@ -243,6 +186,50 @@ pr = generate_mr_description(
 Repo-mode uses the same incremental PR efficiency path as the CLI: it reuses `.git/pr-cache/` automatically, returns the cached PR unchanged when `HEAD` has not advanced, and narrows generation to commits after the last generated `HEAD` when possible. Pass `fresh=True` to disable that behavior for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
 
 Data-mode is stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description(diff=..., existing_pr=..., generate=...)`.
+
+## Narrowing the picker list
+
+By default `git-ai options` enumerates every supported provider/model combo. Most users only have access to a couple. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
+
+```ini
+[claude-code]
+claude-haiku-4-5-20251001
+claude-sonnet-4-6
+
+[codex]
+gpt-5.4-mini
+
+# Empty section hides this provider entirely
+[vertex]
+```
+
+- `[provider]` headers must be one of: `vertex`, `gemini-api`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
+- Model IDs under a header are passed through to the provider verbatim, so you can list future model IDs (e.g. a newly released `claude-sonnet-5-0`) without waiting for a git-ai release.
+- Delete the file to restore the full shipped catalog.
+- See [`examples/options.conf`](examples/options.conf) for a starter.
+
+## Terminal picker
+
+Running `git-ai commit` or `git-ai pr` without a provider argument launches an inline [fzf](https://github.com/junegunn/fzf) picker over the same provider/model combos Lazygit uses. History entries float to the top. Pass `provider` or `provider:model` to skip the picker. Flags still parse, so `git-ai pr --base staging` opens the picker then runs against the chosen base.
+
+Set `GIT_AI_NO_FZF=1` (or pipe stdout) to disable the picker for scripting. If fzf isn't installed, the tools fall back to the last saved choice.
+
+## Lazygit integration
+
+Requires [fzf](https://github.com/junegunn/fzf) on your PATH. Add the following under `customCommands:` in `~/.config/lazygit/config.yml`:
+
+```yaml
+customCommands:
+  - key: "<c-g>"
+    description: "AI commit message (git-ai + fzf)"
+    context: "files"
+    command: |
+      choice=$(git-ai options commit | fzf --delimiter='|' --with-nth=2 --no-sort --tiebreak=index --prompt='git-ai> ') || exit 0
+      git commit -m "$(git-ai commit "${choice%%|*}")" --edit
+    output: terminal
+```
+
+Pressing `<c-g>` in the files panel opens an fzf picker showing every auth+model combo (plus `reuse saved message` when available). Typeahead narrows instantly; Enter commits with the generated message. Selections float to the top of the list on subsequent invocations.
 
 ## Compatibility
 
