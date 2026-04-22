@@ -162,7 +162,6 @@ def get_commit_log(repo_path: str | Path, base_branch: str) -> str:
     return _git(
         repo_path,
         "log",
-        "--first-parent",
         "--no-merges",
         "--format=GITAI_COMMIT %s%n%b",
         f"{base_branch}..HEAD",
