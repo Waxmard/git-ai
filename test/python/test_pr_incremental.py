@@ -121,16 +121,18 @@ def test_generate_mr_description_caches_and_reuses_without_model_call(
     first_client = _client_returning("feat: title\n\n### Features\n- first")
 
     first = generate_mr_description(repo, base_branch="main", client=first_client)
-    assert "feat: title" in first
+    assert "feat: title" in first.text
+    assert first.diff is None
     assert first_client.models.generate_content.call_count == 1
 
     second_client = _client_returning("unused")
     second = generate_mr_description(repo, base_branch="main", client=second_client)
-    assert second == first
+    assert second.text == first.text
+    assert second.diff is None
     second_client.models.generate_content.assert_not_called()
 
     git_dir = get_git_dir(repo)
-    assert load_cached_pr(git_dir, "feature/test", "main") == first
+    assert load_cached_pr(git_dir, "feature/test", "main") == first.text
     assert load_cached_pr_sha(git_dir, "feature/test", "main") == _git(repo, "rev-parse", "HEAD")
 
 

@@ -10,10 +10,11 @@ import pytest
 from git_ai import (
     COMMIT_MODEL,
     MR_MODEL,
+    MrDescription,
     derive_diff_stat,
     format_commit_log,
     generate_commit_message_from_diff,
-    generate_mr_description_from_data,
+    generate_mr_description,
 )
 
 _SAMPLE_DIFF = """\
@@ -165,7 +166,7 @@ def test_commit_from_diff_respects_model_override() -> None:
 
 
 # ---------------------------------------------------------------------------
-# generate_mr_description_from_data
+# generate_mr_description — data-mode
 # ---------------------------------------------------------------------------
 
 
@@ -181,23 +182,39 @@ _NON_CONVENTIONAL_LOG = (
 )
 
 
-def test_mr_from_data_uses_mr_model_by_default() -> None:
+def test_mr_data_mode_uses_mr_model_by_default() -> None:
     client = _client_returning("feat: x\n\n### Features\n- x")
-    result = generate_mr_description_from_data(diff=_SAMPLE_DIFF, client=client)
-    assert "feat: x" in result
+    result = generate_mr_description(diff=_SAMPLE_DIFF, client=client)
+    assert isinstance(result, MrDescription)
+    assert "feat: x" in result.text
+    assert result.diff is None
     assert _capture_call(client)["model"] == MR_MODEL
 
 
-def test_mr_from_data_rejects_empty_diff() -> None:
+def test_mr_data_mode_rejects_empty_diff() -> None:
     client = _client_returning("unused")
     with pytest.raises(ValueError, match="diff is empty"):
-        generate_mr_description_from_data(diff="", client=client)
+        generate_mr_description(diff="", client=client)
     client.models.generate_content.assert_not_called()
 
 
-def test_mr_from_data_two_pass_when_mostly_conventional() -> None:
+def test_mr_rejects_both_repo_path_and_diff() -> None:
+    client = _client_returning("unused")
+    with pytest.raises(ValueError, match="not both"):
+        generate_mr_description(".", diff=_SAMPLE_DIFF, client=client)
+    client.models.generate_content.assert_not_called()
+
+
+def test_mr_rejects_neither_repo_path_nor_diff() -> None:
+    client = _client_returning("unused")
+    with pytest.raises(ValueError, match="repo_path.*or diff"):
+        generate_mr_description(client=client)
+    client.models.generate_content.assert_not_called()
+
+
+def test_mr_data_mode_two_pass_when_mostly_conventional() -> None:
     client = _client_returning("feat: x")
-    generate_mr_description_from_data(
+    generate_mr_description(
         diff=_SAMPLE_DIFF, commit_log=_CONVENTIONAL_LOG, client=client
     )
     contents = _capture_call(client)["contents"]
@@ -208,9 +225,9 @@ def test_mr_from_data_two_pass_when_mostly_conventional() -> None:
     assert "add login" in contents
 
 
-def test_mr_from_data_fallback_when_not_conventional() -> None:
+def test_mr_data_mode_fallback_when_not_conventional() -> None:
     client = _client_returning("chore: x")
-    generate_mr_description_from_data(
+    generate_mr_description(
         diff=_SAMPLE_DIFF, commit_log=_NON_CONVENTIONAL_LOG, client=client
     )
     contents = _capture_call(client)["contents"]
@@ -221,55 +238,68 @@ def test_mr_from_data_fallback_when_not_conventional() -> None:
     assert "WIP: half done" in contents
 
 
-def test_mr_from_data_no_log_uses_fallback() -> None:
+def test_mr_data_mode_no_log_uses_fallback() -> None:
     client = _client_returning("chore: x")
-    generate_mr_description_from_data(diff=_SAMPLE_DIFF, client=client)
+    generate_mr_description(diff=_SAMPLE_DIFF, client=client)
     contents = _capture_call(client)["contents"]
     assert "<draft>" not in contents
     assert "<commit_log>" in contents
 
 
-def test_mr_from_data_existing_pr_picks_update_prompt() -> None:
-    client = _client_returning("feat: x")
-    generate_mr_description_from_data(
+def test_mr_data_mode_existing_pr_picks_update_prompt_and_renders_diff() -> None:
+    client = _client_returning("feat: new title\n\n### Features\n- new bullet")
+    result = generate_mr_description(
         diff=_SAMPLE_DIFF,
         commit_log=_CONVENTIONAL_LOG,
-        existing_pr="feat: old title\n\n### Features\n- old",
+        existing_pr="feat: old title\n\n### Features\n- old bullet",
         client=client,
     )
     contents = _capture_call(client)["contents"]
     assert "<existing_pr>" in contents
     assert "feat: old title" in contents
+    assert result.diff is not None
+    # render_pr_diff emits `~ ` / `+ ` / `- ` markers and `@@` hunk headers.
+    assert any(marker in result.diff for marker in ("~ ", "+ ", "- ", "@@"))
 
 
-def test_mr_from_data_derives_diff_stat_when_omitted() -> None:
+def test_mr_data_mode_diff_none_when_existing_pr_matches_output() -> None:
+    generated = "feat: same\n\n### Features\n- same"
+    client = _client_returning(generated)
+    result = generate_mr_description(
+        diff=_SAMPLE_DIFF, existing_pr=generated, client=client
+    )
+    assert result.text == generated
+    assert result.diff is None
+
+
+def test_mr_data_mode_derives_diff_stat_when_omitted() -> None:
     client = _client_returning("feat: x")
-    generate_mr_description_from_data(diff=_SAMPLE_DIFF, client=client)
+    generate_mr_description(diff=_SAMPLE_DIFF, client=client)
     contents = _capture_call(client)["contents"]
     assert "<changed_files>" in contents
     # Derived stat should mention at least one changed file from the sample diff.
     assert "foo.py" in contents
 
 
-def test_mr_from_data_uses_supplied_diff_stat() -> None:
+def test_mr_data_mode_uses_supplied_diff_stat() -> None:
     client = _client_returning("feat: x")
-    generate_mr_description_from_data(
+    generate_mr_description(
         diff=_SAMPLE_DIFF, diff_stat="CUSTOM-STAT", client=client
     )
     contents = _capture_call(client)["contents"]
     assert "CUSTOM-STAT" in contents
 
 
-def test_mr_from_data_defaults_release_context() -> None:
+def test_mr_data_mode_defaults_release_context() -> None:
     client = _client_returning("feat: x")
-    generate_mr_description_from_data(diff=_SAMPLE_DIFF, client=client)
+    generate_mr_description(diff=_SAMPLE_DIFF, client=client)
     contents = _capture_call(client)["contents"]
     assert "no release tags found" in contents
 
 
-def test_mr_from_data_respects_release_context_override() -> None:
+def test_mr_data_mode_respects_release_context_override() -> None:
     client = _client_returning("feat: x")
-    generate_mr_description_from_data(
+    generate_mr_description(
         diff=_SAMPLE_DIFF, release_context="Release context: v2.0.0", client=client
     )
     contents = _capture_call(client)["contents"]

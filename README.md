@@ -173,6 +173,8 @@ pip install waxmard-git-ai
 # or: uv add waxmard-git-ai
 ```
 
+`generate_mr_description` handles both styles through one entry point and returns an `MrDescription(text, diff)` — `text` is the full PR, `diff` is a marker-style rendering of what changed vs. `existing_pr` (or `None` when there's no prior PR or the output matches it).
+
 **Repo-mode** (reads staged diff / base..HEAD from a local checkout):
 
 ```python
@@ -187,6 +189,8 @@ pr = generate_mr_description(
     existing_pr=existing_pr_text,
     previous_head_sha=last_generated_head_sha,
 )
+print(pr.text)       # full PR (title line + body)
+print(pr.diff or "") # marker-style delta vs existing_pr, if any
 ```
 
 **Data-mode** (no local checkout required — pass raw diff strings, e.g. fetched from the GitHub/GitLab API):
@@ -196,7 +200,7 @@ from git_ai import (
     create_gemini_client,
     format_commit_log,
     generate_commit_message_from_diff,
-    generate_mr_description_from_data,
+    generate_mr_description,
 )
 
 client = create_gemini_client()
@@ -204,19 +208,21 @@ client = create_gemini_client()
 commit_msg = generate_commit_message_from_diff(diff_text, client=client)
 
 log = format_commit_log((c.title, c.message) for c in mr_commits)
-pr_text = generate_mr_description_from_data(
+pr = generate_mr_description(
     diff=diff_text,
     commit_log=log,
     existing_pr=current_pr_body or None,
     client=client,
 )
+# pr.text -> full updated PR to post as title + description
+# pr.diff -> compact "what changed since last PR" markers, or None
 ```
 
 `diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Pass `model=` to override the default Gemini model (`COMMIT_MODEL` / `MR_MODEL`).
 
-Repo-mode now uses the same incremental PR efficiency path as the CLI: it reuses `.git/pr-cache/` automatically, returns the cached PR unchanged when `HEAD` has not advanced, and narrows generation to commits after the last generated `HEAD` when possible. Pass `fresh=True` to disable that behavior for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
+Repo-mode uses the same incremental PR efficiency path as the CLI: it reuses `.git/pr-cache/` automatically, returns the cached PR unchanged when `HEAD` has not advanced, and narrows generation to commits after the last generated `HEAD` when possible. Pass `fresh=True` to disable that behavior for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
 
-Data-mode remains stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description_from_data(..., existing_pr=...)`.
+Data-mode is stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description(diff=..., existing_pr=...)`.
 
 ## Compatibility
 
