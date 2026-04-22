@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.3](https://github.com/Waxmard/git-ai/compare/v4.1.2...v4.1.3) (2026-04-22)
+
+
+### Bug Fixes
+
+* adjust npm publish workflow ([1e29a96](https://github.com/Waxmard/git-ai/commit/1e29a96030d9791ad37477e984e3d58ec71b9435))
+
 ## [4.1.2](https://github.com/Waxmard/git-ai/compare/v4.1.1...v4.1.2) (2026-04-22)
 
 

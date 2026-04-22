@@ -1,6 +1,6 @@
 {
   "name": "@waxmard/git-ai",
-  "version": "4.1.2",
+  "version": "4.1.3",
   "description": "LLM-powered git workflow tools — generate commit messages and PR titles using Claude, Gemini, or Codex",
   "keywords": [
     "git",
