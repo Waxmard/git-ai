@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -46,11 +44,14 @@ def _make_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _client_returning(text: str) -> MagicMock:
-    response = SimpleNamespace(text=text, candidates=[], prompt_feedback=None)
-    client = MagicMock()
-    client.models.generate_content.return_value = response
-    return client
+class _Spy:
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, system_prompt: str, user_input: str) -> str:
+        self.calls.append((system_prompt, user_input))
+        return self._text
 
 
 def test_prepare_repo_pr_context_uses_incremental_range_from_explicit_sha(
@@ -118,18 +119,18 @@ def test_generate_mr_description_caches_and_reuses_without_model_call(
 ) -> None:
     repo = _make_repo(tmp_path)
     _commit(repo, "one.txt", "one\n", "feat: add first")
-    first_client = _client_returning("feat: title\n\n### Features\n- first")
+    first_gen = _Spy("feat: title\n\n### Features\n- first")
 
-    first = generate_mr_description(repo, base_branch="main", client=first_client)
+    first = generate_mr_description(repo, base_branch="main", generate=first_gen)
     assert "feat: title" in first.text
     assert first.diff is None
-    assert first_client.models.generate_content.call_count == 1
+    assert len(first_gen.calls) == 1
 
-    second_client = _client_returning("unused")
-    second = generate_mr_description(repo, base_branch="main", client=second_client)
+    second_gen = _Spy("unused")
+    second = generate_mr_description(repo, base_branch="main", generate=second_gen)
     assert second.text == first.text
     assert second.diff is None
-    second_client.models.generate_content.assert_not_called()
+    assert second_gen.calls == []
 
     git_dir = get_git_dir(repo)
     assert load_cached_pr(git_dir, "feature/test", "main") == first.text
@@ -143,17 +144,18 @@ def test_generate_mr_description_previous_head_sha_overrides_cache(
     _commit(repo, "one.txt", "one\n", "feat: add first")
     first_sha = _git(repo, "rev-parse", "HEAD")
     _commit(repo, "two.txt", "two\n", "fix: add second")
-    client = _client_returning("fix: title\n\n### Bug Fixes\n- second")
+    gen = _Spy("fix: title\n\n### Bug Fixes\n- second")
 
     generate_mr_description(
         repo,
         base_branch="main",
         previous_head_sha=first_sha,
         existing_pr="feat: title\n\n### Features\n- first",
-        client=client,
+        generate=gen,
     )
 
-    contents = client.models.generate_content.call_args.kwargs["contents"]
-    assert "<existing_pr>" in contents
-    assert "fix: add second" in contents
-    assert "feat: add first" not in contents
+    assert len(gen.calls) == 1
+    _, user_input = gen.calls[0]
+    assert "<existing_pr>" in user_input
+    assert "fix: add second" in user_input
+    assert "feat: add first" not in user_input

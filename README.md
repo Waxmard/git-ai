@@ -173,21 +173,44 @@ pip install waxmard-git-ai
 # or: uv add waxmard-git-ai
 ```
 
-`generate_mr_description` handles both styles through one entry point and returns an `MrDescription(text, diff)` — `text` is the full PR, `diff` is a marker-style rendering of what changed vs. `existing_pr` (or `None` when there's no prior PR or the output matches it).
+The Python package is **provider-agnostic**: it owns prompt assembly, diff-stat derivation, fence-stripping, and cache management, but not the LLM call. Consumers pass a `generate: Callable[[str, str], str]` that takes `(system_prompt, user_input)` and returns raw model text. Bring your own Claude / Gemini / OpenAI / anything.
+
+`generate_mr_description` handles both repo-mode and data-mode through one entry point and returns an `MrDescription(text, diff)` — `text` is the full PR, `diff` is a marker-style rendering of what changed vs. `existing_pr` (or `None` when there's no prior PR or the output matches it).
+
+**Bring-your-own provider** — example with the Google Gemini SDK:
+
+```python
+from google import genai
+from google.genai import types
+from git_ai import generate_mr_description
+
+client = genai.Client()
+
+def generate(system_prompt: str, user_input: str) -> str:
+    resp = client.models.generate_content(
+        model="gemini-3.1-pro-preview",
+        contents=user_input,
+        config=types.GenerateContentConfig(system_instruction=system_prompt),
+    )
+    return resp.text or ""
+```
+
+Swap the body for `anthropic`, `openai`, `vertexai`, or any other SDK — git_ai never imports them.
 
 **Repo-mode** (reads staged diff / base..HEAD from a local checkout):
 
 ```python
 from git_ai import generate_commit_message, generate_mr_description
 
-msg = generate_commit_message(".")
-pr = generate_mr_description(".", base_branch="main")
-pr = generate_mr_description(".", base_branch="main", fresh=True)
+msg = generate_commit_message(".", generate=generate)
+pr = generate_mr_description(".", base_branch="main", generate=generate)
+pr = generate_mr_description(".", base_branch="main", fresh=True, generate=generate)
 pr = generate_mr_description(
     ".",
     base_branch="main",
     existing_pr=existing_pr_text,
     previous_head_sha=last_generated_head_sha,
+    generate=generate,
 )
 print(pr.text)       # full PR (title line + body)
 print(pr.diff or "") # marker-style delta vs existing_pr, if any
@@ -197,32 +220,29 @@ print(pr.diff or "") # marker-style delta vs existing_pr, if any
 
 ```python
 from git_ai import (
-    create_gemini_client,
     format_commit_log,
     generate_commit_message_from_diff,
     generate_mr_description,
 )
 
-client = create_gemini_client()
-
-commit_msg = generate_commit_message_from_diff(diff_text, client=client)
+commit_msg = generate_commit_message_from_diff(diff_text, generate=generate)
 
 log = format_commit_log((c.title, c.message) for c in mr_commits)
 pr = generate_mr_description(
     diff=diff_text,
     commit_log=log,
     existing_pr=current_pr_body or None,
-    client=client,
+    generate=generate,
 )
 # pr.text -> full updated PR to post as title + description
 # pr.diff -> compact "what changed since last PR" markers, or None
 ```
 
-`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Pass `model=` to override the default Gemini model (`COMMIT_MODEL` / `MR_MODEL`).
+`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Model selection, retries, auth, and error handling are the consumer's responsibility (inside `generate`).
 
 Repo-mode uses the same incremental PR efficiency path as the CLI: it reuses `.git/pr-cache/` automatically, returns the cached PR unchanged when `HEAD` has not advanced, and narrows generation to commits after the last generated `HEAD` when possible. Pass `fresh=True` to disable that behavior for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
 
-Data-mode is stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description(diff=..., existing_pr=...)`.
+Data-mode is stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description(diff=..., existing_pr=..., generate=...)`.
 
 ## Compatibility
 
