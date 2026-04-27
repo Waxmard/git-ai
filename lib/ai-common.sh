@@ -6,6 +6,118 @@ die() {
   exit 1
 }
 
+# Built-in lockfile patterns excluded from diffs by default. Mirror of
+# python/git_ai/_ignore.py:DEFAULT_EXCLUDES — keep the lists in sync.
+GIT_AI_DEFAULT_EXCLUDES=(
+  package-lock.json
+  yarn.lock
+  pnpm-lock.yaml
+  npm-shrinkwrap.json
+  Gemfile.lock
+  Cargo.lock
+  go.sum
+  poetry.lock
+  uv.lock
+  composer.lock
+  Pipfile.lock
+  pubspec.lock
+  mix.lock
+  flake.lock
+)
+
+# load_git_ai_ignore <repo_root>
+# Print active exclude patterns (defaults + .git-ai-ignore additions, minus
+# negations marked with `!`), one per line. Order: defaults first, then
+# additions in file order. Duplicates are dropped.
+load_git_ai_ignore() {
+  local repo_root="$1"
+  local ignore_file="${repo_root}/.git-ai-ignore"
+  local -a additions=()
+  local -a negations=()
+  local line trimmed neg
+  if [[ -r "$ignore_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      trimmed="${line#"${line%%[![:space:]]*}"}"
+      trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+      [[ -z "$trimmed" || "${trimmed:0:1}" == "#" ]] && continue
+      if [[ "${trimmed:0:1}" == "!" ]]; then
+        neg="${trimmed:1}"
+        neg="${neg#"${neg%%[![:space:]]*}"}"
+        neg="${neg%"${neg##*[![:space:]]}"}"
+        [[ -n "$neg" ]] && negations+=("$neg")
+      else
+        additions+=("$trimmed")
+      fi
+    done <"$ignore_file"
+  fi
+
+  local emitted=$'\n'
+  local p n is_negated
+  for p in "${GIT_AI_DEFAULT_EXCLUDES[@]}" ${additions[@]+"${additions[@]}"}; do
+    is_negated=false
+    for n in ${negations[@]+"${negations[@]}"}; do
+      [[ "$n" == "$p" ]] && { is_negated=true; break; }
+    done
+    [[ "$is_negated" == "true" ]] && continue
+    case "$emitted" in
+      *$'\n'"$p"$'\n'*) continue ;;
+    esac
+    printf '%s\n' "$p"
+    emitted+="$p"$'\n'
+  done
+}
+
+# build_pathspec_excludes [patterns...]
+# Print trailing pathspec args for `git diff` (one per line), or nothing
+# when no patterns are given. Caller splats the result into the git command.
+build_pathspec_excludes() {
+  [[ $# -gt 0 ]] || return 0
+  printf -- '--\n'
+  printf '.\n'
+  local p
+  for p in "$@"; do
+    printf ':(exclude,top)%s\n' "$p"
+  done
+}
+
+# check_diff_size_or_die <diff>
+# Abort with a "Largest changed files" hint when the diff exceeds
+# ${GIT_AI_MAX_DIFF_BYTES:-900000}. Set GIT_AI_MAX_DIFF_BYTES=0 to disable.
+check_diff_size_or_die() {
+  local diff="$1"
+  local limit="${GIT_AI_MAX_DIFF_BYTES:-900000}"
+  [[ "$limit" =~ ^[0-9]+$ ]] || limit=900000
+  [[ "$limit" -gt 0 ]] || return 0
+  local size
+  size=$(printf '%s' "$diff" | wc -c | tr -d ' ')
+  [[ "$size" -le "$limit" ]] && return 0
+
+  local top
+  top=$(printf '%s' "$diff" | awk '
+    function flush() { if (path != "") { printf "%d\t%s\n", ins+del, path } }
+    /^diff --git a\// {
+      flush()
+      ins=0; del=0
+      if (match($0, / b\/.+$/)) {
+        path=substr($0, RSTART+3)
+      } else { path="" }
+      next
+    }
+    /^\+\+\+/ || /^---/ { next }
+    /^\+/ { ins++; next }
+    /^-/  { del++; next }
+    END   { flush() }
+  ' | sort -t$'\t' -k1,1nr | head -5 | awk -F'\t' '{ printf "   %6d lines  %s\n", $1, $2 }')
+
+  {
+    printf 'git-ai: diff is %s bytes, exceeds limit (%s).\n' "$size" "$limit"
+    printf 'Largest changed files:\n'
+    [[ -n "$top" ]] && printf '%s\n' "$top"
+    printf 'Add patterns to .git-ai-ignore (repo root) to skip them, unstage them, or raise GIT_AI_MAX_DIFF_BYTES.\n'
+  } >&2
+  exit 1
+}
+
 strip_fences() {
   perl -0pe '
     s/^\s*```.*\n//mg;
@@ -670,9 +782,9 @@ run_provider() {
       codex_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex-err.XXXXXX") ||
         die "failed to create temporary error file"
       trap 'rm -f "$codex_output_file" "$codex_err_file"' EXIT
-      codex exec --model "$model" --output-last-message "$codex_output_file" "$prompt
-
-$input" >/dev/null 2>"$codex_err_file" || {
+      printf '%s\n\n%s' "$prompt" "$input" |
+        codex exec --model "$model" --output-last-message "$codex_output_file" - \
+        >/dev/null 2>"$codex_err_file" || {
         local codex_error
         codex_error=$(<"$codex_err_file")
         rm -f "$codex_output_file" "$codex_err_file"

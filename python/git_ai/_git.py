@@ -82,16 +82,29 @@ def check_git_repo(repo_path: str | Path) -> None:
         raise RuntimeError(f"{repo_path} is not inside a git repository")
 
 
-def get_staged_diff(repo_path: str | Path) -> str:
+def _exclude_args(
+    exclude_patterns: list[str] | tuple[str, ...] | None,
+) -> list[str]:
+    if not exclude_patterns:
+        return []
+    return ["--", ".", *(f":(exclude,top){p}" for p in exclude_patterns)]
+
+
+def get_staged_diff(
+    repo_path: str | Path,
+    *,
+    exclude_patterns: list[str] | tuple[str, ...] | None = None,
+) -> str:
     """Return staged diff. Raises RuntimeError if nothing is staged."""
+    pathspec = _exclude_args(exclude_patterns)
     quiet = subprocess.run(
-        ["git", "diff", "--staged", "--quiet"],
+        ["git", "diff", "--staged", "--quiet", *pathspec],
         cwd=str(repo_path),
         capture_output=True,
     )
     if quiet.returncode == 0:
         raise RuntimeError("No staged changes to summarize")
-    return _git(repo_path, "diff", "--staged")
+    return _git(repo_path, "diff", "--staged", *pathspec)
 
 
 def get_release_context(repo_path: str | Path) -> str:
@@ -168,16 +181,40 @@ def get_commit_log(repo_path: str | Path, base_branch: str) -> str:
     )
 
 
-def get_diff_stat(repo_path: str | Path, base: str, three_dot: bool = True) -> str:
+def get_diff_stat(
+    repo_path: str | Path,
+    base: str,
+    three_dot: bool = True,
+    *,
+    exclude_patterns: list[str] | tuple[str, ...] | None = None,
+) -> str:
     """Return git diff --stat between base and HEAD."""
     sep = "..." if three_dot else ".."
-    return _git(repo_path, "diff", "--stat", f"{base}{sep}HEAD")
+    return _git(
+        repo_path,
+        "diff",
+        "--stat",
+        f"{base}{sep}HEAD",
+        *_exclude_args(exclude_patterns),
+    )
 
 
-def get_diff(repo_path: str | Path, base: str, three_dot: bool = True) -> str:
+def get_diff(
+    repo_path: str | Path,
+    base: str,
+    three_dot: bool = True,
+    *,
+    exclude_patterns: list[str] | tuple[str, ...] | None = None,
+) -> str:
     """Return git diff -U0 between base and HEAD."""
     sep = "..." if three_dot else ".."
-    return _git(repo_path, "diff", "-U0", f"{base}{sep}HEAD")
+    return _git(
+        repo_path,
+        "diff",
+        "-U0",
+        f"{base}{sep}HEAD",
+        *_exclude_args(exclude_patterns),
+    )
 
 
 def count_conventional_commits(log: str) -> tuple[int, int]:
@@ -279,6 +316,43 @@ def derive_diff_stat(diff: str) -> str:
         pieces.append(f"{total_del} deletion{'' if total_del == 1 else 's'}(-)")
     lines.append(" " + ", ".join(pieces))
     return "\n".join(lines)
+
+
+def largest_diff_files(diff: str, n: int = 5) -> list[tuple[str, int, int]]:
+    """Return top-``n`` files in ``diff`` by (insertions + deletions), descending.
+
+    Each entry is ``(path, insertions, deletions)``. Used to format the
+    "Largest staged files" hint when a diff exceeds the size guard.
+    """
+    files: list[tuple[str, int, int]] = []
+    current_path: str | None = None
+    insertions = 0
+    deletions = 0
+
+    def flush() -> None:
+        if current_path is not None:
+            files.append((current_path, insertions, deletions))
+
+    for line in diff.splitlines():
+        header_match = _DIFF_FILE_HEADER.match(line)
+        if header_match:
+            flush()
+            current_path = header_match.group("b")
+            insertions = 0
+            deletions = 0
+            continue
+        if current_path is None:
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            insertions += 1
+        elif line.startswith("-"):
+            deletions += 1
+    flush()
+
+    files.sort(key=lambda entry: entry[1] + entry[2], reverse=True)
+    return files[:n]
 
 
 def build_draft_body(log: str) -> str:

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         git_is_ancestor,
         git_ref_exists,
     )
+    from ._ignore import load_ignore_patterns
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _git = importlib.import_module("_git")
@@ -36,6 +37,8 @@ elif __package__ in (None, ""):
     get_mr_release_context = _git.get_mr_release_context
     git_is_ancestor = _git.git_is_ancestor
     git_ref_exists = _git.git_ref_exists
+    _ignore = importlib.import_module("_ignore")
+    load_ignore_patterns = _ignore.load_ignore_patterns
 else:
     from ._git import (
         check_git_repo,
@@ -49,6 +52,7 @@ else:
         git_is_ancestor,
         git_ref_exists,
     )
+    from ._ignore import load_ignore_patterns
 
 
 @dataclass
@@ -174,6 +178,7 @@ def prepare_repo_pr_context(
         raise RuntimeError(f"No commits ahead of {base_branch}")
 
     three_dot = input_base == base_branch
+    patterns = load_ignore_patterns(repo_path)
     return RepoPrContext(
         base_branch=base_branch,
         current_branch=current_branch,
@@ -181,8 +186,12 @@ def prepare_repo_pr_context(
         input_base=input_base,
         existing_pr=effective_existing,
         commit_log=commit_log,
-        diff=get_diff(repo_path, input_base, three_dot=three_dot),
-        diff_stat=get_diff_stat(repo_path, input_base, three_dot=three_dot),
+        diff=get_diff(
+            repo_path, input_base, three_dot=three_dot, exclude_patterns=patterns
+        ),
+        diff_stat=get_diff_stat(
+            repo_path, input_base, three_dot=three_dot, exclude_patterns=patterns
+        ),
         release_context=get_mr_release_context(repo_path),
     )
 

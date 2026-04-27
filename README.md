@@ -187,6 +187,29 @@ Repo-mode uses the same incremental PR efficiency path as the CLI: it reuses `.g
 
 Data-mode is stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description(diff=..., existing_pr=..., generate=...)`.
 
+## Excluding noisy files (`.git-ai-ignore`)
+
+Lockfiles and other generated artifacts can dominate a diff and push it past the LLM provider's input cap. git-ai always excludes the following filenames from `git diff --staged` (commit) and `git diff base...HEAD` (pr):
+
+```
+package-lock.json    yarn.lock         pnpm-lock.yaml      npm-shrinkwrap.json
+Gemfile.lock         Cargo.lock        go.sum              poetry.lock
+uv.lock              composer.lock     Pipfile.lock        pubspec.lock
+mix.lock             flake.lock
+```
+
+Drop a `.git-ai-ignore` file at the repo root to add more patterns (gitignore-syntax — one per line, `#` comments, blank lines ignored). Lines starting with `!` re-include a pattern, useful when you actually want to review a built-in default:
+
+```
+build/dist.js
+generated/**.ts
+
+# Re-include this lockfile when you want to review it
+!package-lock.json
+```
+
+If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`, set `0` to disable), git-ai aborts with a "Largest changed files" hint pointing at what to ignore or unstage.
+
 ## Narrowing the picker list
 
 By default `git-ai options` enumerates every supported provider/model combo. Most users only have access to a couple. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
