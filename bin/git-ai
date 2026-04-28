@@ -194,7 +194,7 @@ cmd_pr() {
         FROM_SHA="$2"
         shift 2
         ;;
-      vertex|gemini-api|claude-code|anthropic-api|codex|openai-api)
+      vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api)
         PROVIDER="$1"
         shift
         # Accept any non-flag token as the model ID; resolve_model validates
@@ -204,7 +204,7 @@ cmd_pr() {
           shift
         fi
         ;;
-      vertex:*|gemini-api:*|claude-code:*|anthropic-api:*|codex:*|openai-api:*)
+      vertex-gemini:*|vertex-anthropic:*|gemini-api:*|claude-code:*|anthropic-api:*|codex:*|openai-api:*)
         PROVIDER="${1%%:*}"
         MODEL="${1#*:}"
         shift

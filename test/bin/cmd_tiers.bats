@@ -14,12 +14,18 @@ teardown() {
   rm -rf "$TEST_REPO"
 }
 
-@test "cmd_models: vertex returns all models" {
-  run cmd_models "vertex" "commit"
+@test "cmd_models: vertex-gemini returns gemini models" {
+  run cmd_models "vertex-gemini" "commit"
   assert_success
   assert_output --partial "gemini-3.1-flash-lite-preview|"
+  assert_output --partial "gemini-3.1-pro-preview|"
+}
+
+@test "cmd_models: vertex-anthropic returns claude models" {
+  run cmd_models "vertex-anthropic" "commit"
+  assert_success
   assert_output --partial "claude-sonnet-4-6|"
-  assert_output --partial "gpt-5.4|"
+  assert_output --partial "claude-opus-4-6|"
 }
 
 @test "cmd_models: gemini-api returns gemini models" {

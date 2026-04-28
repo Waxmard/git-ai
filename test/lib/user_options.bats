@@ -51,12 +51,12 @@ EOF
 [claude-code]
 claude-sonnet-4-6
 
-[vertex]
+[vertex-gemini]
 EOF
   run parse_user_options
   assert_success
   assert_line "claude-code:claude-sonnet-4-6"
-  refute_output --partial "vertex:"
+  refute_output --partial "vertex-gemini:"
 }
 
 @test "parse_user_options: unknown provider headers are silently ignored" {
@@ -113,7 +113,8 @@ EOF
   assert_success
   assert_output --partial "claude-code:claude-sonnet-4-6|"
   assert_output --partial "codex:gpt-5.4-mini|"
-  refute_output --partial "vertex:"
+  refute_output --partial "vertex-gemini:"
+  refute_output --partial "vertex-anthropic:"
   refute_output --partial "anthropic-api:"
   refute_output --partial "gemini-api:"
   refute_output --partial "openai-api:"
@@ -133,7 +134,8 @@ EOF
   rm -f "$CONF"
   run list_options commit
   assert_success
-  assert_output --partial "vertex:"
+  assert_output --partial "vertex-gemini:"
+  assert_output --partial "vertex-anthropic:"
   assert_output --partial "claude-code:"
   assert_output --partial "codex:"
 }

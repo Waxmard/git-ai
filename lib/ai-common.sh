@@ -155,7 +155,7 @@ save_last_choice() {
 }
 
 get_last_provider() {
-  get_last_choice "${1}-last-provider" "${2:-}" "vertex|gemini-api|claude-code|anthropic-api|codex|openai-api"
+  get_last_choice "${1}-last-provider" "${2:-}" "vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api"
 }
 
 save_last_provider() {
@@ -211,7 +211,7 @@ push_choice_history() {
   printf '%s\n' "${entries[@]}" >"$history_file" 2>/dev/null || true
 }
 
-load_gemini_env() {
+load_google_env() {
   if [[ -n "${GOOGLE_CLOUD_PROJECT:-}" ]]; then
     export GOOGLE_CLOUD_PROJECT
     export GOOGLE_VERTEX_PROJECT="${GOOGLE_VERTEX_PROJECT:-$GOOGLE_CLOUD_PROJECT}"
@@ -325,7 +325,8 @@ _gemini_has_adc() {
 
 provider_display_name() {
   case $1 in
-    vertex)        echo "Vertex AI" ;;
+    vertex-gemini)    echo "Vertex AI (Gemini)" ;;
+    vertex-anthropic) echo "Vertex AI (Anthropic)" ;;
     gemini-api)    echo "Gemini API" ;;
     claude-code)   echo "Claude Code" ;;
     anthropic-api) echo "Anthropic API" ;;
@@ -337,15 +338,15 @@ provider_display_name() {
 
 provider_is_valid() {
   case $1 in
-    vertex|gemini-api|claude-code|anthropic-api|codex|openai-api|last) return 0 ;;
+    vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api|last) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 provider_family() {
   case $1 in
-    vertex|gemini-api) printf '%s\n' "gemini" ;;
-    claude-code|anthropic-api) printf '%s\n' "claude" ;;
+    vertex-gemini|gemini-api) printf '%s\n' "gemini" ;;
+    vertex-anthropic|claude-code|anthropic-api) printf '%s\n' "claude" ;;
     codex|openai-api) printf '%s\n' "openai" ;;
     *) return 1 ;;
   esac
@@ -374,10 +375,11 @@ models_for_family() {
 
 models_for_provider() {
   case $1 in
-    vertex)
+    vertex-gemini)
       models_for_family gemini
+      ;;
+    vertex-anthropic)
       models_for_family claude
-      models_for_family openai
       ;;
     gemini-api)
       models_for_family gemini
@@ -407,7 +409,7 @@ order_by_recent() {
 
 list_providers() {
   local tool_name="${1:-}"
-  local all=(vertex gemini-api claude-code anthropic-api codex openai-api)
+  local all=(vertex-gemini vertex-anthropic gemini-api claude-code anthropic-api codex openai-api)
 
   if [[ -n "$tool_name" ]]; then
     local last ordered=()
@@ -504,7 +506,7 @@ parse_user_options() {
 # default provider/model catalog for this listing.
 list_options() {
   local tool_name="${1:-commit}"
-  local providers=(vertex gemini-api claude-code anthropic-api codex openai-api)
+  local providers=(vertex-gemini vertex-anthropic gemini-api claude-code anthropic-api codex openai-api)
 
   # Build candidate table as a newline-delimited "value<TAB>label" string
   # (bash 3.2 on macOS has no associative arrays).
@@ -639,10 +641,6 @@ resolve_model() {
     die "unknown model '$model' for provider '$provider'"
   fi
 
-  if [[ "$provider" == "vertex" ]]; then
-    die "provider '$provider' requires an explicit model; run 'git-ai models $provider $tool_name'"
-  fi
-
   default_model_for_provider "$tool_name" "$provider"
 }
 
@@ -665,6 +663,67 @@ _run_gemini_cli() {
   fi
   rm -f "$err_file"
   printf '%s\n' "$out"
+}
+
+_vertex_endpoint() {
+  local project="$1" region="$2" publisher="$3" model="$4" method="$5"
+  local host
+  [[ "$region" == "global" ]] && host="aiplatform.googleapis.com" \
+                               || host="${region}-aiplatform.googleapis.com"
+  printf 'https://%s/v1/projects/%s/locations/%s/publishers/%s/models/%s:%s\n' \
+    "$host" "$project" "$region" "$publisher" "$model" "$method"
+}
+
+_run_vertex_anthropic_api() {
+  local model="$1" prompt="$2" input="$3" project="$4" region="$5"
+  local token body url curl_cfg response
+  token=$(gcloud auth print-access-token 2>/dev/null) ||
+    die "Vertex auth: gcloud print-access-token failed."
+  body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
+import json, os
+print(json.dumps({
+  "anthropic_version": "vertex-2023-10-16",
+  "max_tokens": 8192,
+  "system": os.environ["GIT_AI_PROMPT"],
+  "messages": [{"role": "user", "content": os.environ["GIT_AI_INPUT"]}]
+}))') || die "Failed to build Vertex Anthropic request"
+  url=$(_vertex_endpoint "$project" "$region" "anthropic" "$model" "rawPredict")
+  curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
+  response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" -d "$body" "$url")
+  local curl_status=$?
+  rm -f "$curl_cfg"
+  [[ $curl_status -eq 0 ]] || die "Vertex Anthropic API request failed"
+  python3 -c '
+import json, sys
+data = json.loads(sys.stdin.read())
+print(data["content"][0]["text"])
+' <<<"$response" || die "Failed to parse Vertex Anthropic response"
+}
+
+_run_vertex_gemini_api() {
+  local model="$1" prompt="$2" input="$3" project="$4" region="$5"
+  local token body url curl_cfg response
+  token=$(gcloud auth print-access-token 2>/dev/null) ||
+    die "Vertex auth: gcloud print-access-token failed."
+  body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
+import json, os
+print(json.dumps({
+  "systemInstruction": {"parts": [{"text": os.environ["GIT_AI_PROMPT"]}]},
+  "contents": [{"role": "user", "parts": [{"text": os.environ["GIT_AI_INPUT"]}]}]
+}))') || die "Failed to build Vertex Gemini request"
+  url=$(_vertex_endpoint "$project" "$region" "google" "$model" "generateContent")
+  curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
+  response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" -d "$body" "$url")
+  local curl_status=$?
+  rm -f "$curl_cfg"
+  [[ $curl_status -eq 0 ]] || die "Vertex Gemini API request failed"
+  python3 -c '
+import json, sys
+data = json.loads(sys.stdin.read())
+print(data["candidates"][0]["content"]["parts"][0]["text"])
+' <<<"$response" || die "Failed to parse Vertex Gemini response"
 }
 
 _run_anthropic_api() {
@@ -758,14 +817,23 @@ run_provider() {
       _run_anthropic_api "$model" "$prompt" "$input" | strip_fences ||
         die "Anthropic API generation failed"
       ;;
-    vertex)
-      load_gemini_env
+    vertex-gemini|vertex-anthropic)
+      load_google_env
       _gemini_has_adc ||
         die "Vertex auth not found. Configure gcloud ADC or GOOGLE_APPLICATION_CREDENTIALS."
-      _run_gemini_cli "$model" "$prompt" "$input" | strip_fences
+      local vertex_project vertex_region
+      vertex_project="${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}"
+      vertex_region="${VERTEX_LOCATION:-${GOOGLE_VERTEX_LOCATION:-${GOOGLE_CLOUD_LOCATION:-us-central1}}}"
+      [[ -n "$vertex_project" ]] ||
+        die "Vertex auth requires GOOGLE_CLOUD_PROJECT or GOOGLE_VERTEX_PROJECT."
+      if [[ "$provider" == "vertex-anthropic" ]]; then
+        _run_vertex_anthropic_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" | strip_fences
+      else
+        _run_vertex_gemini_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" | strip_fences
+      fi
       ;;
     gemini-api)
-      load_gemini_env
+      load_google_env
       local gemini_api_key
       gemini_api_key=$(resolve_gemini_api_key) ||
         die "Gemini API auth not found. Set GEMINI_API_KEY or store 'gemini-api-key' in your keychain."

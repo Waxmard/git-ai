@@ -24,12 +24,18 @@ setup() {
   assert_output --partial "gpt-5.4"
 }
 
-@test "models_for_provider: vertex includes all families" {
-  run models_for_provider "vertex"
+@test "models_for_provider: vertex-gemini includes gemini models" {
+  run models_for_provider "vertex-gemini"
   assert_success
   assert_output --partial "gemini-3.1-flash-lite-preview"
+  assert_output --partial "gemini-3.1-pro-preview"
+}
+
+@test "models_for_provider: vertex-anthropic includes claude models" {
+  run models_for_provider "vertex-anthropic"
+  assert_success
+  assert_output --partial "claude-sonnet-4-6"
   assert_output --partial "claude-opus-4-6"
-  assert_output --partial "gpt-5.4-mini"
 }
 
 @test "models_for_provider: unknown exits non-zero" {
@@ -49,10 +55,16 @@ setup() {
   assert_output "gpt-5.4-mini"
 }
 
-@test "provider_family: vertex maps to gemini runtime" {
-  run provider_family "vertex"
+@test "provider_family: vertex-gemini maps to gemini" {
+  run provider_family "vertex-gemini"
   assert_success
   assert_output "gemini"
+}
+
+@test "provider_family: vertex-anthropic maps to claude" {
+  run provider_family "vertex-anthropic"
+  assert_success
+  assert_output "claude"
 }
 
 @test "provider_family: codex maps to openai runtime" {

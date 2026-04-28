@@ -16,28 +16,28 @@ teardown() {
 # --- get_last_choice / save_last_choice ---
 
 @test "get_last_choice: returns fallback when no state file exists" {
-  run get_last_choice "commit-last-provider" "vertex" "vertex|gemini-api|claude-code|anthropic-api|codex|openai-api"
+  run get_last_choice "commit-last-provider" "vertex-gemini" "vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api"
   assert_success
-  assert_output "vertex"
+  assert_output "vertex-gemini"
 }
 
 @test "save_last_choice + get_last_choice: round-trips value" {
   save_last_choice "commit-last-provider" "claude-code"
-  run get_last_choice "commit-last-provider" "vertex" "vertex|gemini-api|claude-code|anthropic-api|codex|openai-api"
+  run get_last_choice "commit-last-provider" "vertex-gemini" "vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api"
   assert_success
   assert_output "claude-code"
 }
 
 @test "get_last_choice: rejects stored value not in valid set, returns fallback" {
   save_last_choice "commit-last-provider" "bogusprovider"
-  run get_last_choice "commit-last-provider" "vertex" "vertex|gemini-api|claude-code|anthropic-api|codex|openai-api"
+  run get_last_choice "commit-last-provider" "vertex-gemini" "vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api"
   assert_success
-  assert_output "vertex"
+  assert_output "vertex-gemini"
 }
 
 @test "get_last_choice: returns fallback when outside a git repo" {
   cd /tmp
-  run get_last_choice "commit-last-provider" "codex" "vertex|gemini-api|claude-code|anthropic-api|codex|openai-api"
+  run get_last_choice "commit-last-provider" "codex" "vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api"
   assert_success
   assert_output "codex"
 }
