@@ -1,6 +1,6 @@
 """git-ai ignore patterns: built-in lockfile defaults + repo-root `.git-ai-ignore`.
 
-Patterns become git pathspec excludes (`:(exclude,top)<pattern>`) so noisy
+Patterns become git pathspec excludes (`:(exclude,glob)**/<pattern>`) so noisy
 generated files (lockfiles especially) never reach the LLM. Lines starting with
 `!` in `.git-ai-ignore` remove a pattern from the active set, letting users
 opt back into a built-in default when they actually want to review it.
@@ -73,11 +73,11 @@ def load_ignore_patterns(repo_path: str | Path) -> list[str]:
 
 
 def to_pathspec_args(patterns: list[str] | tuple[str, ...] | None) -> list[str]:
-    """Build trailing ``-- . :(exclude,top)X ...`` args for ``git diff`` calls.
+    """Build trailing ``-- . :(exclude,glob)**/X ...`` args for ``git diff`` calls.
 
     Returns an empty list when ``patterns`` is empty/None so callers can
     splat it unconditionally.
     """
     if not patterns:
         return []
-    return ["--", ".", *(f":(exclude,top){p}" for p in patterns)]
+    return ["--", ".", *(f":(exclude,glob)**/{p}" for p in patterns)]

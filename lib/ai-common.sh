@@ -76,7 +76,7 @@ build_pathspec_excludes() {
   printf '.\n'
   local p
   for p in "$@"; do
-    printf ':(exclude,top)%s\n' "$p"
+    printf ':(exclude,glob)**/%s\n' "$p"
   done
 }
 

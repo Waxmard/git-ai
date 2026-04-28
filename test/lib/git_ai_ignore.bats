@@ -70,14 +70,14 @@ EOF
   assert_output ""
 }
 
-@test "build_pathspec_excludes: emits -- . :(exclude,top)X for each pattern" {
+@test "build_pathspec_excludes: emits -- . :(exclude,glob)**/X for each pattern" {
   run build_pathspec_excludes "package-lock.json" "yarn.lock"
   assert_success
   local expected
   expected="--
 .
-:(exclude,top)package-lock.json
-:(exclude,top)yarn.lock"
+:(exclude,glob)**/package-lock.json
+:(exclude,glob)**/yarn.lock"
   assert_output "$expected"
 }
 

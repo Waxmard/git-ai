@@ -82,12 +82,12 @@ def check_git_repo(repo_path: str | Path) -> None:
         raise RuntimeError(f"{repo_path} is not inside a git repository")
 
 
-def _exclude_args(
+def to_pathspec_args(
     exclude_patterns: list[str] | tuple[str, ...] | None,
 ) -> list[str]:
     if not exclude_patterns:
         return []
-    return ["--", ".", *(f":(exclude,top){p}" for p in exclude_patterns)]
+    return ["--", ".", *(f":(exclude,glob)**/{p}" for p in exclude_patterns)]
 
 
 def get_staged_diff(
@@ -96,7 +96,7 @@ def get_staged_diff(
     exclude_patterns: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     """Return staged diff. Raises RuntimeError if nothing is staged."""
-    pathspec = _exclude_args(exclude_patterns)
+    pathspec = to_pathspec_args(exclude_patterns)
     quiet = subprocess.run(
         ["git", "diff", "--staged", "--quiet", *pathspec],
         cwd=str(repo_path),
@@ -195,7 +195,7 @@ def get_diff_stat(
         "diff",
         "--stat",
         f"{base}{sep}HEAD",
-        *_exclude_args(exclude_patterns),
+        *to_pathspec_args(exclude_patterns),
     )
 
 
@@ -213,7 +213,7 @@ def get_diff(
         "diff",
         "-U0",
         f"{base}{sep}HEAD",
-        *_exclude_args(exclude_patterns),
+        *to_pathspec_args(exclude_patterns),
     )
 
 

@@ -81,6 +81,6 @@ def test_to_pathspec_args_builds_excludes() -> None:
     assert args == [
         "--",
         ".",
-        ":(exclude,top)package-lock.json",
-        ":(exclude,top)yarn.lock",
+        ":(exclude,glob)**/package-lock.json",
+        ":(exclude,glob)**/yarn.lock",
     ]
