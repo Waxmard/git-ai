@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.0.0](https://github.com/Waxmard/git-ai/compare/v4.1.4...v5.0.0) (2026-04-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* diff ignore rules, size guard, and vertex provider split ([#44](https://github.com/Waxmard/git-ai/issues/44))
+
+### Features
+
+* diff ignore rules, size guard, and vertex provider split ([#44](https://github.com/Waxmard/git-ai/issues/44)) ([35dac3b](https://github.com/Waxmard/git-ai/commit/35dac3b7877298addd22dc2d01ef9f29c5854bac))
+
 ## [4.1.4](https://github.com/Waxmard/git-ai/compare/v4.1.3...v4.1.4) (2026-04-22)
 
 
