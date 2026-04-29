@@ -19,6 +19,7 @@ from ._git import (
     derive_diff_stat,
     get_git_dir,
     get_release_context,
+    get_repo_root,
     get_staged_diff,
     largest_diff_files,
 )
@@ -160,7 +161,8 @@ def generate_commit_message(
     """
     repo_path = Path(repo_path)
     check_git_repo(repo_path)
-    patterns = load_ignore_patterns(repo_path)
+    repo_root = get_repo_root(repo_path)
+    patterns = load_ignore_patterns(repo_root)
 
     return generate_commit_message_from_diff(
         get_staged_diff(repo_path, exclude_patterns=patterns),

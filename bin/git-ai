@@ -273,6 +273,8 @@ cmd_pr() {
     return 0
   fi
 
+  check_diff_size_or_die "$DIFF"
+
   local BUILD_FILE PROMPT_NAME PROMPT INPUT DIFF_FILE LOG_FILE STAT_FILE RELEASE_FILE EXISTING_FILE
   BUILD_FILE=$(mktemp) || die "failed to allocate temp file"
   DIFF_FILE=$(mktemp) || die "failed to allocate temp file"

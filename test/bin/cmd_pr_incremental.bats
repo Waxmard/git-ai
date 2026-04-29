@@ -15,7 +15,7 @@ setup() {
   source "${REPO_ROOT}/bin/git-ai"
 
   run_provider() {
-    printf '%s' "$4"
+    printf 'PROVIDER_CALLED\n%s' "$4"
   }
   export -f run_provider
 
@@ -41,6 +41,34 @@ teardown() {
   # two-pass prompt strips type prefix; check description word in <draft>
   assert_output --partial "add second"
   refute_output --partial "add first"
+}
+
+@test "cmd_pr: from subdirectory includes repo-root changed files" {
+  mkdir -p nested
+  cd nested
+
+  run cmd_pr codex gpt-5.4-mini --base main --fresh
+
+  assert_success
+  assert_output --partial "one.txt"
+  assert_output --partial "two.txt"
+}
+
+@test "cmd_pr: oversize diff aborts before provider call" {
+  local i
+  for ((i = 0; i < 200; i++)); do
+    printf 'line %03d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n' "$i"
+  done > huge.txt
+  git add huge.txt
+  git commit -q -m "feat: add huge file"
+
+  GIT_AI_MAX_DIFF_BYTES=500 run cmd_pr codex gpt-5.4-mini --base main --fresh
+
+  assert_failure
+  assert_output --partial "exceeds limit"
+  assert_output --partial "Largest changed files"
+  assert_output --partial "huge.txt"
+  refute_output --partial "PROVIDER_CALLED"
 }
 
 @test "cmd_pr: --fresh rejects --from-sha" {

@@ -68,15 +68,15 @@ load_git_ai_ignore() {
 }
 
 # build_pathspec_excludes [patterns...]
-# Print trailing pathspec args for `git diff` (one per line), or nothing
+# Print repo-root pathspec args for `git diff` (one per line), or nothing
 # when no patterns are given. Caller splats the result into the git command.
 build_pathspec_excludes() {
   [[ $# -gt 0 ]] || return 0
   printf -- '--\n'
-  printf '.\n'
+  printf ':/\n'
   local p
   for p in "$@"; do
-    printf ':(exclude,glob)**/%s\n' "$p"
+    printf ':(top,exclude,glob)**/%s\n' "$p"
   done
 }
 
@@ -314,13 +314,15 @@ resolve_gemini_api_key() {
 }
 
 _gemini_has_adc() {
-  if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
-    return 0
-  fi
-  if command -v gcloud >/dev/null 2>&1 && gcloud auth print-access-token >/dev/null 2>&1; then
+  if [[ -n "$(_vertex_access_token)" ]]; then
     return 0
   fi
   return 1
+}
+
+_vertex_access_token() {
+  command -v gcloud >/dev/null 2>&1 || return 1
+  gcloud auth application-default print-access-token 2>/dev/null
 }
 
 provider_display_name() {
@@ -677,8 +679,8 @@ _vertex_endpoint() {
 _run_vertex_anthropic_api() {
   local model="$1" prompt="$2" input="$3" project="$4" region="$5"
   local token body url curl_cfg response
-  token=$(gcloud auth print-access-token 2>/dev/null) ||
-    die "Vertex auth: gcloud print-access-token failed."
+  token=$(_vertex_access_token) ||
+    die "Vertex auth: gcloud auth application-default print-access-token failed."
   body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
 import json, os
 print(json.dumps({
@@ -704,8 +706,8 @@ print(data["content"][0]["text"])
 _run_vertex_gemini_api() {
   local model="$1" prompt="$2" input="$3" project="$4" region="$5"
   local token body url curl_cfg response
-  token=$(gcloud auth print-access-token 2>/dev/null) ||
-    die "Vertex auth: gcloud print-access-token failed."
+  token=$(_vertex_access_token) ||
+    die "Vertex auth: gcloud auth application-default print-access-token failed."
   body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
 import json, os
 print(json.dumps({

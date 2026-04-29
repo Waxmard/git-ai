@@ -12,6 +12,7 @@ setup() {
   # Mirrors the real side effect of writing to choice history on success.
   run_provider() {
     printf 'STUB provider=%s model=%s tool=%s\n' "$2" "$5" "$1"
+    printf '%s\n' "$4"
     push_choice_history "$1" "$2:$5"
   }
   export -f run_provider
@@ -44,6 +45,16 @@ teardown() {
   run get_choice_history commit
   assert_success
   assert_line --index 0 "codex:gpt-5.4-mini"
+}
+
+@test "cmd_commit: from subdirectory includes repo-root staged changes" {
+  mkdir -p nested
+  cd nested
+
+  run cmd_commit "codex:gpt-5.4-mini"
+
+  assert_success
+  assert_output --partial "file.txt"
 }
 
 @test "cmd_commit last: pushes last into history" {

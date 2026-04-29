@@ -38,6 +38,11 @@ def get_git_dir(repo_path: str | Path) -> str:
     return str((Path(repo_path) / git_dir_path).resolve())
 
 
+def get_repo_root(repo_path: str | Path) -> Path:
+    """Return the repository top-level directory."""
+    return Path(_git(repo_path, "rev-parse", "--show-toplevel").strip())
+
+
 def get_current_branch(repo_path: str | Path) -> str | None:
     """Return the current branch name, or None when detached."""
     branch = _git(repo_path, "branch", "--show-current").strip()
@@ -87,7 +92,7 @@ def to_pathspec_args(
 ) -> list[str]:
     if not exclude_patterns:
         return []
-    return ["--", ".", *(f":(exclude,glob)**/{p}" for p in exclude_patterns)]
+    return ["--", ":/", *(f":(top,exclude,glob)**/{p}" for p in exclude_patterns)]
 
 
 def get_staged_diff(

@@ -254,6 +254,36 @@ def test_prepare_repo_pr_context_excludes_lockfiles_by_default(
     assert "package-lock.json" not in ctx.diff_stat
 
 
+def test_prepare_repo_pr_context_from_subdirectory_uses_repo_root_diff(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add root file")
+    subdir = repo / "nested"
+    subdir.mkdir()
+
+    ctx = prepare_repo_pr_context(subdir, base_branch="main")
+
+    assert "one.txt" in ctx.diff
+    assert "feat: add root file" in ctx.commit_log
+
+
+def test_prepare_repo_pr_context_from_subdirectory_uses_root_ignore_file(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / ".git-ai-ignore").write_text("root-only.txt\n", encoding="utf-8")
+    _commit(repo, "root-only.txt", "ignored\n", "chore: add ignored file")
+    _commit(repo, "app.py", "print('hi')\n", "feat: add app")
+    subdir = repo / "nested"
+    subdir.mkdir()
+
+    ctx = prepare_repo_pr_context(subdir, base_branch="main")
+
+    assert "app.py" in ctx.diff
+    assert "root-only.txt" not in ctx.diff
+
+
 def test_prepare_repo_pr_context_negation_reincludes_lockfile(
     tmp_path: Path,
 ) -> None:
