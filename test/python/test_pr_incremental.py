@@ -1,4 +1,5 @@
 """Tests for repo-mode incremental PR generation helpers."""
+
 from __future__ import annotations
 
 import subprocess
@@ -38,9 +39,13 @@ def _commit(repo: Path, name: str, content: str, message: str) -> str:
 def _make_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-b", "main", repo], check=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"], cwd=repo, check=True
+    )
     subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
     subprocess.run(["git", "checkout", "-b", "feature/test"], cwd=repo, check=True)
     return repo
 
@@ -180,7 +185,9 @@ def test_generate_mr_description_caches_and_reuses_without_model_call(
 
     git_dir = get_git_dir(repo)
     assert load_cached_pr(git_dir, "feature/test", "main") == first.text
-    assert load_cached_pr_sha(git_dir, "feature/test", "main") == _git(repo, "rev-parse", "HEAD")
+    assert load_cached_pr_sha(git_dir, "feature/test", "main") == _git(
+        repo, "rev-parse", "HEAD"
+    )
 
 
 def test_generate_mr_description_previous_head_sha_overrides_cache(
@@ -215,14 +222,79 @@ def test_prepare_repo_pr_context_raises_on_non_ancestor_previous_head_sha(
     _commit(repo, "one.txt", "one\n", "feat: add first")
     # orphan branch commit exists in repo but shares no history with feature/test
     subprocess.run(["git", "checkout", "--orphan", "orphan-tmp"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "orphan"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "orphan"], cwd=repo, check=True
+    )
     orphan_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     subprocess.run(["git", "checkout", "feature/test"], cwd=repo, check=True)
 
     with pytest.raises(ValueError, match="not an ancestor"):
         prepare_repo_pr_context(repo, base_branch="main", previous_head_sha=orphan_sha)
+
+
+def test_prepare_repo_pr_context_excludes_lockfiles_by_default(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    # Lockfile commit + a real-code commit. Default excludes should drop the
+    # lockfile from diff/diff_stat output.
+    _commit(repo, "package-lock.json", "lock_contents\n", "chore: lockfile")
+    _commit(repo, "app.py", "print('hi')\n", "feat: add app")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    assert "app.py" in ctx.diff
+    assert "package-lock.json" not in ctx.diff
+    assert "package-lock.json" not in ctx.diff_stat
+
+
+def test_prepare_repo_pr_context_from_subdirectory_uses_repo_root_diff(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add root file")
+    subdir = repo / "nested"
+    subdir.mkdir()
+
+    ctx = prepare_repo_pr_context(subdir, base_branch="main")
+
+    assert "one.txt" in ctx.diff
+    assert "feat: add root file" in ctx.commit_log
+
+
+def test_prepare_repo_pr_context_from_subdirectory_uses_root_ignore_file(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / ".git-ai-ignore").write_text("root-only.txt\n", encoding="utf-8")
+    _commit(repo, "root-only.txt", "ignored\n", "chore: add ignored file")
+    _commit(repo, "app.py", "print('hi')\n", "feat: add app")
+    subdir = repo / "nested"
+    subdir.mkdir()
+
+    ctx = prepare_repo_pr_context(subdir, base_branch="main")
+
+    assert "app.py" in ctx.diff
+    assert "root-only.txt" not in ctx.diff
+
+
+def test_prepare_repo_pr_context_negation_reincludes_lockfile(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _commit(repo, "package-lock.json", "lock_contents\n", "chore: lockfile")
+    _commit(repo, "app.py", "print('hi')\n", "feat: add app")
+    (repo / ".git-ai-ignore").write_text("!package-lock.json\n", encoding="utf-8")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    assert "package-lock.json" in ctx.diff
 
 
 def test_prepare_repo_pr_context_non_ancestor_cached_sha_falls_back(
@@ -232,9 +304,15 @@ def test_prepare_repo_pr_context_non_ancestor_cached_sha_falls_back(
     _commit(repo, "one.txt", "one\n", "feat: add first")
     # create an orphan SHA to plant in the cache
     subprocess.run(["git", "checkout", "--orphan", "orphan-tmp2"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "orphan"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "orphan"], cwd=repo, check=True
+    )
     orphan_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     subprocess.run(["git", "checkout", "feature/test"], cwd=repo, check=True)
 

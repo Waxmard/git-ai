@@ -136,10 +136,24 @@ cmd_commit() {
     return 0
   fi
 
-  git diff --staged --quiet && die "no staged changes to summarize"
+  local REPO_ROOT
+  REPO_ROOT=$(git rev-parse --show-toplevel) || die "failed to determine repo root"
+
+  local -a IGNORE_PATTERNS=() PATHSPEC=()
+  local _p
+  while IFS= read -r _p; do
+    [[ -n "$_p" ]] && IGNORE_PATTERNS+=("$_p")
+  done < <(load_git_ai_ignore "$REPO_ROOT")
+  while IFS= read -r _p; do
+    [[ -n "$_p" ]] && PATHSPEC+=("$_p")
+  done < <(build_pathspec_excludes ${IGNORE_PATTERNS[@]+"${IGNORE_PATTERNS[@]}"})
+
+  git diff --staged --quiet ${PATHSPEC[@]+"${PATHSPEC[@]}"} && die "no staged changes to summarize"
 
   local STAGED_DIFF LAST_TAG COMMITS_SINCE RELEASE_CONTEXT INPUT generated
-  STAGED_DIFF=$(git diff --staged) || die "failed to read staged diff"
+  STAGED_DIFF=$(git diff --staged ${PATHSPEC[@]+"${PATHSPEC[@]}"}) || die "failed to read staged diff"
+
+  check_diff_size_or_die "$STAGED_DIFF"
 
   LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
   if [[ -n "$LAST_TAG" ]]; then
@@ -180,7 +194,7 @@ cmd_pr() {
         FROM_SHA="$2"
         shift 2
         ;;
-      vertex|gemini-api|claude-code|anthropic-api|codex|openai-api)
+      vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api)
         PROVIDER="$1"
         shift
         # Accept any non-flag token as the model ID; resolve_model validates
@@ -190,7 +204,7 @@ cmd_pr() {
           shift
         fi
         ;;
-      vertex:*|gemini-api:*|claude-code:*|anthropic-api:*|codex:*|openai-api:*)
+      vertex-gemini:*|vertex-anthropic:*|gemini-api:*|claude-code:*|anthropic-api:*|codex:*|openai-api:*)
         PROVIDER="${1%%:*}"
         MODEL="${1#*:}"
         shift
@@ -258,6 +272,8 @@ cmd_pr() {
     printf '%s\n' "$EXISTING_PR"
     return 0
   fi
+
+  check_diff_size_or_die "$DIFF"
 
   local BUILD_FILE PROMPT_NAME PROMPT INPUT DIFF_FILE LOG_FILE STAT_FILE RELEASE_FILE EXISTING_FILE
   BUILD_FILE=$(mktemp) || die "failed to allocate temp file"

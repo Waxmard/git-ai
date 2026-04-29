@@ -7,6 +7,7 @@ callable that does the actual LLM call, so git_ai carries no LLM SDK deps.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,13 +19,49 @@ from ._git import (
     derive_diff_stat,
     get_git_dir,
     get_release_context,
+    get_repo_root,
     get_staged_diff,
+    largest_diff_files,
 )
+from ._ignore import load_ignore_patterns
 from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
 from ._pr_prompt_build import build_mr_prompt_input
 from ._pr_render import render_pr_diff
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
+_DEFAULT_MAX_DIFF_BYTES = 900_000
+
+
+def _max_diff_bytes() -> int:
+    raw = os.environ.get("GIT_AI_MAX_DIFF_BYTES")
+    if raw is None:
+        return _DEFAULT_MAX_DIFF_BYTES
+    try:
+        return int(raw)
+    except ValueError:
+        return _DEFAULT_MAX_DIFF_BYTES
+
+
+def _check_diff_size(diff: str) -> None:
+    limit = _max_diff_bytes()
+    if limit <= 0:
+        return
+    size = len(diff.encode("utf-8"))
+    if size <= limit:
+        return
+    top = largest_diff_files(diff, 5)
+    lines = [
+        f"git-ai: diff is {size} bytes, exceeds limit ({limit}).",
+        "Largest changed files:",
+    ]
+    for path, ins, dels in top:
+        lines.append(f"   {ins + dels:>6} lines  {path}")
+    lines.append(
+        "Add patterns to .git-ai-ignore (repo root) to skip them, "
+        "unstage them, or raise GIT_AI_MAX_DIFF_BYTES."
+    )
+    raise RuntimeError("\n".join(lines))
+
 
 Completion = Callable[[str, str], str]
 """Consumer-supplied LLM call: ``(system_prompt, user_input) -> raw text``."""
@@ -92,6 +129,8 @@ def generate_commit_message_from_diff(
     if not diff.strip():
         raise ValueError("diff is empty")
 
+    _check_diff_size(diff)
+
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
 
@@ -122,9 +161,11 @@ def generate_commit_message(
     """
     repo_path = Path(repo_path)
     check_git_repo(repo_path)
+    repo_root = get_repo_root(repo_path)
+    patterns = load_ignore_patterns(repo_root)
 
     return generate_commit_message_from_diff(
-        get_staged_diff(repo_path),
+        get_staged_diff(repo_path, exclude_patterns=patterns),
         generate=generate,
         release_context=get_release_context(repo_path),
     )
@@ -141,6 +182,7 @@ def _generate_mr_text(
 ) -> str:
     if not diff.strip():
         raise ValueError("diff is empty")
+    _check_diff_size(diff)
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
     if diff_stat is None:

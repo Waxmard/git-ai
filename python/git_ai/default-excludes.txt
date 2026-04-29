@@ -1,0 +1,15 @@
+# Built-in patterns excluded from AI diffs by default.
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+npm-shrinkwrap.json
+Gemfile.lock
+Cargo.lock
+go.sum
+poetry.lock
+uv.lock
+composer.lock
+Pipfile.lock
+pubspec.lock
+mix.lock
+flake.lock

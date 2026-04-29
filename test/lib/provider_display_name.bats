@@ -6,10 +6,16 @@ setup() {
   source "${REPO_ROOT}/lib/ai-common.sh"
 }
 
-@test "provider_display_name: vertex" {
-  run provider_display_name "vertex"
+@test "provider_display_name: vertex-gemini" {
+  run provider_display_name "vertex-gemini"
   assert_success
-  assert_output "Vertex AI"
+  assert_output "Vertex AI (Gemini)"
+}
+
+@test "provider_display_name: vertex-anthropic" {
+  run provider_display_name "vertex-anthropic"
+  assert_success
+  assert_output "Vertex AI (Anthropic)"
 }
 
 @test "provider_display_name: gemini-api" {

@@ -6,6 +6,16 @@ import re
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ._ignore import to_pathspec_args
+elif __package__ in (None, ""):
+    import importlib
+
+    to_pathspec_args = importlib.import_module("_ignore").to_pathspec_args
+else:
+    from ._ignore import to_pathspec_args
 
 _CONVENTIONAL_TYPES = frozenset(
     ["feat", "fix", "refactor", "docs", "chore", "ci", "test", "style", "perf", "build"]
@@ -36,6 +46,11 @@ def get_git_dir(repo_path: str | Path) -> str:
     if git_dir_path.is_absolute():
         return str(git_dir_path)
     return str((Path(repo_path) / git_dir_path).resolve())
+
+
+def get_repo_root(repo_path: str | Path) -> Path:
+    """Return the repository top-level directory."""
+    return Path(_git(repo_path, "rev-parse", "--show-toplevel").strip())
 
 
 def get_current_branch(repo_path: str | Path) -> str | None:
@@ -82,16 +97,21 @@ def check_git_repo(repo_path: str | Path) -> None:
         raise RuntimeError(f"{repo_path} is not inside a git repository")
 
 
-def get_staged_diff(repo_path: str | Path) -> str:
+def get_staged_diff(
+    repo_path: str | Path,
+    *,
+    exclude_patterns: list[str] | tuple[str, ...] | None = None,
+) -> str:
     """Return staged diff. Raises RuntimeError if nothing is staged."""
+    pathspec = to_pathspec_args(exclude_patterns)
     quiet = subprocess.run(
-        ["git", "diff", "--staged", "--quiet"],
+        ["git", "diff", "--staged", "--quiet", *pathspec],
         cwd=str(repo_path),
         capture_output=True,
     )
     if quiet.returncode == 0:
         raise RuntimeError("No staged changes to summarize")
-    return _git(repo_path, "diff", "--staged")
+    return _git(repo_path, "diff", "--staged", *pathspec)
 
 
 def get_release_context(repo_path: str | Path) -> str:
@@ -168,16 +188,40 @@ def get_commit_log(repo_path: str | Path, base_branch: str) -> str:
     )
 
 
-def get_diff_stat(repo_path: str | Path, base: str, three_dot: bool = True) -> str:
+def get_diff_stat(
+    repo_path: str | Path,
+    base: str,
+    three_dot: bool = True,
+    *,
+    exclude_patterns: list[str] | tuple[str, ...] | None = None,
+) -> str:
     """Return git diff --stat between base and HEAD."""
     sep = "..." if three_dot else ".."
-    return _git(repo_path, "diff", "--stat", f"{base}{sep}HEAD")
+    return _git(
+        repo_path,
+        "diff",
+        "--stat",
+        f"{base}{sep}HEAD",
+        *to_pathspec_args(exclude_patterns),
+    )
 
 
-def get_diff(repo_path: str | Path, base: str, three_dot: bool = True) -> str:
+def get_diff(
+    repo_path: str | Path,
+    base: str,
+    three_dot: bool = True,
+    *,
+    exclude_patterns: list[str] | tuple[str, ...] | None = None,
+) -> str:
     """Return git diff -U0 between base and HEAD."""
     sep = "..." if three_dot else ".."
-    return _git(repo_path, "diff", "-U0", f"{base}{sep}HEAD")
+    return _git(
+        repo_path,
+        "diff",
+        "-U0",
+        f"{base}{sep}HEAD",
+        *to_pathspec_args(exclude_patterns),
+    )
 
 
 def count_conventional_commits(log: str) -> tuple[int, int]:
@@ -279,6 +323,43 @@ def derive_diff_stat(diff: str) -> str:
         pieces.append(f"{total_del} deletion{'' if total_del == 1 else 's'}(-)")
     lines.append(" " + ", ".join(pieces))
     return "\n".join(lines)
+
+
+def largest_diff_files(diff: str, n: int = 5) -> list[tuple[str, int, int]]:
+    """Return top-``n`` files in ``diff`` by (insertions + deletions), descending.
+
+    Each entry is ``(path, insertions, deletions)``. Used to format the
+    "Largest staged files" hint when a diff exceeds the size guard.
+    """
+    files: list[tuple[str, int, int]] = []
+    current_path: str | None = None
+    insertions = 0
+    deletions = 0
+
+    def flush() -> None:
+        if current_path is not None:
+            files.append((current_path, insertions, deletions))
+
+    for line in diff.splitlines():
+        header_match = _DIFF_FILE_HEADER.match(line)
+        if header_match:
+            flush()
+            current_path = header_match.group("b")
+            insertions = 0
+            deletions = 0
+            continue
+        if current_path is None:
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            insertions += 1
+        elif line.startswith("-"):
+            deletions += 1
+    flush()
+
+    files.sort(key=lambda entry: entry[1] + entry[2], reverse=True)
+    return files[:n]
 
 
 def build_draft_body(log: str) -> str:

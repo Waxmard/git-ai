@@ -23,10 +23,16 @@ teardown() {
   done <<< "$output"
 }
 
-@test "cmd_providers: contains vertex" {
+@test "cmd_providers: contains vertex-gemini" {
   run cmd_providers "commit"
   assert_success
-  assert_output --partial "vertex|"
+  assert_output --partial "vertex-gemini|"
+}
+
+@test "cmd_providers: contains vertex-anthropic" {
+  run cmd_providers "commit"
+  assert_success
+  assert_output --partial "vertex-anthropic|"
 }
 
 @test "cmd_providers: contains gemini-api" {

@@ -1,12 +1,16 @@
 """Tests for diff-string generate entry points and supporting helpers."""
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from git_ai import (
     MrDescription,
     derive_diff_stat,
     format_commit_log,
+    generate_commit_message,
     generate_commit_message_from_diff,
     generate_mr_description,
 )
@@ -168,6 +172,30 @@ def test_commit_from_diff_defaults_release_context() -> None:
     gen = _Spy("feat: x")
     generate_commit_message_from_diff(_SAMPLE_DIFF, generate=gen)
     assert "no release tags found" in gen.user_input
+
+
+def test_generate_commit_message_from_subdirectory_uses_repo_root_diff(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", repo], check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"], cwd=repo, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    (repo / "root.txt").write_text("root\n", encoding="utf-8")
+    subprocess.run(["git", "add", "root.txt"], cwd=repo, check=True)
+    subdir = repo / "nested"
+    subdir.mkdir()
+    gen = _Spy("feat: add root")
+
+    result = generate_commit_message(subdir, generate=gen)
+
+    assert result == "feat: add root"
+    assert "root.txt" in gen.user_input
 
 
 # ---------------------------------------------------------------------------

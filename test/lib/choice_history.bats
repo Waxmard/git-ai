@@ -27,14 +27,14 @@ teardown() {
 }
 
 @test "push_choice_history: most-recent first, dedupes prior occurrence" {
-  push_choice_history commit "vertex:gemini-3.1-pro-preview"
+  push_choice_history commit "vertex-gemini:gemini-3.1-pro-preview"
   push_choice_history commit "claude-code:claude-sonnet-4-6"
-  push_choice_history commit "vertex:gemini-3.1-pro-preview"
+  push_choice_history commit "vertex-gemini:gemini-3.1-pro-preview"
   run get_choice_history commit
   assert_success
-  assert_line --index 0 "vertex:gemini-3.1-pro-preview"
+  assert_line --index 0 "vertex-gemini:gemini-3.1-pro-preview"
   assert_line --index 1 "claude-code:claude-sonnet-4-6"
-  # Prior "vertex:..." entry was deduped
+  # Prior "vertex-gemini:..." entry was deduped
   [ "${#lines[@]}" -eq 2 ]
 }
 
@@ -51,13 +51,13 @@ teardown() {
 
 @test "push_choice_history: separate history per tool" {
   push_choice_history commit "claude-code:claude-haiku-4-5-20251001"
-  push_choice_history pr "vertex:gemini-3.1-pro-preview"
+  push_choice_history pr "vertex-gemini:gemini-3.1-pro-preview"
   run get_choice_history commit
   assert_success
   assert_output "claude-code:claude-haiku-4-5-20251001"
   run get_choice_history pr
   assert_success
-  assert_output "vertex:gemini-3.1-pro-preview"
+  assert_output "vertex-gemini:gemini-3.1-pro-preview"
 }
 
 @test "push_choice_history: outside a git repo is a no-op" {

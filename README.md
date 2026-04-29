@@ -21,7 +21,11 @@ At least one auth method must be available:
 
 | Auth Method | Runtime | Auth |
 |-------------|---------|------|
-| `vertex` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Google ADC / Vertex credentials |
+| `vertex-gemini` | `curl` + `python3` + `gcloud` | Google ADC / Vertex credentials |
+| `vertex-anthropic` | `curl` + `python3` + `gcloud` | Google ADC / Vertex credentials |
+
+> **Vertex AI support is limited to Gemini (`vertex-gemini`) and Anthropic (`vertex-anthropic`) model families.** Other publishers available on Vertex (Meta Llama, Mistral, etc.) are not yet supported.
+
 | `gemini-api` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `GEMINI_API_KEY` or system keychain |
 | `claude-code` | [Claude Code CLI](https://claude.ai/code) | Claude Code CLI session |
 | `anthropic-api` | `curl` + `python3` | `ANTHROPIC_API_KEY` |
@@ -59,8 +63,7 @@ git-ai commit [auth-method] [model-id]
 - Reads `git diff --staged` and produces a Conventional Commits message
 - Includes a description body for non-trivial changes
 - No default auth method on a fresh repo; choose one explicitly
-- Non-`vertex` auth methods default to a lightweight model when `model-id` is omitted
-- `vertex` always requires an explicit model ID
+- All auth methods default to a lightweight model when `model-id` is omitted
 - Pass `last` as the provider to reuse the previously generated message
 
 ### pr
@@ -80,8 +83,7 @@ git-ai mr [...]   # alias for pr
 - Use `--fresh` to ignore the saved output and regenerate from scratch
 - Use `--from-sha` to override the saved HEAD and regenerate only from commits after a specific prior generated commit
 - No default auth method on a fresh repo; choose one explicitly
-- Non-`vertex` auth methods default to a stronger model when `model-id` is omitted
-- `vertex` always requires an explicit model ID
+- All auth methods default to a stronger model when `model-id` is omitted
 
 ### options
 
@@ -187,6 +189,29 @@ Repo-mode uses the same incremental PR efficiency path as the CLI: it reuses `.g
 
 Data-mode is stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description(diff=..., existing_pr=..., generate=...)`.
 
+## Excluding noisy files (`.git-ai-ignore`)
+
+Lockfiles and other generated artifacts can dominate a diff and push it past the LLM provider's input cap. git-ai always excludes the following filenames from `git diff --staged` (commit) and `git diff base...HEAD` (pr):
+
+```
+package-lock.json    yarn.lock         pnpm-lock.yaml      npm-shrinkwrap.json
+Gemfile.lock         Cargo.lock        go.sum              poetry.lock
+uv.lock              composer.lock     Pipfile.lock        pubspec.lock
+mix.lock             flake.lock
+```
+
+Drop a `.git-ai-ignore` file at the repo root to add more patterns (one per line, `#` comments and blank lines ignored). Patterns are Git pathspec glob fragments that git-ai prefixes with `**/`, so `generated/**/*.ts` matches TypeScript files under any `generated/` directory; leading `/` is not `.gitignore` root syntax. Lines starting with `!` re-include a pattern, useful when you actually want to review a built-in default:
+
+```
+build/dist.js
+generated/**/*.ts
+
+# Re-include this lockfile when you want to review it
+!package-lock.json
+```
+
+If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`, set `0` to disable), git-ai aborts with a "Largest changed files" hint pointing at what to ignore or unstage.
+
 ## Narrowing the picker list
 
 By default `git-ai options` enumerates every supported provider/model combo. Most users only have access to a couple. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
@@ -199,11 +224,13 @@ claude-sonnet-4-6
 [codex]
 gpt-5.4-mini
 
-# Empty section hides this provider entirely
-[vertex]
+# Empty sections hide these providers entirely
+[vertex-gemini]
+
+[vertex-anthropic]
 ```
 
-- `[provider]` headers must be one of: `vertex`, `gemini-api`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
+- `[provider]` headers must be one of: `vertex-gemini`, `vertex-anthropic`, `gemini-api`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
 - Model IDs under a header are passed through to the provider verbatim, so you can list future model IDs (e.g. a newly released `claude-sonnet-5-0`) without waiting for a git-ai release.
 - Delete the file to restore the full shipped catalog.
 - See [`examples/options.conf`](examples/options.conf) for a starter.

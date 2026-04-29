@@ -22,7 +22,7 @@ teardown() {
   while IFS= read -r line; do
     [[ "$line" == *"|"* ]] || fail "line missing pipe: $line"
   done <<< "$output"
-  assert_output --partial "vertex:gemini-3.1-pro-preview|gemini-3.1-pro-preview · Vertex AI"
+  assert_output --partial "vertex-gemini:gemini-3.1-pro-preview|gemini-3.1-pro-preview · Vertex AI (Gemini)"
   # Display strips the trailing date suffix from claude-haiku-4-5-20251001
   assert_output --partial "claude-code:claude-haiku-4-5-20251001|claude-haiku-4-5 · Claude Code"
 }

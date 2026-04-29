@@ -8,10 +8,16 @@ setup() {
 
 # --- explicit model ---
 
-@test "resolve_model: vertex accepts claude model" {
-  run resolve_model "commit" "vertex" "claude-sonnet-4-6"
+@test "resolve_model: vertex-anthropic accepts claude model" {
+  run resolve_model "commit" "vertex-anthropic" "claude-sonnet-4-6"
   assert_success
   assert_output "claude-sonnet-4-6"
+}
+
+@test "resolve_model: vertex-gemini accepts gemini model" {
+  run resolve_model "commit" "vertex-gemini" "gemini-3.1-pro-preview"
+  assert_success
+  assert_output "gemini-3.1-pro-preview"
 }
 
 @test "resolve_model: gemini-api accepts gemini model" {
@@ -75,8 +81,20 @@ setup() {
   assert_output "gpt-5.4-mini"
 }
 
-@test "resolve_model: vertex requires explicit model" {
-  run resolve_model "commit" "vertex" ""
-  assert_failure
-  assert_output --partial "requires an explicit model"
+@test "resolve_model: vertex-anthropic defaults to haiku for commit" {
+  run resolve_model "commit" "vertex-anthropic" ""
+  assert_success
+  assert_output "claude-haiku-4-5-20251001"
+}
+
+@test "resolve_model: vertex-anthropic defaults to opus for pr" {
+  run resolve_model "pr" "vertex-anthropic" ""
+  assert_success
+  assert_output "claude-opus-4-6"
+}
+
+@test "resolve_model: vertex-gemini defaults to flash-lite for commit" {
+  run resolve_model "commit" "vertex-gemini" ""
+  assert_success
+  assert_output "gemini-3.1-flash-lite-preview"
 }
