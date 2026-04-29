@@ -11,24 +11,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-DEFAULT_EXCLUDES: tuple[str, ...] = (
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-    "npm-shrinkwrap.json",
-    "Gemfile.lock",
-    "Cargo.lock",
-    "go.sum",
-    "poetry.lock",
-    "uv.lock",
-    "composer.lock",
-    "Pipfile.lock",
-    "pubspec.lock",
-    "mix.lock",
-    "flake.lock",
-)
-
+DEFAULT_EXCLUDES_FILE = "default-excludes.txt"
 IGNORE_FILENAME = ".git-ai-ignore"
+
+
+def _read_pattern_file(path: Path) -> tuple[str, ...]:
+    patterns: list[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        patterns.append(line)
+    return tuple(patterns)
+
+
+DEFAULT_EXCLUDES: tuple[str, ...] = _read_pattern_file(
+    Path(__file__).with_name(DEFAULT_EXCLUDES_FILE)
+)
 
 
 def _parse_ignore_file(text: str) -> tuple[list[str], list[str]]:

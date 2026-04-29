@@ -25,6 +25,7 @@
   "files": [
     "bin/",
     "lib/",
+    "python/git_ai/default-excludes.txt",
     "python/git_ai/prompts/",
     "README.md",
     "CHANGELOG.md"

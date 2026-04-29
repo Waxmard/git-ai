@@ -6,6 +6,16 @@ import re
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ._ignore import to_pathspec_args
+elif __package__ in (None, ""):
+    import importlib
+
+    to_pathspec_args = importlib.import_module("_ignore").to_pathspec_args
+else:
+    from ._ignore import to_pathspec_args
 
 _CONVENTIONAL_TYPES = frozenset(
     ["feat", "fix", "refactor", "docs", "chore", "ci", "test", "style", "perf", "build"]
@@ -85,14 +95,6 @@ def check_git_repo(repo_path: str | Path) -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(f"{repo_path} is not inside a git repository")
-
-
-def to_pathspec_args(
-    exclude_patterns: list[str] | tuple[str, ...] | None,
-) -> list[str]:
-    if not exclude_patterns:
-        return []
-    return ["--", ":/", *(f":(top,exclude,glob)**/{p}" for p in exclude_patterns)]
 
 
 def get_staged_diff(

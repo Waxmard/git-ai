@@ -6,24 +6,18 @@ die() {
   exit 1
 }
 
-# Built-in lockfile patterns excluded from diffs by default. Mirror of
-# python/git_ai/_ignore.py:DEFAULT_EXCLUDES — keep the lists in sync.
-GIT_AI_DEFAULT_EXCLUDES=(
-  package-lock.json
-  yarn.lock
-  pnpm-lock.yaml
-  npm-shrinkwrap.json
-  Gemfile.lock
-  Cargo.lock
-  go.sum
-  poetry.lock
-  uv.lock
-  composer.lock
-  Pipfile.lock
-  pubspec.lock
-  mix.lock
-  flake.lock
-)
+# Built-in lockfile patterns excluded from diffs by default.
+GIT_AI_DEFAULT_EXCLUDES_FILE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../python/git_ai/default-excludes.txt"
+GIT_AI_DEFAULT_EXCLUDES=()
+if [[ ! -r "$GIT_AI_DEFAULT_EXCLUDES_FILE" ]]; then
+  die "missing default excludes file: $GIT_AI_DEFAULT_EXCLUDES_FILE"
+fi
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
+  GIT_AI_DEFAULT_EXCLUDES+=("$line")
+done <"$GIT_AI_DEFAULT_EXCLUDES_FILE"
 
 # load_git_ai_ignore <repo_root>
 # Print active exclude patterns (defaults + .git-ai-ignore additions, minus

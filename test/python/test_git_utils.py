@@ -1,5 +1,9 @@
 """Tests for pure git utility functions in _git.py."""
 
+import subprocess
+import sys
+from pathlib import Path
+
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
 
 # ---------------------------------------------------------------------------
@@ -52,6 +56,26 @@ def test_count_empty_log() -> None:
     conventional, total = count_conventional_commits(_EMPTY)
     assert conventional == 0
     assert total == 0
+
+
+def test_git_module_supports_standalone_import() -> None:
+    package_dir = Path(__file__).parents[2] / "python" / "git_ai"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                f"sys.path.insert(0, {str(package_dir)!r}); "
+                "import _git; "
+                "print(_git.to_pathspec_args(['x.lock'])[-1])"
+            ),
+        ],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    assert result.stdout.strip() == ":(top,exclude,glob)**/x.lock"
 
 
 def test_count_ignores_body_lines() -> None:

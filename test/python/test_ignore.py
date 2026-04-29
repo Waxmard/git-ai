@@ -6,6 +6,7 @@ from pathlib import Path
 
 from git_ai._ignore import (
     DEFAULT_EXCLUDES,
+    DEFAULT_EXCLUDES_FILE,
     IGNORE_FILENAME,
     load_ignore_patterns,
     to_pathspec_args,
@@ -19,6 +20,16 @@ def test_default_excludes_contains_common_lockfiles() -> None:
     assert "Cargo.lock" in DEFAULT_EXCLUDES
     assert "go.sum" in DEFAULT_EXCLUDES
     assert "uv.lock" in DEFAULT_EXCLUDES
+
+
+def test_default_excludes_match_shared_file() -> None:
+    path = Path(__file__).parents[2] / "python" / "git_ai" / DEFAULT_EXCLUDES_FILE
+    expected = tuple(
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    )
+    assert DEFAULT_EXCLUDES == expected
 
 
 def test_load_returns_defaults_when_no_ignore_file(tmp_path: Path) -> None:

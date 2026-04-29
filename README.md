@@ -200,11 +200,11 @@ uv.lock              composer.lock     Pipfile.lock        pubspec.lock
 mix.lock             flake.lock
 ```
 
-Drop a `.git-ai-ignore` file at the repo root to add more patterns (gitignore-syntax — one per line, `#` comments, blank lines ignored). Lines starting with `!` re-include a pattern, useful when you actually want to review a built-in default:
+Drop a `.git-ai-ignore` file at the repo root to add more patterns (one per line, `#` comments and blank lines ignored). Patterns are Git pathspec glob fragments that git-ai prefixes with `**/`, so `generated/**/*.ts` matches TypeScript files under any `generated/` directory; leading `/` is not `.gitignore` root syntax. Lines starting with `!` re-include a pattern, useful when you actually want to review a built-in default:
 
 ```
 build/dist.js
-generated/**.ts
+generated/**/*.ts
 
 # Re-include this lockfile when you want to review it
 !package-lock.json

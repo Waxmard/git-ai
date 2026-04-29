@@ -24,6 +24,14 @@ teardown() {
   assert_line "uv.lock"
 }
 
+@test "GIT_AI_DEFAULT_EXCLUDES matches shared defaults file" {
+  local expected
+  expected=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' "${REPO_ROOT}/python/git_ai/default-excludes.txt" | sed '/^$/d; /^#/d')
+  local actual
+  actual=$(printf '%s\n' "${GIT_AI_DEFAULT_EXCLUDES[@]}")
+  assert_equal "$actual" "$expected"
+}
+
 @test "load_git_ai_ignore: appends additions, ignores comments and blank lines" {
   cat >"${TEST_REPO}/.git-ai-ignore" <<'EOF'
 # header comment
