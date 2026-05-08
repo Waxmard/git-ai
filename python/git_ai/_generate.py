@@ -149,16 +149,20 @@ def build_mr_prompt(
     return _load_prompt(prompt_name), user_input
 
 
+def _parse_response(raw: str) -> str:
+    text = strip_fences((raw or "").strip())
+    if not text:
+        raise RuntimeError("LLM returned an empty response")
+    return text
+
+
 def parse_commit_response(raw: str) -> str:
     """Strip markdown fences from a commit-message response and validate non-empty.
 
     Raises:
         RuntimeError: if the cleaned response is empty.
     """
-    text = strip_fences((raw or "").strip())
-    if not text:
-        raise RuntimeError("LLM returned an empty response")
-    return text
+    return _parse_response(raw)
 
 
 def parse_mr_response(raw: str) -> str:
@@ -167,7 +171,4 @@ def parse_mr_response(raw: str) -> str:
     Raises:
         RuntimeError: if the cleaned response is empty.
     """
-    text = strip_fences((raw or "").strip())
-    if not text:
-        raise RuntimeError("LLM returned an empty response")
-    return text
+    return _parse_response(raw)
