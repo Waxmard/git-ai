@@ -491,7 +491,7 @@ wheels = [
 
 [[package]]
 name = "waxmard-git-ai"
-version = "4.1.4"
+version = "5.0.0"
 source = { editable = "." }
 
 [package.dev-dependencies]
