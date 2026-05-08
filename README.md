@@ -187,15 +187,23 @@ else:
 
 Data-mode is stateless. To get the same efficiency in remote consumers, persist the prior PR text + last generated head SHA yourself, fetch the incremental diff/log since that SHA from your SCM, and pass them to `build_mr_prompt(diff=..., commit_log=..., existing_pr=...)`.
 
-**Async / agent-framework example** — the prompt builders are pure, so anything goes inside the LLM call:
+**Async / agent-framework example** — the prompt builders are pure, so anything goes inside the LLM call. Pass `system` and `user` to whatever your SDK expects (Anthropic `system=` + `messages=[{"role": "user", ...}]`, OpenAI/Gemini message lists, ADK agent `instruction` + input, etc.):
 
 ```python
 import git_ai
+from anthropic import AsyncAnthropic
 
-async def commit_msg_via_adk(diff: str) -> str:
+client = AsyncAnthropic()
+
+async def commit_msg(diff: str) -> str:
     system, user = git_ai.build_commit_prompt(diff)
-    raw = await run_adk_task("commit", f"{system}\n\n{user}", model=...)
-    return git_ai.parse_commit_response(raw)
+    resp = await client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    return git_ai.parse_commit_response(resp.content[0].text)
 ```
 
 ## Excluding noisy files (`.git-ai-ignore`)
