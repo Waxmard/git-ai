@@ -111,83 +111,94 @@ git-ai models <auth-method> [commit|pr]
 
 ## Python library
 
-git-ai is also distributed as a Python package (`waxmard-git-ai`) so other tools can reuse the same commit-message and MR-description generation without shelling out.
+git-ai is also distributed as a Python package (`waxmard-git-ai`) so other tools can reuse the same commit-message and MR-description prompt assembly without shelling out.
 
 ```bash
 pip install waxmard-git-ai
 # or: uv add waxmard-git-ai
 ```
 
-The Python package is **provider-agnostic**: it owns prompt assembly, diff-stat derivation, fence-stripping, and cache management, but not the LLM call. Consumers pass a `generate: Callable[[str, str], str]` that takes `(system_prompt, user_input)` and returns raw model text. Bring your own Claude / Gemini / OpenAI / anything.
+The Python package is **provider-agnostic** and ships with **zero runtime dependencies**: it owns prompt assembly, diff-stat derivation, fence-stripping, git helpers, and PR-cache management. It never calls an LLM. Consumers wire their own model call between `build_*_prompt` and `parse_*_response`. Bring your own Claude / Gemini / OpenAI / ADK / anything — sync or async.
 
-`generate_mr_description` handles both repo-mode and data-mode through one entry point and returns an `MrDescription(text, diff)` — `text` is the full PR, `diff` is a marker-style rendering of what changed vs. `existing_pr` (or `None` when there's no prior PR or the output matches it).
-
-**Bring-your-own provider** — example with the Google Gemini SDK:
+**Commit message** (data-mode):
 
 ```python
-from google import genai
-from google.genai import types
-from git_ai import generate_mr_description
+import git_ai
 
-client = genai.Client()
-
-def generate(system_prompt: str, user_input: str) -> str:
-    resp = client.models.generate_content(
-        model="gemini-3.1-pro-preview",
-        contents=user_input,
-        config=types.GenerateContentConfig(system_instruction=system_prompt),
-    )
-    return resp.text or ""
+system, user = git_ai.build_commit_prompt(diff_text)
+raw = my_llm(system, user)               # your call: SDK, agent framework, REST, etc.
+commit_msg = git_ai.parse_commit_response(raw)
 ```
 
-Swap the body for `anthropic`, `openai`, `vertexai`, or any other SDK — git_ai never imports them.
-
-**Repo-mode** (reads staged diff / base..HEAD from a local checkout):
+**MR/PR description** (data-mode — no local checkout, e.g. fetched from the GitHub/GitLab API):
 
 ```python
-from git_ai import generate_commit_message, generate_mr_description
+import git_ai
 
-msg = generate_commit_message(".", generate=generate)
-pr = generate_mr_description(".", base_branch="main", generate=generate)
-pr = generate_mr_description(".", base_branch="main", fresh=True, generate=generate)
-pr = generate_mr_description(
-    ".",
-    base_branch="main",
-    existing_pr=existing_pr_text,
-    previous_head_sha=last_generated_head_sha,
-    generate=generate,
-)
-print(pr.text)       # full PR (title line + body)
-print(pr.diff or "") # marker-style delta vs existing_pr, if any
-```
-
-**Data-mode** (no local checkout required — pass raw diff strings, e.g. fetched from the GitHub/GitLab API):
-
-```python
-from git_ai import (
-    format_commit_log,
-    generate_commit_message_from_diff,
-    generate_mr_description,
-)
-
-commit_msg = generate_commit_message_from_diff(diff_text, generate=generate)
-
-log = format_commit_log((c.title, c.message) for c in mr_commits)
-pr = generate_mr_description(
+log = git_ai.format_commit_log((c.title, c.message) for c in mr_commits)
+system, user = git_ai.build_mr_prompt(
     diff=diff_text,
     commit_log=log,
     existing_pr=current_pr_body or None,
-    generate=generate,
 )
-# pr.text -> full updated PR to post as title + description
-# pr.diff -> compact "what changed since last PR" markers, or None
+raw = my_llm(system, user)
+pr_text = git_ai.parse_mr_response(raw)
+
+# Optional: render a compact ~ / + / - delta against the prior PR
+delta = git_ai.render_pr_diff(current_pr_body, pr_text, color=False) or None
 ```
 
-`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Model selection, retries, auth, and error handling are the consumer's responsibility (inside `generate`).
+`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Model selection, retries, auth, and error handling are the caller's responsibility (inside `my_llm`).
 
-Repo-mode uses the same incremental PR efficiency path as the CLI: it reuses `.git/pr-cache/` automatically, returns the cached PR unchanged when `HEAD` has not advanced, and narrows generation to commits after the last generated `HEAD` when possible. Pass `fresh=True` to disable that behavior for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
+**Repo-mode** (reads staged diff / `base..HEAD` from a local checkout):
 
-Data-mode is stateless by design. To get the same efficiency in remote consumers, persist the prior PR text and prior generated head SHA yourself, fetch only the incremental diff/log since that SHA from your SCM, then call `generate_mr_description(diff=..., existing_pr=..., generate=...)`.
+```python
+import git_ai
+
+# Commit message from staged changes
+diff = git_ai.get_staged_diff(".")
+system, user = git_ai.build_commit_prompt(
+    diff, release_context=git_ai.get_release_context(".")
+)
+commit_msg = git_ai.parse_commit_response(my_llm(system, user))
+
+# PR description with incremental cache reuse
+ctx = git_ai.prepare_repo_pr_context(".", base_branch="main")
+if ctx.no_changes:
+    pr_text = ctx.existing_pr            # HEAD unchanged, reuse cached PR
+else:
+    system, user = git_ai.build_mr_prompt(
+        diff=ctx.diff,
+        commit_log=ctx.commit_log,
+        diff_stat=ctx.diff_stat,
+        release_context=ctx.release_context,
+        existing_pr=ctx.existing_pr,
+    )
+    pr_text = git_ai.parse_mr_response(my_llm(system, user))
+    if ctx.current_branch:
+        git_ai.save_cached_pr(
+            git_ai.get_git_dir("."),
+            ctx.current_branch,
+            "main",
+            pr_text,
+            ctx.head_sha,
+        )
+```
+
+`prepare_repo_pr_context` reuses `.git/pr-cache/` automatically, sets `no_changes=True` when `HEAD` matches the cached SHA (so callers can skip the LLM entirely), and narrows the `diff`/`commit_log` to commits after the last generated `HEAD` when possible. Pass `fresh=True` to bypass the cache for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
+
+Data-mode is stateless. To get the same efficiency in remote consumers, persist the prior PR text + last generated head SHA yourself, fetch the incremental diff/log since that SHA from your SCM, and pass them to `build_mr_prompt(diff=..., commit_log=..., existing_pr=...)`.
+
+**Async / agent-framework example** — the prompt builders are pure, so anything goes inside the LLM call:
+
+```python
+import git_ai
+
+async def commit_msg_via_adk(diff: str) -> str:
+    system, user = git_ai.build_commit_prompt(diff)
+    raw = await run_adk_task("commit", f"{system}\n\n{user}", model=...)
+    return git_ai.parse_commit_response(raw)
+```
 
 ## Excluding noisy files (`.git-ai-ignore`)
 
