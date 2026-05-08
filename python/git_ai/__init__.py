@@ -25,6 +25,7 @@ from ._pr_incremental import (
     RepoPrContext,
     load_cached_pr,
     load_cached_pr_sha,
+    prepare_repo_commit_context,
     prepare_repo_pr_context,
     save_cached_pr,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "load_cached_pr_sha",
     "parse_commit_response",
     "parse_mr_response",
+    "prepare_repo_commit_context",
     "prepare_repo_pr_context",
     "render_pr_diff",
     "save_cached_pr",

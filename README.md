@@ -155,11 +155,9 @@ delta = git_ai.render_pr_diff(current_pr_body, pr_text, color=False) or None
 ```python
 import git_ai
 
-# Commit message from staged changes
-diff = git_ai.get_staged_diff(".")
-system, user = git_ai.build_commit_prompt(
-    diff, release_context=git_ai.get_release_context(".")
-)
+# Commit message from staged changes (loads .git-ai-ignore internally)
+diff, rc = git_ai.prepare_repo_commit_context(".")
+system, user = git_ai.build_commit_prompt(diff, release_context=rc)
 commit_msg = git_ai.parse_commit_response(my_llm(system, user))
 
 # PR description with incremental cache reuse

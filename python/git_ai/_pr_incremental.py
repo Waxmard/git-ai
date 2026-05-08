@@ -20,7 +20,9 @@ if TYPE_CHECKING:
         get_git_dir,
         get_head_sha,
         get_mr_release_context,
+        get_release_context,
         get_repo_root,
+        get_staged_diff,
         git_is_ancestor,
         git_ref_exists,
     )
@@ -36,7 +38,9 @@ elif __package__ in (None, ""):
     get_git_dir = _git.get_git_dir
     get_head_sha = _git.get_head_sha
     get_mr_release_context = _git.get_mr_release_context
+    get_release_context = _git.get_release_context
     get_repo_root = _git.get_repo_root
+    get_staged_diff = _git.get_staged_diff
     git_is_ancestor = _git.git_is_ancestor
     git_ref_exists = _git.git_ref_exists
     _ignore = importlib.import_module("_ignore")
@@ -51,7 +55,9 @@ else:
         get_git_dir,
         get_head_sha,
         get_mr_release_context,
+        get_release_context,
         get_repo_root,
+        get_staged_diff,
         git_is_ancestor,
         git_ref_exists,
     )
@@ -116,6 +122,15 @@ def save_cached_pr(
     )
     if head_sha:
         (cache_dir / "last-head-sha").write_text(f"{head_sha}\n", encoding="utf-8")
+
+
+def prepare_repo_commit_context(repo_path: str | Path = ".") -> tuple[str, str]:
+    repo_path = Path(repo_path)
+    check_git_repo(repo_path)
+    repo_root = get_repo_root(repo_path)
+    patterns = load_ignore_patterns(repo_root)
+    diff = get_staged_diff(repo_path, exclude_patterns=patterns)
+    return diff, get_release_context(repo_path)
 
 
 def prepare_repo_pr_context(
