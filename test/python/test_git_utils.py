@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from git_ai import get_staged_diff
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
 
 # ---------------------------------------------------------------------------
@@ -200,3 +201,25 @@ def test_largest_diff_files_respects_limit() -> None:
 
 def test_largest_diff_files_empty_input() -> None:
     assert largest_diff_files("") == []
+
+
+def _init_repo(repo: Path) -> None:
+    subprocess.run(["git", "init", "-b", "main", repo], check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+
+
+def test_get_staged_diff_from_subdirectory_uses_repo_root_diff(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    (repo / "root.txt").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "add", "root.txt"], cwd=repo, check=True)
+
+    subdir = repo / "nested"
+    subdir.mkdir()
+
+    diff = get_staged_diff(subdir)
+
+    assert "root.txt" in diff
+    assert "+hello" in diff
