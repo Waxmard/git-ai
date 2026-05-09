@@ -209,6 +209,13 @@ def _init_repo(repo: Path) -> None:
     subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
 
 
+def _stage_files(repo: Path, files: dict[str, str]) -> None:
+    _init_repo(repo)
+    for name, content in files.items():
+        (repo / name).write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+
+
 def test_get_staged_diff_from_subdirectory_uses_repo_root_diff(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -223,3 +230,78 @@ def test_get_staged_diff_from_subdirectory_uses_repo_root_diff(tmp_path: Path) -
 
     assert "root.txt" in diff
     assert "+hello" in diff
+
+
+def test_get_staged_diff_excludes_default_lockfiles(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"})
+
+    diff = get_staged_diff(repo)
+
+    assert "app.py" in diff
+    assert "package-lock.json" not in diff
+
+
+def test_get_staged_diff_auto_loads_git_ai_ignore(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(
+        repo,
+        {
+            ".git-ai-ignore": "secret.txt\n",
+            "secret.txt": "shh\n",
+            "app.py": "print('hi')\n",
+        },
+    )
+
+    diff = get_staged_diff(repo)
+
+    assert "b/app.py" in diff
+    assert "b/secret.txt" not in diff
+
+
+def test_get_staged_diff_explicit_empty_list_disables_filtering(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"})
+
+    diff = get_staged_diff(repo, exclude_patterns=[])
+
+    assert "package-lock.json" in diff
+    assert "app.py" in diff
+
+
+def test_get_staged_diff_negation_reincludes_lockfile(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(
+        repo,
+        {".git-ai-ignore": "!package-lock.json\n", "package-lock.json": "lock\n"},
+    )
+
+    diff = get_staged_diff(repo)
+
+    assert "package-lock.json" in diff
+
+
+def test_get_staged_diff_from_subdirectory_uses_root_ignore_file(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(
+        repo,
+        {
+            ".git-ai-ignore": "secret.txt\n",
+            "secret.txt": "shh\n",
+            "app.py": "print('hi')\n",
+        },
+    )
+    subdir = repo / "nested"
+    subdir.mkdir()
+
+    diff = get_staged_diff(subdir)
+
+    assert "b/app.py" in diff
+    assert "b/secret.txt" not in diff

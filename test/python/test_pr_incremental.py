@@ -14,7 +14,6 @@ from git_ai import (
     load_cached_pr,
     load_cached_pr_sha,
     parse_mr_response,
-    prepare_repo_commit_context,
     prepare_repo_pr_context,
     save_cached_pr,
 )
@@ -300,33 +299,6 @@ def test_prepare_repo_pr_context_negation_reincludes_lockfile(
     ctx = prepare_repo_pr_context(repo, base_branch="main")
 
     assert "package-lock.json" in ctx.diff
-
-
-def test_prepare_repo_commit_context_excludes_lockfiles_by_default(
-    tmp_path: Path,
-) -> None:
-    repo = _make_repo(tmp_path)
-    (repo / "package-lock.json").write_text("lock\n", encoding="utf-8")
-    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-
-    diff, _rc = prepare_repo_commit_context(repo)
-
-    assert "app.py" in diff
-    assert "package-lock.json" not in diff
-
-
-def test_prepare_repo_commit_context_negation_reincludes_lockfile(
-    tmp_path: Path,
-) -> None:
-    repo = _make_repo(tmp_path)
-    (repo / ".git-ai-ignore").write_text("!package-lock.json\n", encoding="utf-8")
-    (repo / "package-lock.json").write_text("lock\n", encoding="utf-8")
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-
-    diff, _rc = prepare_repo_commit_context(repo)
-
-    assert "package-lock.json" in diff
 
 
 def test_prepare_repo_pr_context_non_ancestor_cached_sha_falls_back(

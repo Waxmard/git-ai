@@ -155,9 +155,11 @@ delta = git_ai.render_pr_diff(current_pr_body, pr_text, color=False) or None
 ```python
 import git_ai
 
-# Commit message from staged changes (loads .git-ai-ignore internally)
-diff, rc = git_ai.prepare_repo_commit_context(".")
-system, user = git_ai.build_commit_prompt(diff, release_context=rc)
+# Commit message from staged changes (auto-loads .git-ai-ignore)
+diff = git_ai.get_staged_diff(".")
+system, user = git_ai.build_commit_prompt(
+    diff, release_context=git_ai.get_release_context("."),
+)
 commit_msg = git_ai.parse_commit_response(my_llm(system, user))
 
 # PR description with incremental cache reuse
@@ -228,6 +230,8 @@ generated/**/*.ts
 ```
 
 If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`, set `0` to disable), git-ai aborts with a "Largest changed files" hint pointing at what to ignore or unstage.
+
+In the Python library, `get_staged_diff`, `get_diff`, and `get_diff_stat` auto-load `.git-ai-ignore` and apply built-in lockfile defaults when `exclude_patterns` is omitted. Pass `exclude_patterns=[]` to opt out of all filtering.
 
 ## Narrowing the picker list
 
