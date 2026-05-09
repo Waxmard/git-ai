@@ -7,11 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from git_ai._generate import generate_mr_description
-from git_ai._git import get_git_dir
-from git_ai._pr_incremental import (
+from git_ai import (
+    build_mr_prompt,
+    get_git_dir,
+    get_head_sha,
     load_cached_pr,
     load_cached_pr_sha,
+    parse_mr_response,
     prepare_repo_pr_context,
     save_cached_pr,
 )
@@ -48,16 +50,6 @@ def _make_repo(tmp_path: Path) -> Path:
     )
     subprocess.run(["git", "checkout", "-b", "feature/test"], cwd=repo, check=True)
     return repo
-
-
-class _Spy:
-    def __init__(self, text: str) -> None:
-        self._text = text
-        self.calls: list[tuple[str, str]] = []
-
-    def __call__(self, system_prompt: str, user_input: str) -> str:
-        self.calls.append((system_prompt, user_input))
-        return self._text
 
 
 def test_prepare_repo_pr_context_uses_incremental_range_from_explicit_sha(
@@ -102,8 +94,6 @@ def test_prepare_repo_pr_context_raises_on_unresolvable_previous_head_sha(
 def test_prepare_repo_pr_context_incremental_enables_two_pass(
     tmp_path: Path,
 ) -> None:
-    from git_ai._pr_prompt_build import build_mr_prompt_input
-
     repo = _make_repo(tmp_path)
     _commit(repo, "one.txt", "one\n", "feat: add first")
     first_sha = _git(repo, "rev-parse", "HEAD")
@@ -116,7 +106,7 @@ def test_prepare_repo_pr_context_incremental_enables_two_pass(
         previous_head_sha=first_sha,
     )
 
-    _, user_input = build_mr_prompt_input(
+    _, user_input = build_mr_prompt(
         diff=context.diff,
         commit_log=context.commit_log,
         diff_stat=context.diff_stat,
@@ -133,8 +123,6 @@ def test_prepare_repo_pr_context_short_circuits_when_no_new_commits(
     repo = _make_repo(tmp_path)
     head_sha = _commit(repo, "one.txt", "one\n", "feat: add first")
     git_dir = get_git_dir(repo)
-
-    from git_ai._pr_incremental import save_cached_pr
 
     save_cached_pr(
         git_dir,
@@ -165,54 +153,70 @@ def test_prepare_repo_pr_context_rejects_fresh_and_previous_sha(tmp_path: Path) 
         )
 
 
-def test_generate_mr_description_caches_and_reuses_without_model_call(
+def test_caller_flow_caches_and_short_circuits_on_unchanged_head(
     tmp_path: Path,
 ) -> None:
+    """End-to-end repo-mode caller flow: generate → save → reuse without LLM."""
     repo = _make_repo(tmp_path)
     _commit(repo, "one.txt", "one\n", "feat: add first")
-    first_gen = _Spy("feat: title\n\n### Features\n- first")
 
-    first = generate_mr_description(repo, base_branch="main", generate=first_gen)
-    assert "feat: title" in first.text
-    assert first.diff is None
-    assert len(first_gen.calls) == 1
-
-    second_gen = _Spy("unused")
-    second = generate_mr_description(repo, base_branch="main", generate=second_gen)
-    assert second.text == first.text
-    assert second.diff is None
-    assert second_gen.calls == []
-
-    git_dir = get_git_dir(repo)
-    assert load_cached_pr(git_dir, "feature/test", "main") == first.text
-    assert load_cached_pr_sha(git_dir, "feature/test", "main") == _git(
-        repo, "rev-parse", "HEAD"
+    # First call: cache empty → caller runs LLM and saves output.
+    first_ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert first_ctx.no_changes is False
+    system, user = build_mr_prompt(
+        diff=first_ctx.diff,
+        commit_log=first_ctx.commit_log,
+        diff_stat=first_ctx.diff_stat,
+        release_context=first_ctx.release_context,
+        existing_pr=first_ctx.existing_pr,
+    )
+    assert system and user
+    first_text = parse_mr_response("feat: title\n\n### Features\n- first")
+    assert first_ctx.current_branch == "feature/test"
+    save_cached_pr(
+        get_git_dir(repo),
+        first_ctx.current_branch,
+        "main",
+        first_text,
+        first_ctx.head_sha,
     )
 
+    # Second call: same HEAD → context.no_changes signals caller to skip LLM.
+    second_ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert second_ctx.no_changes is True
+    assert second_ctx.existing_pr == first_text
 
-def test_generate_mr_description_previous_head_sha_overrides_cache(
+    git_dir = get_git_dir(repo)
+    assert load_cached_pr(git_dir, "feature/test", "main") == first_text
+    assert load_cached_pr_sha(git_dir, "feature/test", "main") == get_head_sha(repo)
+
+
+def test_caller_flow_previous_head_sha_overrides_cache(
     tmp_path: Path,
 ) -> None:
     repo = _make_repo(tmp_path)
     _commit(repo, "one.txt", "one\n", "feat: add first")
     first_sha = _git(repo, "rev-parse", "HEAD")
     _commit(repo, "two.txt", "two\n", "fix: add second")
-    gen = _Spy("fix: title\n\n### Bug Fixes\n- second")
 
-    generate_mr_description(
+    ctx = prepare_repo_pr_context(
         repo,
         base_branch="main",
         previous_head_sha=first_sha,
         existing_pr="feat: title\n\n### Features\n- first",
-        generate=gen,
+    )
+    _, user = build_mr_prompt(
+        diff=ctx.diff,
+        commit_log=ctx.commit_log,
+        diff_stat=ctx.diff_stat,
+        release_context=ctx.release_context,
+        existing_pr=ctx.existing_pr,
     )
 
-    assert len(gen.calls) == 1
-    _, user_input = gen.calls[0]
-    assert "<existing_pr>" in user_input
+    assert "<existing_pr>" in user
     # two-pass prompt strips type prefix into <draft>; check description word
-    assert "add second" in user_input
-    assert "add first" not in user_input
+    assert "add second" in user
+    assert "add first" not in user
 
 
 def test_prepare_repo_pr_context_raises_on_non_ancestor_previous_head_sha(

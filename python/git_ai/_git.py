@@ -9,13 +9,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._ignore import to_pathspec_args
+    from ._ignore import load_ignore_patterns, to_pathspec_args
 elif __package__ in (None, ""):
     import importlib
 
-    to_pathspec_args = importlib.import_module("_ignore").to_pathspec_args
+    _ignore_mod = importlib.import_module("_ignore")
+    to_pathspec_args = _ignore_mod.to_pathspec_args
+    load_ignore_patterns = _ignore_mod.load_ignore_patterns
 else:
-    from ._ignore import to_pathspec_args
+    from ._ignore import load_ignore_patterns, to_pathspec_args
 
 _CONVENTIONAL_TYPES = frozenset(
     ["feat", "fix", "refactor", "docs", "chore", "ci", "test", "style", "perf", "build"]
@@ -97,13 +99,31 @@ def check_git_repo(repo_path: str | Path) -> None:
         raise RuntimeError(f"{repo_path} is not inside a git repository")
 
 
+def _resolve_exclude_patterns(
+    repo_path: str | Path,
+    exclude_patterns: list[str] | tuple[str, ...] | None,
+) -> list[str] | tuple[str, ...]:
+    """Auto-load ``.git-ai-ignore`` + lockfile defaults when patterns is None.
+
+    Pass an empty list/tuple to opt out of all filtering.
+    """
+    if exclude_patterns is not None:
+        return exclude_patterns
+    return load_ignore_patterns(get_repo_root(repo_path))
+
+
 def get_staged_diff(
     repo_path: str | Path,
     *,
     exclude_patterns: list[str] | tuple[str, ...] | None = None,
 ) -> str:
-    """Return staged diff. Raises RuntimeError if nothing is staged."""
-    pathspec = to_pathspec_args(exclude_patterns)
+    """Return staged diff. Raises RuntimeError if nothing is staged.
+
+    When ``exclude_patterns`` is omitted, auto-loads ``.git-ai-ignore`` from the
+    repo root and applies built-in lockfile defaults. Pass ``exclude_patterns=[]``
+    to opt out of all filtering.
+    """
+    pathspec = to_pathspec_args(_resolve_exclude_patterns(repo_path, exclude_patterns))
     quiet = subprocess.run(
         ["git", "diff", "--staged", "--quiet", *pathspec],
         cwd=str(repo_path),
@@ -195,14 +215,19 @@ def get_diff_stat(
     *,
     exclude_patterns: list[str] | tuple[str, ...] | None = None,
 ) -> str:
-    """Return git diff --stat between base and HEAD."""
+    """Return git diff --stat between base and HEAD.
+
+    When ``exclude_patterns`` is omitted, auto-loads ``.git-ai-ignore`` from the
+    repo root and applies built-in lockfile defaults. Pass ``exclude_patterns=[]``
+    to opt out of all filtering.
+    """
     sep = "..." if three_dot else ".."
     return _git(
         repo_path,
         "diff",
         "--stat",
         f"{base}{sep}HEAD",
-        *to_pathspec_args(exclude_patterns),
+        *to_pathspec_args(_resolve_exclude_patterns(repo_path, exclude_patterns)),
     )
 
 
@@ -213,14 +238,19 @@ def get_diff(
     *,
     exclude_patterns: list[str] | tuple[str, ...] | None = None,
 ) -> str:
-    """Return git diff -U0 between base and HEAD."""
+    """Return git diff -U0 between base and HEAD.
+
+    When ``exclude_patterns`` is omitted, auto-loads ``.git-ai-ignore`` from the
+    repo root and applies built-in lockfile defaults. Pass ``exclude_patterns=[]``
+    to opt out of all filtering.
+    """
     sep = "..." if three_dot else ".."
     return _git(
         repo_path,
         "diff",
         "-U0",
         f"{base}{sep}HEAD",
-        *to_pathspec_args(exclude_patterns),
+        *to_pathspec_args(_resolve_exclude_patterns(repo_path, exclude_patterns)),
     )
 
 

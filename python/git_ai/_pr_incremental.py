@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+# TYPE_CHECKING block gives mypy symbol resolution; runtime imports happen in
+# the elif (standalone via importlib) and else (package) branches below.
 if TYPE_CHECKING:
     from ._git import (
         check_git_repo,
@@ -180,9 +182,13 @@ def prepare_repo_pr_context(
     if input_base == base_branch and not commit_log.strip():
         raise RuntimeError(f"No commits ahead of {base_branch}")
 
+    if input_base != base_branch and not commit_log.strip():
+        raise RuntimeError(
+            f"No commits since {input_base[:12]} and no existing_pr to refine"
+        )
+
     three_dot = input_base == base_branch
-    repo_root = get_repo_root(repo_path)
-    patterns = load_ignore_patterns(repo_root)
+    patterns = load_ignore_patterns(get_repo_root(repo_path))
     return RepoPrContext(
         base_branch=base_branch,
         current_branch=current_branch,

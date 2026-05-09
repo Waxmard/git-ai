@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from git_ai import get_diff, get_diff_stat, get_staged_diff
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
 
 # ---------------------------------------------------------------------------
@@ -200,3 +201,140 @@ def test_largest_diff_files_respects_limit() -> None:
 
 def test_largest_diff_files_empty_input() -> None:
     assert largest_diff_files("") == []
+
+
+def _init_repo(repo: Path) -> None:
+    subprocess.run(["git", "init", "-b", "main", repo], check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+
+
+def _stage_files(repo: Path, files: dict[str, str]) -> None:
+    _init_repo(repo)
+    for name, content in files.items():
+        (repo / name).write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+
+
+def test_get_staged_diff_from_subdirectory_uses_repo_root_diff(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    (repo / "root.txt").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "add", "root.txt"], cwd=repo, check=True)
+
+    subdir = repo / "nested"
+    subdir.mkdir()
+
+    diff = get_staged_diff(subdir)
+
+    assert "root.txt" in diff
+    assert "+hello" in diff
+
+
+def test_get_staged_diff_excludes_default_lockfiles(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"})
+
+    diff = get_staged_diff(repo)
+
+    assert "app.py" in diff
+    assert "package-lock.json" not in diff
+
+
+def test_get_staged_diff_auto_loads_git_ai_ignore(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(
+        repo,
+        {
+            ".git-ai-ignore": "secret.txt\n",
+            "secret.txt": "shh\n",
+            "app.py": "print('hi')\n",
+        },
+    )
+
+    diff = get_staged_diff(repo)
+
+    assert "b/app.py" in diff
+    assert "b/secret.txt" not in diff
+
+
+def test_get_staged_diff_explicit_empty_list_disables_filtering(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"})
+
+    diff = get_staged_diff(repo, exclude_patterns=[])
+
+    assert "package-lock.json" in diff
+    assert "app.py" in diff
+
+
+def test_get_staged_diff_negation_reincludes_lockfile(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(
+        repo,
+        {".git-ai-ignore": "!package-lock.json\n", "package-lock.json": "lock\n"},
+    )
+
+    diff = get_staged_diff(repo)
+
+    assert "package-lock.json" in diff
+
+
+def test_get_staged_diff_from_subdirectory_uses_root_ignore_file(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(
+        repo,
+        {
+            ".git-ai-ignore": "secret.txt\n",
+            "secret.txt": "shh\n",
+            "app.py": "print('hi')\n",
+        },
+    )
+    subdir = repo / "nested"
+    subdir.mkdir()
+
+    diff = get_staged_diff(subdir)
+
+    assert "b/app.py" in diff
+    assert "b/secret.txt" not in diff
+
+
+def _commit_files(repo: Path, files: dict[str, str], message: str) -> None:
+    for name, content in files.items():
+        (repo / name).write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True)
+
+
+def test_get_diff_excludes_default_lockfiles(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True)
+    _commit_files(repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"}, "feat")
+
+    diff = get_diff(repo, "HEAD~1", three_dot=False)
+
+    assert "b/app.py" in diff
+    assert "package-lock.json" not in diff
+
+
+def test_get_diff_stat_excludes_default_lockfiles(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True)
+    _commit_files(repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"}, "feat")
+
+    stat = get_diff_stat(repo, "HEAD~1", three_dot=False)
+
+    assert "app.py" in stat
+    assert "package-lock.json" not in stat
