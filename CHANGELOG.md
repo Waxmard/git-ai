@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.0.0](https://github.com/Waxmard/git-ai/compare/v5.0.0...v6.0.0) (2026-05-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* auto-load ignore patterns in diff helpers ([#49](https://github.com/Waxmard/git-ai/issues/49))
+
+### Features
+
+* auto-load ignore patterns in diff helpers ([#49](https://github.com/Waxmard/git-ai/issues/49)) ([df02e64](https://github.com/Waxmard/git-ai/commit/df02e64eef71c3b563a68c2dd9bd71ada8b4c1a8))
+
 ## [5.0.0](https://github.com/Waxmard/git-ai/compare/v4.1.4...v5.0.0) (2026-04-29)
 
 
