@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+# TYPE_CHECKING block gives mypy symbol resolution; runtime imports happen in
+# the elif (standalone via importlib) and else (package) branches below.
 if TYPE_CHECKING:
     from ._git import (
         check_git_repo,
