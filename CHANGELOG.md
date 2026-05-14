@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.0.1](https://github.com/Waxmard/git-ai/compare/v6.0.0...v6.0.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* migrate pre-commit hooks to lefthook and fix strip_fences backtick bug ([#53](https://github.com/Waxmard/git-ai/issues/53)) ([3fd955e](https://github.com/Waxmard/git-ai/commit/3fd955ef014766b8d32349863f630f9b32b3d6b0))
+
 ## [6.0.0](https://github.com/Waxmard/git-ai/compare/v5.0.0...v6.0.0) (2026-05-09)
 
 
