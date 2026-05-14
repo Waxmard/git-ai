@@ -7,6 +7,7 @@ Runs standalone (invoked by bin/git-ai as a script) or importable as
 from __future__ import annotations
 
 import difflib
+import os
 import sys
 from argparse import ArgumentParser
 from pathlib import Path
@@ -138,6 +139,16 @@ def summarize_pr_changes(existing: str, updated: str) -> str:
     return "**Changes since previous draft**\n\n" + "\n".join(parts) + "\n"
 
 
+def _is_interactive() -> bool:
+    """Honor ``GIT_AI_FORCE_INTERACTIVE`` (test hook); otherwise check isatty()."""
+    forced = os.environ.get("GIT_AI_FORCE_INTERACTIVE")
+    if forced == "1":
+        return True
+    if forced == "0":
+        return False
+    return sys.stdout.isatty()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(prog="git_ai._pr_render")
     parser.add_argument("existing", help="Path to cached PR text")
@@ -148,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     updated = Path(args.updated).read_text(encoding="utf-8")
 
     # No prior draft or non-interactive stdout: emit the updated text verbatim.
-    if not existing.strip() or not sys.stdout.isatty():
+    if not existing.strip() or not _is_interactive():
         sys.stdout.write(updated)
         return 0
 
