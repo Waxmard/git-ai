@@ -3,7 +3,7 @@ BATS := node_modules/.bin/bats
 UV ?= uv
 export UV_CACHE_DIR := .uv-cache
 
-.PHONY: install uninstall lint test hooks sync py-format py-lint py-type-check py-test py-pre-commit
+.PHONY: install uninstall lint test hooks sync py-format py-lint py-type-check py-test
 
 test: $(BATS)
 	@if command -v parallel >/dev/null 2>&1 || command -v rush >/dev/null 2>&1; then \
@@ -17,16 +17,16 @@ $(BATS):
 
 lint:
 	shellcheck -x lib/*.sh
-	@for f in bin/* hooks/*; do \
+	@for f in bin/*; do \
 		if head -1 "$$f" | grep -q '^#!.*bash'; then \
 			shellcheck -x "$$f"; \
 		fi; \
 	done
 
 hooks:
-	@chmod +x $(CURDIR)/hooks/pre-commit
-	@ln -sf $(CURDIR)/hooks/pre-commit $(CURDIR)/.git/hooks/pre-commit
-	@echo "Installed pre-commit hook"
+	@command -v lefthook >/dev/null 2>&1 || { echo "lefthook not installed (brew install lefthook)"; exit 1; }
+	@lefthook install
+	@echo "Installed git hooks via lefthook"
 
 install: hooks
 	@mkdir -p $(PREFIX)/bin $(PREFIX)/lib
@@ -57,6 +57,3 @@ py-type-check:
 
 py-test:
 	$(UV) run pytest
-
-py-pre-commit:
-	$(UV) run pre-commit run --all-files

@@ -1,0 +1,20 @@
+pre-commit:
+  parallel: true
+  commands:
+    shell-lint:
+      glob: "{bin/*,lib/*.sh,hooks/*}"
+      run: make lint
+
+    bats:
+      glob: "{bin/*,lib/*.sh,hooks/*,test/bin/**,test/lib/**,Makefile}"
+      run: make test
+
+    python:
+      glob: "{python/**/*.py,test/python/**/*.py,pyproject.toml}"
+      run: |
+        set -e
+        make py-format
+        make py-lint
+        uv run dmypy run -- python/git_ai test/python
+        make py-test
+      stage_fixed: true
