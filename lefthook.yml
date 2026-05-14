@@ -2,11 +2,11 @@ pre-commit:
   parallel: true
   commands:
     shell-lint:
-      glob: "{bin/*,lib/*.sh,hooks/*}"
+      glob: "{bin/*,lib/*.sh}"
       run: make lint
 
     bats:
-      glob: "{bin/*,lib/*.sh,hooks/*,test/bin/**,test/lib/**,Makefile}"
+      glob: "{bin/*,lib/*.sh,test/bin/**,test/lib/**,Makefile}"
       run: make test
 
     python:
