@@ -24,7 +24,7 @@ lint:
 	done
 
 hooks:
-	@command -v lefthook >/dev/null 2>&1 || { echo "lefthook not installed (brew install lefthook)"; exit 1; }
+	@command -v lefthook >/dev/null 2>&1 || { echo "lefthook not installed (run 'mise install' or 'brew install lefthook')"; exit 1; }
 	@lefthook install
 	@echo "Installed git hooks via lefthook"
 
