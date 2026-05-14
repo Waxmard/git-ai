@@ -28,7 +28,7 @@ from ._pr_incremental import (
     prepare_repo_pr_context,
     save_cached_pr,
 )
-from ._pr_render import render_pr_diff
+from ._pr_render import render_pr_diff, summarize_pr_changes
 
 __all__ = [
     "RepoPrContext",
@@ -54,4 +54,5 @@ __all__ = [
     "render_pr_diff",
     "save_cached_pr",
     "strip_fences",
+    "summarize_pr_changes",
 ]

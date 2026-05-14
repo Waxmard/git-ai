@@ -1,7 +1,7 @@
-"""Tests for git_ai._pr_render.render_pr_diff."""
+"""Tests for git_ai._pr_render."""
 from __future__ import annotations
 
-from git_ai._pr_render import render_pr_diff
+from git_ai._pr_render import render_pr_diff, summarize_pr_changes
 
 
 def test_identical_input_returns_empty() -> None:
@@ -96,3 +96,71 @@ def test_file_headers_stripped() -> None:
 
     assert "--- " not in result
     assert "+++ " not in result
+
+
+def test_summary_empty_when_no_existing() -> None:
+    assert summarize_pr_changes("", "feat: x\n- one") == ""
+
+
+def test_summary_empty_when_identical() -> None:
+    text = "feat: x\n\n### Refactors\n- one"
+    assert summarize_pr_changes(text, text) == ""
+
+
+def test_summary_counts_pure_additions_per_section() -> None:
+    existing = "feat: x\n\n### Refactors\n- a"
+    updated = "feat: x\n\n### Refactors\n- a\n- b\n- c\n\n### Build\n- one"
+    result = summarize_pr_changes(existing, updated)
+
+    assert "**Changes since previous draft**" in result
+    assert "- Refactors: +2" in result
+    assert "- Build: +1" in result
+
+
+def test_summary_counts_pure_removals() -> None:
+    existing = "feat: x\n\n### Chores\n- a\n- b"
+    updated = "feat: x\n\n### Chores\n- a"
+    result = summarize_pr_changes(existing, updated)
+
+    assert "- Chores: -1" in result
+
+
+def test_summary_counts_mixed_add_and_remove() -> None:
+    existing = "feat: x\n\n### Refactors\n- a\n- b"
+    updated = "feat: x\n\n### Refactors\n- a\n- c\n- d"
+    result = summarize_pr_changes(existing, updated)
+
+    assert "- Refactors: +2 / -1" in result
+
+
+def test_summary_title_change_under_intro_label() -> None:
+    existing = "feat: old title\n\n### Refactors\n- a"
+    updated = "feat: new title\n\n### Refactors\n- a"
+    result = summarize_pr_changes(existing, updated)
+
+    assert "- Title / intro: +1 / -1" in result
+
+
+def test_summary_skips_unchanged_sections() -> None:
+    existing = "feat: x\n\n### A\n- a\n\n### B\n- b"
+    updated = "feat: x\n\n### A\n- a\n\n### B\n- b\n- bb"
+    result = summarize_pr_changes(existing, updated)
+
+    assert "- A:" not in result
+    assert "- B: +1" in result
+
+
+def test_summary_preserves_updated_section_order() -> None:
+    existing = "feat: x\n\n### A\n- a"
+    updated = "feat: x\n\n### B\n- b\n\n### A\n- a\n- aa"
+    result = summarize_pr_changes(existing, updated)
+
+    b_idx = result.index("- B:")
+    a_idx = result.index("- A:")
+    assert b_idx < a_idx
+
+
+def test_summary_empty_when_only_whitespace_diff() -> None:
+    existing = "feat: x\n\n### A\n- a"
+    updated = "feat: x\n\n\n### A\n- a\n"
+    assert summarize_pr_changes(existing, updated) == ""
