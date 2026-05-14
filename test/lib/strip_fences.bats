@@ -55,3 +55,11 @@ teardown() {
   assert_line --index 0 "line1"
   assert_line --index 1 "line2"
 }
+
+@test "strip_fences: body line starting with single backtick preserved" {
+  printf '%s\n' 'feat: add foo' '' '`backtick_var` improves things' 'more stuff' > "$TEST_TMP/input.txt"
+  expected=$(printf '%s\n' 'feat: add foo' '' '`backtick_var` improves things' 'more stuff')
+  run bash -c "source \"${REPO_ROOT}/lib/ai-common.sh\" && strip_fences < \"${TEST_TMP}/input.txt\""
+  assert_success
+  assert_output "$expected"
+}

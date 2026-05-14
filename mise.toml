@@ -1,0 +1,5 @@
+[tools]
+node = "24"
+uv = "0.6"
+lefthook = "1.13"
+shellcheck = "0.11"
