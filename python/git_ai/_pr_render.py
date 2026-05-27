@@ -108,6 +108,9 @@ def summarize_pr_changes(existing: str, updated: str) -> str:
     section-level changes are detected. Output is a small bulleted list
     suitable to prepend above the updated body — it never contains diff
     prefixes that would break markdown rendering when copy-pasted.
+
+    Set-based comparison: reorder-only changes within a section produce no
+    delta, so ``existing != updated`` can still yield an empty summary.
     """
     if not existing.strip() or existing == updated:
         return ""

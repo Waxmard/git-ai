@@ -160,6 +160,14 @@ def test_summary_preserves_updated_section_order() -> None:
     assert b_idx < a_idx
 
 
+def test_summary_counts_entire_section_removed() -> None:
+    existing = "feat: x\n\n### A\n- a\n\n### Chores\n- b\n- c"
+    updated = "feat: x\n\n### A\n- a"
+    result = summarize_pr_changes(existing, updated)
+
+    assert "- Chores: -2" in result
+
+
 def test_summary_empty_when_only_whitespace_diff() -> None:
     existing = "feat: x\n\n### A\n- a"
     updated = "feat: x\n\n\n### A\n- a\n"
