@@ -512,12 +512,28 @@ user_options_path() {
 # combo. Empty sections drop that provider entirely. Unknown provider section
 # names are silently ignored. Custom model IDs (not in the shipped catalog)
 # are passed through as-is.
+#
+# A `projects =` list under a shared [vertex] section expands each base vertex
+# section (`[vertex-gemini]` / `[vertex-anthropic]`) into one profile per
+# project — `vertex-<x>@<project>:<model>` — so the cross product of providers
+# and projects need not be spelled out. Explicit `[vertex-<x>@<profile>]`
+# sections still emit directly and coexist (duplicates are dropped).
 parse_user_options() {
   local path
   path=$(user_options_path)
   [[ -r "$path" ]] || return 0
 
-  local line trimmed section=""
+  # Pull the shared [vertex] projects list (comma- or space-separated).
+  local -a vertex_projects=()
+  local proj_raw p
+  proj_raw=$(vertex_config_value "vertex" projects)
+  if [[ -n "$proj_raw" ]]; then
+    while IFS= read -r p || [[ -n "$p" ]]; do
+      [[ -n "$p" ]] && vertex_projects+=("$p")
+    done < <(printf '%s' "$proj_raw" | tr ', ' '\n')
+  fi
+
+  local line trimmed section="" value emitted=$'\n'
   while IFS= read -r line || [[ -n "$line" ]]; do
     # Strip inline # comment then surrounding whitespace.
     trimmed="${line%%#*}"
@@ -539,7 +555,23 @@ parse_user_options() {
     # key=value lines configure the section (e.g. vertex account/project) and
     # are not model IDs — model IDs never contain '='. Skip them here.
     [[ "$trimmed" == *=* ]] && continue
-    printf '%s:%s\n' "$section" "$trimmed"
+
+    # Expand base vertex sections across the shared projects list; everything
+    # else (explicit @profiles, non-vertex providers) emits verbatim.
+    if [[ ${#vertex_projects[@]} -gt 0 \
+          && ( "$section" == "vertex-gemini" || "$section" == "vertex-anthropic" ) ]]; then
+      for p in "${vertex_projects[@]}"; do
+        value="${section}@${p}:${trimmed}"
+        case "$emitted" in *$'\n'"$value"$'\n'*) continue ;; esac
+        printf '%s\n' "$value"
+        emitted+="$value"$'\n'
+      done
+    else
+      value="${section}:${trimmed}"
+      case "$emitted" in *$'\n'"$value"$'\n'*) continue ;; esac
+      printf '%s\n' "$value"
+      emitted+="$value"$'\n'
+    fi
   done <"$path"
 }
 
@@ -583,6 +615,36 @@ vertex_config_value() {
       return 0
     fi
   done <"$path"
+  return 0
+}
+
+# vertex_resolve TOKEN KEY
+# Resolve a vertex setting for a (possibly profile-qualified) provider TOKEN,
+# layering most-specific first: the explicit [base@profile] section, then the
+# base [base] section, then the shared [vertex] section. For KEY=project with
+# no value found, the profile name is used as the project id (so the profile
+# name is the project unless overridden). Prints nothing when unresolved.
+vertex_resolve() {
+  local token="$1" key="$2"
+  local base="${token%%@*}" profile="" val
+  case "$token" in *@*) profile="${token#*@}" ;; esac
+
+  val=$(vertex_config_value "$token" "$key")
+  [[ -n "$val" ]] && { printf '%s\n' "$val"; return 0; }
+
+  if [[ -n "$profile" ]]; then
+    val=$(vertex_config_value "$base" "$key")
+    [[ -n "$val" ]] && { printf '%s\n' "$val"; return 0; }
+  fi
+
+  val=$(vertex_config_value "vertex" "$key")
+  [[ -n "$val" ]] && { printf '%s\n' "$val"; return 0; }
+
+  # The profile name doubles as the project id when none is configured.
+  if [[ "$key" == "project" && -n "$profile" ]]; then
+    printf '%s\n' "$profile"
+    return 0
+  fi
   return 0
 }
 
@@ -717,13 +779,17 @@ resolve_model() {
   local model="${3:-}"
 
   if [[ -n "$model" ]]; then
-    if models_for_provider "$provider" | grep -Fxq "$model"; then
+    # Read grep's input via process substitution rather than a pipe: with
+    # `set -o pipefail`, `producer | grep -q` returns 141 (SIGPIPE) whenever
+    # grep matches and exits before the producer finishes writing, which would
+    # make a real match look like a failure.
+    if grep -Fxq "$model" < <(models_for_provider "$provider"); then
       printf '%s\n' "$model"
       return
     fi
     # Permit custom model IDs declared in the user options file — this lets
     # the config add future model IDs without a git-ai release.
-    if parse_user_options | grep -Fxq "${provider}:${model}"; then
+    if grep -Fxq "${provider}:${model}" < <(parse_user_options); then
       printf '%s\n' "$model"
       return
     fi
@@ -915,11 +981,11 @@ run_provider() {
       # selects a gcloud user credential; credentials= points ADC at a
       # service-account JSON. Both are optional — absent both, plain ADC is used.
       local vertex_project vertex_region vertex_account vertex_creds
-      vertex_account=$(vertex_config_value "$provider" account)
-      vertex_creds=$(vertex_config_value "$provider" credentials)
-      vertex_project=$(vertex_config_value "$provider" project)
+      vertex_account=$(vertex_resolve "$provider" account)
+      vertex_creds=$(vertex_resolve "$provider" credentials)
+      vertex_project=$(vertex_resolve "$provider" project)
       vertex_project="${vertex_project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
-      vertex_region=$(vertex_config_value "$provider" region)
+      vertex_region=$(vertex_resolve "$provider" region)
       vertex_region="${vertex_region:-${VERTEX_LOCATION:-${GOOGLE_VERTEX_LOCATION:-${GOOGLE_CLOUD_LOCATION:-us-central1}}}}"
 
       if [[ -n "$vertex_creds" ]]; then
