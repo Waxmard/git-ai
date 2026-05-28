@@ -314,9 +314,26 @@ _gemini_has_adc() {
   return 1
 }
 
+# _vertex_has_auth [ACCOUNT]
+# True when a Vertex access token can be minted for the given auth path. With
+# no ACCOUNT this is ADC-only (same guard as _gemini_has_adc); with an ACCOUNT
+# it validates the per-account user credential instead.
+_vertex_has_auth() {
+  [[ -n "$(_vertex_access_token "${1:-}")" ]]
+}
+
+# _vertex_access_token [ACCOUNT]
+# With no ACCOUNT, mint an Application Default Credentials token (honours
+# GOOGLE_APPLICATION_CREDENTIALS when exported). With ACCOUNT, mint a token for
+# that specific gcloud-authed user account, enabling multi-account setups.
 _vertex_access_token() {
   command -v gcloud >/dev/null 2>&1 || return 1
-  gcloud auth application-default print-access-token 2>/dev/null
+  local account="${1:-}"
+  if [[ -n "$account" ]]; then
+    gcloud auth print-access-token --account="$account" 2>/dev/null
+  else
+    gcloud auth application-default print-access-token 2>/dev/null
+  fi
 }
 
 provider_display_name() {
@@ -489,8 +506,54 @@ parse_user_options() {
     fi
 
     [[ -n "$section" ]] || continue
+    # key=value lines configure the section (e.g. vertex account/project) and
+    # are not model IDs — model IDs never contain '='. Skip them here.
+    [[ "$trimmed" == *=* ]] && continue
     printf '%s:%s\n' "$section" "$trimmed"
   done <"$path"
+}
+
+# vertex_config_value PROVIDER KEY
+# Emit the value of a key=value line under the given provider's section in the
+# user options file. Recognised keys: project, region, account, credentials.
+# A leading '~/' in the value is expanded to $HOME. Prints nothing (and returns
+# 0) when the file, section, or key is absent.
+vertex_config_value() {
+  local want_provider="$1" want_key="$2"
+  local path
+  path=$(user_options_path)
+  [[ -r "$path" ]] || return 0
+
+  local line trimmed section="" key val
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="${line%%#*}"
+    trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [[ -n "$trimmed" ]] || continue
+
+    if [[ "$trimmed" =~ ^\[([^][]+)\]$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    [[ "$section" == "$want_provider" ]] || continue
+    [[ "$trimmed" == *=* ]] || continue
+    key="${trimmed%%=*}"
+    val="${trimmed#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    if [[ "$key" == "$want_key" ]]; then
+      # Match a literal leading '~/' and expand it ourselves; the tilde is data
+      # here, not a path to be shell-expanded.
+      # shellcheck disable=SC2088
+      [[ "$val" == "~/"* ]] && val="${HOME}/${val#\~/}"
+      printf '%s\n' "$val"
+      return 0
+    fi
+  done <"$path"
+  return 0
 }
 
 # list_options TOOL
@@ -671,10 +734,10 @@ _vertex_endpoint() {
 }
 
 _run_vertex_anthropic_api() {
-  local model="$1" prompt="$2" input="$3" project="$4" region="$5"
+  local model="$1" prompt="$2" input="$3" project="$4" region="$5" account="${6:-}"
   local token body url curl_cfg response
-  token=$(_vertex_access_token) ||
-    die "Vertex auth: gcloud auth application-default print-access-token failed."
+  token=$(_vertex_access_token "$account") ||
+    die "Vertex auth: gcloud print-access-token failed."
   body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
 import json, os
 print(json.dumps({
@@ -698,10 +761,10 @@ print(data["content"][0]["text"])
 }
 
 _run_vertex_gemini_api() {
-  local model="$1" prompt="$2" input="$3" project="$4" region="$5"
+  local model="$1" prompt="$2" input="$3" project="$4" region="$5" account="${6:-}"
   local token body url curl_cfg response
-  token=$(_vertex_access_token) ||
-    die "Vertex auth: gcloud auth application-default print-access-token failed."
+  token=$(_vertex_access_token "$account") ||
+    die "Vertex auth: gcloud print-access-token failed."
   body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
 import json, os
 print(json.dumps({
@@ -815,17 +878,38 @@ run_provider() {
       ;;
     vertex-gemini|vertex-anthropic)
       load_google_env
-      _gemini_has_adc ||
-        die "Vertex auth not found. Configure gcloud ADC or GOOGLE_APPLICATION_CREDENTIALS."
-      local vertex_project vertex_region
-      vertex_project="${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}"
-      vertex_region="${VERTEX_LOCATION:-${GOOGLE_VERTEX_LOCATION:-${GOOGLE_CLOUD_LOCATION:-us-central1}}}"
+      # Per-provider account config (options.conf) overrides env. account=
+      # selects a gcloud user credential; credentials= points ADC at a
+      # service-account JSON. Both are optional — absent both, plain ADC is used.
+      local vertex_project vertex_region vertex_account vertex_creds
+      vertex_account=$(vertex_config_value "$provider" account)
+      vertex_creds=$(vertex_config_value "$provider" credentials)
+      vertex_project=$(vertex_config_value "$provider" project)
+      vertex_project="${vertex_project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
+      vertex_region=$(vertex_config_value "$provider" region)
+      vertex_region="${vertex_region:-${VERTEX_LOCATION:-${GOOGLE_VERTEX_LOCATION:-${GOOGLE_CLOUD_LOCATION:-us-central1}}}}"
+
+      if [[ -n "$vertex_creds" ]]; then
+        export GOOGLE_APPLICATION_CREDENTIALS="$vertex_creds"
+      fi
+
+      _vertex_has_auth "$vertex_account" ||
+        die "Vertex auth not found. Configure gcloud ADC, set account=/credentials= under [$provider] in options.conf, or GOOGLE_APPLICATION_CREDENTIALS."
       [[ -n "$vertex_project" ]] ||
-        die "Vertex auth requires GOOGLE_CLOUD_PROJECT or GOOGLE_VERTEX_PROJECT."
-      if [[ "$provider" == "vertex-anthropic" ]]; then
-        _run_vertex_anthropic_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" | strip_fences
+        die "Vertex auth requires a project (set project= under [$provider] in options.conf, or GOOGLE_CLOUD_PROJECT/GOOGLE_VERTEX_PROJECT)."
+
+      if [[ -n "$vertex_account" ]]; then
+        echo "git-ai: Vertex account ${vertex_account} · project ${vertex_project} (${vertex_region})" >&2
+      elif [[ -n "$vertex_creds" ]]; then
+        echo "git-ai: Vertex credentials ${vertex_creds} · project ${vertex_project} (${vertex_region})" >&2
       else
-        _run_vertex_gemini_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" | strip_fences
+        echo "git-ai: Vertex ADC · project ${vertex_project} (${vertex_region})" >&2
+      fi
+
+      if [[ "$provider" == "vertex-anthropic" ]]; then
+        _run_vertex_anthropic_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account" | strip_fences
+      else
+        _run_vertex_gemini_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account" | strip_fences
       fi
       ;;
     gemini-api)

@@ -89,6 +89,20 @@ EOF
   assert_line "claude-code:claude-opus-4-6"
 }
 
+@test "parse_user_options: skips key=value config lines (not models)" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+project = acme-prod
+account = me@acme.com
+claude-sonnet-4-6
+EOF
+  run parse_user_options
+  assert_success
+  assert_line "vertex-anthropic:claude-sonnet-4-6"
+  refute_output --partial "project"
+  refute_output --partial "account"
+}
+
 @test "parse_user_options: 'last' header is not a valid provider section" {
   cat >"$CONF" <<'EOF'
 [last]
@@ -159,4 +173,57 @@ claude-sonnet-4-6
 EOF
   run resolve_model commit claude-code "claude-sonnet-999-0-fake"
   assert_failure
+}
+
+# --- vertex_config_value ---
+
+@test "vertex_config_value: reads project/account/region for the section" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+project = acme-prod
+region  = us-east5
+account = me@acme.com
+claude-sonnet-4-6
+
+[vertex-gemini]
+project = other-proj
+EOF
+  run vertex_config_value vertex-anthropic project
+  assert_success
+  assert_output "acme-prod"
+
+  run vertex_config_value vertex-anthropic region
+  assert_output "us-east5"
+
+  run vertex_config_value vertex-anthropic account
+  assert_output "me@acme.com"
+
+  # Section isolation: vertex-gemini has its own project.
+  run vertex_config_value vertex-gemini project
+  assert_output "other-proj"
+}
+
+@test "vertex_config_value: expands a leading ~/ to \$HOME" {
+  cat >"$CONF" <<'EOF'
+[vertex-gemini]
+credentials = ~/keys/sa.json
+EOF
+  run vertex_config_value vertex-gemini credentials
+  assert_success
+  assert_output "${HOME}/keys/sa.json"
+}
+
+@test "vertex_config_value: missing key or file yields empty output" {
+  cat >"$CONF" <<'EOF'
+[vertex-gemini]
+project = p
+EOF
+  run vertex_config_value vertex-gemini account
+  assert_success
+  assert_output ""
+
+  rm -f "$CONF"
+  run vertex_config_value vertex-gemini project
+  assert_success
+  assert_output ""
 }

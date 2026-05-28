@@ -65,6 +65,25 @@ EOF
   assert_equal "$(cat "$GCLOUD_LOG")" "auth application-default print-access-token"
 }
 
+@test "_vertex_access_token with an account mints a per-account user token" {
+  write_old_token_only_gcloud_stub
+
+  PATH="${STUB_BIN}:$PATH" run _vertex_access_token "me@acme.com"
+
+  assert_success
+  assert_output "user-token"
+  assert_equal "$(cat "$GCLOUD_LOG")" "auth print-access-token --account=me@acme.com"
+}
+
+@test "_vertex_has_auth accepts a per-account user token" {
+  write_old_token_only_gcloud_stub
+
+  PATH="${STUB_BIN}:$PATH" run _vertex_has_auth "me@acme.com"
+
+  assert_success
+  assert_equal "$(cat "$GCLOUD_LOG")" "auth print-access-token --account=me@acme.com"
+}
+
 @test "_gemini_has_adc rejects active-user gcloud auth tokens" {
   write_old_token_only_gcloud_stub
 
@@ -87,4 +106,14 @@ EOF
   assert_success
   assert_output "anthropic ok"
   assert_equal "$(cat "$GCLOUD_LOG")" "auth application-default print-access-token"
+}
+
+@test "Vertex API calls with an account mint a per-account token" {
+  write_old_token_only_gcloud_stub
+  write_curl_stub
+
+  PATH="${STUB_BIN}:$PATH" run _run_vertex_gemini_api "gemini-test" "prompt" "input" "proj" "global" "me@acme.com"
+  assert_success
+  assert_output "gemini ok"
+  assert_equal "$(cat "$GCLOUD_LOG")" "auth print-access-token --account=me@acme.com"
 }

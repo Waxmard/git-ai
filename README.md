@@ -256,6 +256,23 @@ gpt-5.4-mini
 - Delete the file to restore the full shipped catalog.
 - See [`examples/options.conf`](examples/options.conf) for a starter.
 
+### Pinning a GCP account (Vertex)
+
+If you have multiple GCP accounts, a `[vertex-*]` section accepts optional `key = value` lines alongside its model IDs to pin which account and project that provider uses (these keys are not models and never appear in the picker):
+
+```ini
+[vertex-anthropic]
+project     = acme-prod        # overrides $GOOGLE_CLOUD_PROJECT / $GOOGLE_VERTEX_PROJECT
+region      = us-east5         # overrides $VERTEX_LOCATION (default us-central1)
+account     = me@acme.com      # token via `gcloud auth print-access-token --account=…`
+credentials = ~/keys/sa.json   # or: point ADC at a service-account JSON (~ expands to $HOME)
+claude-sonnet-4-6
+```
+
+- `account=` selects a human Google login (authenticate each once with `gcloud auth login`); `credentials=` selects a service-account JSON. Set one or the other — with neither, plain gcloud ADC is used.
+- Config values override the corresponding environment variables.
+- Before each call, git-ai prints the account/project it used to stderr (e.g. `git-ai: Vertex account me@acme.com · project acme-prod (us-east5)`).
+
 ## Terminal picker
 
 Running `git-ai commit` or `git-ai pr` without a provider argument launches an inline [fzf](https://github.com/junegunn/fzf) picker over the same provider/model combos Lazygit uses. History entries float to the top. Pass `provider` or `provider:model` to skip the picker. Flags still parse, so `git-ai pr --base staging` opens the picker then runs against the chosen base.
