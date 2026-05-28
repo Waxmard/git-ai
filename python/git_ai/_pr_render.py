@@ -1,7 +1,7 @@
-"""Render a compact diff between cached and regenerated PR text.
+"""Render PR-update output for ``git-ai pr``.
 
 Runs standalone (invoked by bin/git-ai as a script) or importable as
-``git_ai._pr_render.render_pr_diff``.
+``git_ai._pr_render.render_pr_diff`` / ``summarize_pr_changes``.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def _color(text: str, code: str, enabled: bool) -> str:
 
 
 def render_pr_diff(existing: str, updated: str, *, color: bool) -> str:
-    """Render a user-facing diff between two PR texts.
+    """Render a unified diff between two PR texts.
 
     Uses prefixes so every emitted content line has the same leading width:
       ``  `` (two spaces) for context, ``~ `` for a line that replaced an
@@ -78,9 +78,74 @@ def render_pr_diff(existing: str, updated: str, *, color: bool) -> str:
     return "\n".join(out) + "\n"
 
 
-def _color_enabled() -> bool:
-    """Respect an explicit override; otherwise honour stdout isatty()."""
-    forced = os.environ.get("GIT_AI_FORCE_COLOR")
+_INTRO = "_intro"
+
+
+def _parse_sections(text: str) -> dict[str, list[str]]:
+    """Group non-blank lines by ``### Heading``.
+
+    Lines before the first heading land in the ``_INTRO`` bucket (typically
+    the PR title and any preamble). Section order is preserved.
+    """
+    sections: dict[str, list[str]] = {_INTRO: []}
+    current = _INTRO
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if line.startswith("### "):
+            current = line[4:].strip()
+            sections.setdefault(current, [])
+            continue
+        stripped = line.strip()
+        if stripped:
+            sections.setdefault(current, []).append(stripped)
+    return sections
+
+
+def summarize_pr_changes(existing: str, updated: str) -> str:
+    """Return a markdown-safe summary of per-section net additions/removals.
+
+    Empty string when ``existing`` is blank, the texts are identical, or no
+    section-level changes are detected. Output is a small bulleted list
+    suitable to prepend above the updated body — it never contains diff
+    prefixes that would break markdown rendering when copy-pasted.
+
+    Set-based comparison: reorder-only changes and duplicate-line dedup
+    within a section both produce no delta, so ``existing != updated`` can
+    still yield an empty summary.
+    """
+    if not existing.strip() or existing == updated:
+        return ""
+
+    old = _parse_sections(existing)
+    new = _parse_sections(updated)
+
+    ordered: list[str] = list(new.keys())
+    ordered.extend(name for name in old if name not in new)
+
+    parts: list[str] = []
+    for name in ordered:
+        old_set = set(old.get(name, []))
+        new_set = set(new.get(name, []))
+        added = len(new_set - old_set)
+        removed = len(old_set - new_set)
+        if added == 0 and removed == 0:
+            continue
+        delta: list[str] = []
+        if added:
+            delta.append(f"+{added}")
+        if removed:
+            delta.append(f"-{removed}")
+        label = "Title / intro" if name == _INTRO else name
+        parts.append(f"- {label}: {' / '.join(delta)}")
+
+    if not parts:
+        return ""
+    return "**Changes since previous draft**\n\n" + "\n".join(parts) + "\n"
+
+
+def _is_interactive() -> bool:
+    """Honor ``GIT_AI_FORCE_INTERACTIVE`` (test hook); otherwise check isatty()."""
+    forced = os.environ.get("GIT_AI_FORCE_INTERACTIVE")
     if forced == "1":
         return True
     if forced == "0":
@@ -97,21 +162,20 @@ def main(argv: list[str] | None = None) -> int:
     existing = Path(args.existing).read_text(encoding="utf-8")
     updated = Path(args.updated).read_text(encoding="utf-8")
 
-    color = _color_enabled()
-
-    # No prior PR or non-interactive stdout: emit the updated text verbatim.
-    if not existing.strip() or not color:
+    # No prior draft or non-interactive stdout: emit the updated text verbatim.
+    if not existing.strip() or not _is_interactive():
         sys.stdout.write(updated)
         return 0
 
     if existing == updated:
-        sys.stderr.write(
-            "git-ai: regenerated PR is unchanged; no diff changes to show\n"
-        )
+        sys.stderr.write("git-ai: regenerated PR is unchanged; no changes to show\n")
         sys.stdout.write(updated)
         return 0
 
-    sys.stdout.write(render_pr_diff(existing, updated, color=color))
+    summary = summarize_pr_changes(existing, updated)
+    if summary:
+        sys.stdout.write(summary + "\n---\n\n")
+    sys.stdout.write(updated)
     return 0
 
 
