@@ -39,14 +39,18 @@ teardown() {
 }
 
 @test "push_choice_history: caps at CHOICE_HISTORY_CAP entries" {
+  # Shrink the cap so the loop needs only a handful of git-backed pushes
+  # (each push spawns `git rev-parse`); the cap logic is value-independent.
+  CHOICE_HISTORY_CAP=3
+  local last=$((CHOICE_HISTORY_CAP + 2))
   local i
-  for i in $(seq 1 40); do
+  for i in $(seq 1 "$last"); do
     push_choice_history commit "fake:entry-${i}"
   done
   run get_choice_history commit
   assert_success
   [ "${#lines[@]}" -eq "$CHOICE_HISTORY_CAP" ]
-  assert_line --index 0 "fake:entry-40"
+  assert_line --index 0 "fake:entry-${last}"
 }
 
 @test "push_choice_history: separate history per tool" {
