@@ -1,0 +1,57 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 12 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: SAST (semgrep)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.163.0
+    steps:
+      - uses: actions/checkout@v6
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: semgrep ci --sarif --output=semgrep.sarif
+        env:
+          # No p/typescript, p/react, or p/dockerfile: this repo is bash + a
+          # provider-agnostic Python package, and ships no container image.
+          SEMGREP_RULES: >-
+            p/python
+            p/bash
+            p/security-audit
+            p/secrets
+            p/owasp-top-ten
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  trivy-fs:
+    name: Vuln + secret scan (trivy fs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs

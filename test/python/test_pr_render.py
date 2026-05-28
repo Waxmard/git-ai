@@ -1,4 +1,5 @@
 """Tests for git_ai._pr_render."""
+
 from __future__ import annotations
 
 from git_ai._pr_render import render_pr_diff, summarize_pr_changes

@@ -318,8 +318,12 @@ def test_get_diff_excludes_default_lockfiles(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True)
-    _commit_files(repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"}, "feat")
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _commit_files(
+        repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"}, "feat"
+    )
 
     diff = get_diff(repo, "HEAD~1", three_dot=False)
 
@@ -331,8 +335,12 @@ def test_get_diff_stat_excludes_default_lockfiles(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True)
-    _commit_files(repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"}, "feat")
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _commit_files(
+        repo, {"package-lock.json": "lock\n", "app.py": "print('hi')\n"}, "feat"
+    )
 
     stat = get_diff_stat(repo, "HEAD~1", three_dot=False)
 

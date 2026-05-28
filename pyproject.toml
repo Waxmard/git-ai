@@ -35,10 +35,27 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = [
-    "E",
-    "F",
-    "I",
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+    "PL",   # pylint
+    "S",    # flake8-bandit (security)
 ]
+ignore = [
+    "PLR0911",  # too-many-return-statements
+    "PLR0912",  # too-many-branches
+    "PLR0913",  # too-many-arguments
+    "PLR2004",  # magic-value-comparison
+    "S603",     # subprocess call — all invocations are trusted, list-form `git`
+    "S607",     # partial executable path — `git` is intentionally resolved on PATH
+]
+
+[tool.ruff.lint.per-file-ignores]
+"test/python/*" = ["S101"]  # assert is expected in tests
 
 [tool.mypy]
 python_version = "3.10"

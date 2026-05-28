@@ -7,8 +7,9 @@ import importlib
 import json
 import shlex
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, cast
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ._pr_incremental import prepare_repo_pr_context, save_cached_pr

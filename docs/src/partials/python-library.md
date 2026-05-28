@@ -1,0 +1,1 @@
+The companion `waxmard-git-ai` Python package is **provider-agnostic** and ships with **zero runtime dependencies**: it owns prompt assembly, diff-stat derivation, fence-stripping, git helpers, and `.git/pr-cache` management, and never calls an LLM itself — consumers wire their own model call between `build_*_prompt` and `parse_*_response`.

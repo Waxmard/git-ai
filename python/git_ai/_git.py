@@ -35,6 +35,7 @@ def _git(repo_path: str | Path, *args: str) -> str:
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
@@ -72,6 +73,7 @@ def git_ref_exists(repo_path: str | Path, ref: str) -> bool:
         ["git", "cat-file", "-e", f"{ref}^{{commit}}"],
         cwd=str(repo_path),
         capture_output=True,
+        check=False,
     )
     return result.returncode == 0
 
@@ -84,6 +86,7 @@ def git_is_ancestor(
         ["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref],
         cwd=str(repo_path),
         capture_output=True,
+        check=False,
     )
     return result.returncode == 0
 
@@ -94,6 +97,7 @@ def check_git_repo(repo_path: str | Path) -> None:
         ["git", "rev-parse", "--git-dir"],
         cwd=str(repo_path),
         capture_output=True,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"{repo_path} is not inside a git repository")
@@ -128,6 +132,7 @@ def get_staged_diff(
         ["git", "diff", "--staged", "--quiet", *pathspec],
         cwd=str(repo_path),
         capture_output=True,
+        check=False,
     )
     if quiet.returncode == 0:
         raise RuntimeError("No staged changes to summarize")
@@ -141,6 +146,7 @@ def get_release_context(repo_path: str | Path) -> str:
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0 or not result.stdout.strip():
         return DEFAULT_RELEASE_CONTEXT
@@ -151,6 +157,7 @@ def get_release_context(repo_path: str | Path) -> str:
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     commits_since = count.stdout.strip() if count.returncode == 0 else "?"
     return (
@@ -166,6 +173,7 @@ def get_mr_release_context(repo_path: str | Path) -> str:
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0 or not result.stdout.strip():
         return DEFAULT_RELEASE_CONTEXT
@@ -176,6 +184,7 @@ def get_mr_release_context(repo_path: str | Path) -> str:
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     commits_since = count.stdout.strip() if count.returncode == 0 else "?"
 

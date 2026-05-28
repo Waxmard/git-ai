@@ -6,7 +6,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from git_ai import (
     build_mr_prompt,
     get_git_dir,
