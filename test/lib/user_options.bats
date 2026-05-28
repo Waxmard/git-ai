@@ -213,6 +213,59 @@ EOF
   assert_output "${HOME}/keys/sa.json"
 }
 
+@test "vertex_config_value: profile sections are addressed by base@profile" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic@acme]
+project = acme-prod
+account = me@acme.com
+claude-sonnet-4-6
+
+[vertex-anthropic@sandbox]
+project = acme-sandbox
+account = me@acme.com
+claude-sonnet-4-6
+EOF
+  run vertex_config_value "vertex-anthropic@acme" project
+  assert_output "acme-prod"
+
+  run vertex_config_value "vertex-anthropic@sandbox" project
+  assert_output "acme-sandbox"
+
+  # Same account across both profiles.
+  run vertex_config_value "vertex-anthropic@sandbox" account
+  assert_output "me@acme.com"
+}
+
+@test "parse_user_options: profile sections emit base@profile:model entries" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic@acme]
+project = acme-prod
+claude-sonnet-4-6
+
+[vertex-anthropic@sandbox]
+claude-sonnet-4-6
+EOF
+  run parse_user_options
+  assert_success
+  assert_line "vertex-anthropic@acme:claude-sonnet-4-6"
+  assert_line "vertex-anthropic@sandbox:claude-sonnet-4-6"
+  refute_output --partial "project"
+}
+
+@test "list_options: profile sections become distinct labelled picker entries" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic@acme]
+claude-sonnet-4-6
+
+[vertex-anthropic@sandbox]
+claude-sonnet-4-6
+EOF
+  run list_options commit
+  assert_success
+  assert_output --partial "vertex-anthropic@acme:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI (Anthropic) [acme]"
+  assert_output --partial "vertex-anthropic@sandbox:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI (Anthropic) [sandbox]"
+}
+
 @test "vertex_config_value: missing key or file yields empty output" {
   cat >"$CONF" <<'EOF'
 [vertex-gemini]

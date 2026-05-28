@@ -57,6 +57,20 @@ teardown() {
   assert_output "claude-code"
 }
 
+@test "save_last_provider + get_last_provider: profile-qualified token round-trips" {
+  save_last_provider "commit" "vertex-anthropic@acme"
+  run get_last_provider "commit"
+  assert_success
+  assert_output "vertex-anthropic@acme"
+}
+
+@test "get_last_provider: rejects a stored token with an invalid base" {
+  save_last_provider "commit" "bogus@acme"
+  run get_last_provider "commit"
+  assert_success
+  assert_output ""
+}
+
 # --- get_last_model / save_last_model ---
 
 @test "get_last_model: returns fallback when nothing stored" {

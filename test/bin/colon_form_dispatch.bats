@@ -57,6 +57,25 @@ teardown() {
   assert_output --partial "file.txt"
 }
 
+@test "cmd_commit: accepts profile-qualified provider (base@profile:model)" {
+  run cmd_commit "vertex-anthropic@acme:claude-sonnet-4-6"
+  assert_success
+  assert_output --partial "provider=vertex-anthropic@acme model=claude-sonnet-4-6"
+}
+
+@test "cmd_commit: profile-qualified two-arg form resolves identically" {
+  run cmd_commit "vertex-anthropic@sandbox" "claude-sonnet-4-6"
+  assert_success
+  assert_output --partial "provider=vertex-anthropic@sandbox model=claude-sonnet-4-6"
+}
+
+@test "cmd_commit: profile token round-trips through choice history" {
+  run cmd_commit "vertex-anthropic@acme:claude-sonnet-4-6"
+  assert_success
+  run get_choice_history commit
+  assert_line --index 0 "vertex-anthropic@acme:claude-sonnet-4-6"
+}
+
 @test "cmd_commit last: pushes last into history" {
   save_last_message commit "saved message"
   run cmd_commit "last"

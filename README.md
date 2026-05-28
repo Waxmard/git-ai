@@ -273,6 +273,22 @@ claude-sonnet-4-6
 - Config values override the corresponding environment variables.
 - Before each call, git-ai prints the account/project it used to stderr (e.g. `git-ai: Vertex account me@acme.com · project acme-prod (us-east5)`).
 
+To choose between **multiple projects/accounts from the picker**, give each a profile suffix — `[vertex-anthropic@<profile>]`. Every profile becomes its own picker entry (labelled `Vertex AI (Anthropic) [<profile>]`), so the same account across two projects is fully supported:
+
+```ini
+[vertex-anthropic@acme]
+project = acme-prod
+account = me@acme.com
+claude-sonnet-4-6
+
+[vertex-anthropic@sandbox]
+project = acme-sandbox
+account = me@acme.com
+claude-sonnet-4-6
+```
+
+Pass one explicitly with `git-ai commit vertex-anthropic@sandbox` or `git-ai pr vertex-anthropic@acme:claude-sonnet-4-6`.
+
 ## Terminal picker
 
 Running `git-ai commit` or `git-ai pr` without a provider argument launches an inline [fzf](https://github.com/junegunn/fzf) picker over the same provider/model combos Lazygit uses. History entries float to the top. Pass `provider` or `provider:model` to skip the picker. Flags still parse, so `git-ai pr --base staging` opens the picker then runs against the chosen base.

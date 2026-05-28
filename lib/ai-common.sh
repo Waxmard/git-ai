@@ -132,6 +132,12 @@ get_last_choice() {
     local stored
     stored=$(<"$state_file")
     stored="${stored%"${stored##*[![:space:]]}"}"
+    # A "*" valid set accepts any stored value (caller validates separately —
+    # e.g. profile-qualified provider tokens that no static alternation lists).
+    if [[ "$valid" == "*" ]]; then
+      printf '%s\n' "$stored"
+      return 0
+    fi
     if [[ "|${valid}|" == *"|${stored}|"* ]]; then
       printf '%s\n' "$stored"
       return 0
@@ -149,7 +155,15 @@ save_last_choice() {
 }
 
 get_last_provider() {
-  get_last_choice "${1}-last-provider" "${2:-}" "vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api"
+  # Accept any stored token, then validate with provider_is_valid so that
+  # profile-qualified providers (e.g. vertex-anthropic@proj-a) round-trip.
+  local stored
+  stored=$(get_last_choice "${1}-last-provider" "${2:-}" "*")
+  if [[ -n "$stored" ]] && provider_is_valid "$stored"; then
+    printf '%s\n' "$stored"
+  else
+    printf '%s\n' "${2:-}"
+  fi
 }
 
 save_last_provider() {
@@ -337,27 +351,43 @@ _vertex_access_token() {
 }
 
 provider_display_name() {
-  case $1 in
-    vertex-gemini)    echo "Vertex AI (Gemini)" ;;
-    vertex-anthropic) echo "Vertex AI (Anthropic)" ;;
-    gemini-api)    echo "Gemini API" ;;
-    claude-code)   echo "Claude Code" ;;
-    anthropic-api) echo "Anthropic API" ;;
-    codex)         echo "Codex CLI" ;;
-    openai-api)    echo "OpenAI API" ;;
-    last)          echo "Reuse last message" ;;
+  local base="${1%%@*}" profile="" name=""
+  case $1 in *@*) profile="${1#*@}" ;; esac
+  case $base in
+    vertex-gemini)    name="Vertex AI (Gemini)" ;;
+    vertex-anthropic) name="Vertex AI (Anthropic)" ;;
+    gemini-api)    name="Gemini API" ;;
+    claude-code)   name="Claude Code" ;;
+    anthropic-api) name="Anthropic API" ;;
+    codex)         name="Codex CLI" ;;
+    openai-api)    name="OpenAI API" ;;
+    last)          name="Reuse last message" ;;
+    *) return 0 ;;
   esac
+  if [[ -n "$profile" ]]; then
+    printf '%s [%s]\n' "$name" "$profile"
+  else
+    printf '%s\n' "$name"
+  fi
 }
 
 provider_is_valid() {
+  # Profile-qualified tokens (base@profile) are only valid for vertex providers,
+  # which are the only ones that read per-profile account/project config.
   case $1 in
+    *@*)
+      case ${1%%@*} in
+        vertex-gemini|vertex-anthropic) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
     vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api|last) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 provider_family() {
-  case $1 in
+  case ${1%%@*} in
     vertex-gemini|gemini-api) printf '%s\n' "gemini" ;;
     vertex-anthropic|claude-code|anthropic-api) printf '%s\n' "claude" ;;
     codex|openai-api) printf '%s\n' "openai" ;;
@@ -387,7 +417,7 @@ models_for_family() {
 }
 
 models_for_provider() {
-  case $1 in
+  case ${1%%@*} in
     vertex-gemini)
       models_for_family gemini
       ;;
@@ -860,10 +890,13 @@ run_provider() {
   local input="$4"
   local selected_model="${5:-}"
   local output
-  local model
+  local model provider_base_name
+  # A provider may be profile-qualified (base@profile); dispatch on the base,
+  # but look up account/project config under the full token (= section name).
+  provider_base_name="${provider%%@*}"
   model=$(resolve_model "$tool_name" "$provider" "$selected_model")
 
-  case $provider in
+  case $provider_base_name in
     claude-code)
       command -v claude >/dev/null 2>&1 ||
         die "Claude Code auth requires the Claude Code CLI. See: https://claude.ai/code"
@@ -906,7 +939,7 @@ run_provider() {
         echo "git-ai: Vertex ADC · project ${vertex_project} (${vertex_region})" >&2
       fi
 
-      if [[ "$provider" == "vertex-anthropic" ]]; then
+      if [[ "$provider_base_name" == "vertex-anthropic" ]]; then
         _run_vertex_anthropic_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account" | strip_fences
       else
         _run_vertex_gemini_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account" | strip_fences
