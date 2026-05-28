@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.0](https://github.com/Waxmard/git-ai/compare/v6.0.1...v6.1.0) (2026-05-28)
+
+
+### Features
+
+* replace interactive PR diff output with markdown summary ([#55](https://github.com/Waxmard/git-ai/issues/55)) ([bb80127](https://github.com/Waxmard/git-ai/commit/bb80127bf6a442c7e7546e054622ab8e6c20df92))
+
 ## [6.0.1](https://github.com/Waxmard/git-ai/compare/v6.0.0...v6.0.1) (2026-05-14)
 
 
