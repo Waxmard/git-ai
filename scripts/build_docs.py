@@ -63,6 +63,9 @@ def render(template: str) -> str:
 def main(argv: list[str]) -> int:
     if argv == ["--write"]:
         for template, outputs in TEMPLATES.items():
+            if not (SRC / template).exists():
+                print(f"skipping {template} (source not present)")
+                continue
             rendered = render(template)
             for out in outputs:
                 (REPO_ROOT / out).write_text(rendered, encoding="utf-8")
@@ -72,6 +75,9 @@ def main(argv: list[str]) -> int:
     if argv == ["--check"]:
         stale: list[str] = []
         for template, outputs in TEMPLATES.items():
+            if not (SRC / template).exists():
+                print(f"skipping {template} (source not present)")
+                continue
             rendered = render(template)
             for out in outputs:
                 path = REPO_ROOT / out
