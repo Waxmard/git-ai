@@ -56,10 +56,10 @@ class Analysis:
 def _parse_commits(log: str) -> list[tuple[str, str, list[str]]]:
     entries: list[tuple[str, str, list[str]]] = []
     for block in log.split("\x1e"):
-        block = block.strip("\n")
-        if not block:
+        stripped = block.strip("\n")
+        if not stripped:
             continue
-        lines = block.splitlines()
+        lines = stripped.splitlines()
         subject = lines[0]
         body = [ln for ln in lines[1:] if ln]
         m = _TYPE_RE.match(subject)

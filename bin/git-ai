@@ -209,6 +209,21 @@ cmd_pr() {
         MODEL="${1#*:}"
         shift
         ;;
+      vertex-gemini@*|vertex-anthropic@*)
+        # Profile-qualified vertex provider, optionally with :model appended.
+        if [[ "$1" == *:* ]]; then
+          PROVIDER="${1%%:*}"
+          MODEL="${1#*:}"
+          shift
+        else
+          PROVIDER="$1"
+          shift
+          if [[ -n "${1:-}" && "$1" != --* ]]; then
+            MODEL="$1"
+            shift
+          fi
+        fi
+        ;;
       *)
         die "unknown argument: $1"
         ;;

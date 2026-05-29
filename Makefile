@@ -3,11 +3,14 @@ BATS := node_modules/.bin/bats
 UV ?= uv
 export UV_CACHE_DIR := .uv-cache
 
-.PHONY: install uninstall lint test hooks sync py-format py-lint py-type-check py-test
+# Parallel BATS jobs: default to the machine's core count (GNU parallel/rush required).
+BATS_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+
+.PHONY: install uninstall lint test hooks sync py-format py-lint py-type-check py-test docs-build docs-check
 
 test: $(BATS)
 	@if command -v parallel >/dev/null 2>&1 || command -v rush >/dev/null 2>&1; then \
-		$(BATS) --jobs 4 --recursive test/; \
+		$(BATS) --jobs $(BATS_JOBS) --recursive test/; \
 	else \
 		$(BATS) --recursive test/; \
 	fi
@@ -46,14 +49,21 @@ sync:
 	$(UV) sync
 
 py-format:
-	$(UV) run ruff check python/ --fix --select F401,I
-	$(UV) run ruff format python/
+	$(UV) run ruff check python/ test/python --fix --select F401,I
+	$(UV) run ruff format python/ test/python
 
 py-lint:
-	$(UV) run ruff check python/
+	$(UV) run ruff check python/ test/python
 
 py-type-check:
 	$(UV) run mypy python/git_ai test/python
 
 py-test:
 	$(UV) run pytest
+
+# Docs (generated from docs/src/ — stdlib python3, no deps)
+docs-build:
+	python3 scripts/build_docs.py --write
+
+docs-check:
+	python3 scripts/build_docs.py --check

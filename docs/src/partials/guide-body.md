@@ -1,12 +1,6 @@
-<!-- Generated from docs/src/AGENTS.md by scripts/build_docs.py. Run `make docs-build` to regenerate. Do not edit directly. -->
-
-# AGENTS.md
-
-This file provides guidance to AI coding agents working in this repository.
-
 ## Overview
 
-git-ai provides LLM-powered git workflow tools (`git-ai commit`, `git-ai pr`) that generate commit messages and PR titles/bodies using your configured LLM provider (via its CLI or API). The Bash CLI has no runtime dependencies beyond system binaries and provider CLIs. The companion `waxmard-git-ai` Python package is **provider-agnostic** and ships with **zero runtime dependencies**: it owns prompt assembly, diff-stat derivation, fence-stripping, git helpers, and `.git/pr-cache` management, and never calls an LLM itself — consumers wire their own model call between `build_*_prompt` and `parse_*_response`.
+git-ai provides LLM-powered git workflow tools (`git-ai commit`, `git-ai pr`) that generate commit messages and PR titles/bodies using your configured LLM provider (via its CLI or API). The Bash CLI has no runtime dependencies beyond system binaries and provider CLIs. {{ include:partials/python-library.md }}
 
 ## Commands
 

@@ -7,8 +7,9 @@ import importlib
 import json
 import shlex
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, cast
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
@@ -111,7 +112,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     func = cast(Callable[[argparse.Namespace], int], args.func)
-    return func(args)
+    try:
+        return func(args)
+    except (RuntimeError, ValueError) as exc:
+        sys.stderr.write(f"git-ai: {exc}\n")
+        return 1
 
 
 if __name__ == "__main__":

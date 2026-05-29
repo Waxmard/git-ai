@@ -1,6 +1,6 @@
 """Tests for strip_fences — mirrors test/lib/strip_fences.bats."""
-import pytest
 
+import pytest
 from git_ai import strip_fences
 
 

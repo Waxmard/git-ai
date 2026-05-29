@@ -1,6 +1,6 @@
 """Tests that all prompt files are present and non-empty."""
-import pytest
 
+import pytest
 from git_ai._generate import _load_prompt
 
 PROMPT_FILES = [

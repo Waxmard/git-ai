@@ -9,3 +9,4 @@ __pycache__/
 .pytest_cache/
 .dmypy.json
 dist/
+docs/src/CLAUDE.md

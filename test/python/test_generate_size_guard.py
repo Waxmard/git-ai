@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from git_ai import build_commit_prompt, build_mr_prompt
 
 

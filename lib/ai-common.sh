@@ -132,6 +132,12 @@ get_last_choice() {
     local stored
     stored=$(<"$state_file")
     stored="${stored%"${stored##*[![:space:]]}"}"
+    # A "*" valid set accepts any stored value (caller validates separately —
+    # e.g. profile-qualified provider tokens that no static alternation lists).
+    if [[ "$valid" == "*" ]]; then
+      printf '%s\n' "$stored"
+      return 0
+    fi
     if [[ "|${valid}|" == *"|${stored}|"* ]]; then
       printf '%s\n' "$stored"
       return 0
@@ -149,7 +155,15 @@ save_last_choice() {
 }
 
 get_last_provider() {
-  get_last_choice "${1}-last-provider" "${2:-}" "vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api"
+  # Accept any stored token, then validate with provider_is_valid so that
+  # profile-qualified providers (e.g. vertex-anthropic@proj-a) round-trip.
+  local stored
+  stored=$(get_last_choice "${1}-last-provider" "${2:-}" "*")
+  if [[ -n "$stored" ]] && provider_is_valid "$stored"; then
+    printf '%s\n' "$stored"
+  else
+    printf '%s\n' "${2:-}"
+  fi
 }
 
 save_last_provider() {
@@ -314,33 +328,66 @@ _gemini_has_adc() {
   return 1
 }
 
+# _vertex_has_auth [ACCOUNT]
+# True when a Vertex access token can be minted for the given auth path. With
+# no ACCOUNT this is ADC-only (same guard as _gemini_has_adc); with an ACCOUNT
+# it validates the per-account user credential instead.
+_vertex_has_auth() {
+  [[ -n "$(_vertex_access_token "${1:-}")" ]]
+}
+
+# _vertex_access_token [ACCOUNT]
+# With no ACCOUNT, mint an Application Default Credentials token (honours
+# GOOGLE_APPLICATION_CREDENTIALS when exported). With ACCOUNT, mint a token for
+# that specific gcloud-authed user account, enabling multi-account setups.
 _vertex_access_token() {
   command -v gcloud >/dev/null 2>&1 || return 1
-  gcloud auth application-default print-access-token 2>/dev/null
+  local account="${1:-}"
+  if [[ -n "$account" ]]; then
+    gcloud auth print-access-token --account="$account" 2>/dev/null
+  else
+    gcloud auth application-default print-access-token 2>/dev/null
+  fi
 }
 
 provider_display_name() {
-  case $1 in
-    vertex-gemini)    echo "Vertex AI (Gemini)" ;;
-    vertex-anthropic) echo "Vertex AI (Anthropic)" ;;
-    gemini-api)    echo "Gemini API" ;;
-    claude-code)   echo "Claude Code" ;;
-    anthropic-api) echo "Anthropic API" ;;
-    codex)         echo "Codex CLI" ;;
-    openai-api)    echo "OpenAI API" ;;
-    last)          echo "Reuse last message" ;;
+  local base="${1%%@*}" profile="" name=""
+  case $1 in *@*) profile="${1#*@}" ;; esac
+  case $base in
+    vertex-gemini)    name="Vertex AI (Gemini)" ;;
+    vertex-anthropic) name="Vertex AI (Anthropic)" ;;
+    gemini-api)    name="Gemini API" ;;
+    claude-code)   name="Claude Code" ;;
+    anthropic-api) name="Anthropic API" ;;
+    codex)         name="Codex CLI" ;;
+    openai-api)    name="OpenAI API" ;;
+    last)          name="Reuse last message" ;;
+    *) return 0 ;;
   esac
+  if [[ -n "$profile" ]]; then
+    printf '%s [%s]\n' "$name" "$profile"
+  else
+    printf '%s\n' "$name"
+  fi
 }
 
 provider_is_valid() {
+  # Profile-qualified tokens (base@profile) are only valid for vertex providers,
+  # which are the only ones that read per-profile account/project config.
   case $1 in
+    *@*)
+      case ${1%%@*} in
+        vertex-gemini|vertex-anthropic) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
     vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api|last) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 provider_family() {
-  case $1 in
+  case ${1%%@*} in
     vertex-gemini|gemini-api) printf '%s\n' "gemini" ;;
     vertex-anthropic|claude-code|anthropic-api) printf '%s\n' "claude" ;;
     codex|openai-api) printf '%s\n' "openai" ;;
@@ -370,7 +417,7 @@ models_for_family() {
 }
 
 models_for_provider() {
-  case $1 in
+  case ${1%%@*} in
     vertex-gemini)
       models_for_family gemini
       ;;
@@ -465,12 +512,28 @@ user_options_path() {
 # combo. Empty sections drop that provider entirely. Unknown provider section
 # names are silently ignored. Custom model IDs (not in the shipped catalog)
 # are passed through as-is.
+#
+# A `projects =` list under a shared [vertex] section expands each base vertex
+# section (`[vertex-gemini]` / `[vertex-anthropic]`) into one profile per
+# project — `vertex-<x>@<project>:<model>` — so the cross product of providers
+# and projects need not be spelled out. Explicit `[vertex-<x>@<profile>]`
+# sections still emit directly and coexist (duplicates are dropped).
 parse_user_options() {
   local path
   path=$(user_options_path)
   [[ -r "$path" ]] || return 0
 
-  local line trimmed section=""
+  # Pull the shared [vertex] projects list (comma- or space-separated).
+  local -a vertex_projects=()
+  local proj_raw p
+  proj_raw=$(vertex_config_value "vertex" projects)
+  if [[ -n "$proj_raw" ]]; then
+    while IFS= read -r p || [[ -n "$p" ]]; do
+      [[ -n "$p" ]] && vertex_projects+=("$p")
+    done < <(printf '%s' "$proj_raw" | tr ', ' '\n')
+  fi
+
+  local line trimmed section="" value emitted=$'\n'
   while IFS= read -r line || [[ -n "$line" ]]; do
     # Strip inline # comment then surrounding whitespace.
     trimmed="${line%%#*}"
@@ -483,14 +546,113 @@ parse_user_options() {
       if provider_is_valid "$candidate" && [[ "$candidate" != "last" ]]; then
         section="$candidate"
       else
+        # Unrecognised headers (incl. the shared [vertex] section, which is not
+        # a valid provider on its own) clear `section`, so any model IDs listed
+        # under them are silently skipped — only their key=value lines (e.g.
+        # [vertex] projects=) are consumed, via vertex_config_value. A model put
+        # under [vertex] by mistake belongs under [vertex-gemini]/[vertex-anthropic].
         section=""
       fi
       continue
     fi
 
     [[ -n "$section" ]] || continue
-    printf '%s:%s\n' "$section" "$trimmed"
+    # key=value lines configure the section (e.g. vertex account/project) and
+    # are not model IDs — model IDs never contain '='. Skip them here.
+    [[ "$trimmed" == *=* ]] && continue
+
+    # Expand base vertex sections across the shared projects list; everything
+    # else (explicit @profiles, non-vertex providers) emits verbatim.
+    if [[ ${#vertex_projects[@]} -gt 0 \
+          && ( "$section" == "vertex-gemini" || "$section" == "vertex-anthropic" ) ]]; then
+      for p in "${vertex_projects[@]}"; do
+        value="${section}@${p}:${trimmed}"
+        case "$emitted" in *$'\n'"$value"$'\n'*) continue ;; esac
+        printf '%s\n' "$value"
+        emitted+="$value"$'\n'
+      done
+    else
+      value="${section}:${trimmed}"
+      case "$emitted" in *$'\n'"$value"$'\n'*) continue ;; esac
+      printf '%s\n' "$value"
+      emitted+="$value"$'\n'
+    fi
   done <"$path"
+}
+
+# vertex_config_value PROVIDER KEY
+# Emit the value of a key=value line under the given provider's section in the
+# user options file. Recognised keys: project, projects, region, account,
+# credentials. (`projects` is the comma/space-separated list read from the
+# shared [vertex] section to expand profiles; see parse_user_options.)
+# A leading '~/' in the value is expanded to $HOME. Prints nothing (and returns
+# 0) when the file, section, or key is absent.
+vertex_config_value() {
+  local want_provider="$1" want_key="$2"
+  local path
+  path=$(user_options_path)
+  [[ -r "$path" ]] || return 0
+
+  local line trimmed section="" key val
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="${line%%#*}"
+    trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [[ -n "$trimmed" ]] || continue
+
+    if [[ "$trimmed" =~ ^\[([^][]+)\]$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    [[ "$section" == "$want_provider" ]] || continue
+    [[ "$trimmed" == *=* ]] || continue
+    key="${trimmed%%=*}"
+    val="${trimmed#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    if [[ "$key" == "$want_key" ]]; then
+      # Match a literal leading '~/' and expand it ourselves; the tilde is data
+      # here, not a path to be shell-expanded.
+      # shellcheck disable=SC2088
+      [[ "$val" == "~/"* ]] && val="${HOME}/${val#\~/}"
+      printf '%s\n' "$val"
+      return 0
+    fi
+  done <"$path"
+  return 0
+}
+
+# vertex_resolve TOKEN KEY
+# Resolve a vertex setting for a (possibly profile-qualified) provider TOKEN,
+# layering most-specific first: the explicit [base@profile] section, then the
+# base [base] section, then the shared [vertex] section. For KEY=project with
+# no value found, the profile name is used as the project id (so the profile
+# name is the project unless overridden). Prints nothing when unresolved.
+vertex_resolve() {
+  local token="$1" key="$2"
+  local base="${token%%@*}" profile="" val
+  case "$token" in *@*) profile="${token#*@}" ;; esac
+
+  val=$(vertex_config_value "$token" "$key")
+  [[ -n "$val" ]] && { printf '%s\n' "$val"; return 0; }
+
+  if [[ -n "$profile" ]]; then
+    val=$(vertex_config_value "$base" "$key")
+    [[ -n "$val" ]] && { printf '%s\n' "$val"; return 0; }
+  fi
+
+  val=$(vertex_config_value "vertex" "$key")
+  [[ -n "$val" ]] && { printf '%s\n' "$val"; return 0; }
+
+  # The profile name doubles as the project id when none is configured.
+  if [[ "$key" == "project" && -n "$profile" ]]; then
+    printf '%s\n' "$profile"
+    return 0
+  fi
+  return 0
 }
 
 # list_options TOOL
@@ -624,13 +786,17 @@ resolve_model() {
   local model="${3:-}"
 
   if [[ -n "$model" ]]; then
-    if models_for_provider "$provider" | grep -Fxq "$model"; then
+    # Read grep's input via process substitution rather than a pipe: with
+    # `set -o pipefail`, `producer | grep -q` returns 141 (SIGPIPE) whenever
+    # grep matches and exits before the producer finishes writing, which would
+    # make a real match look like a failure.
+    if grep -Fxq "$model" < <(models_for_provider "$provider"); then
       printf '%s\n' "$model"
       return
     fi
     # Permit custom model IDs declared in the user options file — this lets
     # the config add future model IDs without a git-ai release.
-    if parse_user_options | grep -Fxq "${provider}:${model}"; then
+    if grep -Fxq "${provider}:${model}" < <(parse_user_options); then
       printf '%s\n' "$model"
       return
     fi
@@ -671,10 +837,10 @@ _vertex_endpoint() {
 }
 
 _run_vertex_anthropic_api() {
-  local model="$1" prompt="$2" input="$3" project="$4" region="$5"
+  local model="$1" prompt="$2" input="$3" project="$4" region="$5" account="${6:-}"
   local token body url curl_cfg response
-  token=$(_vertex_access_token) ||
-    die "Vertex auth: gcloud auth application-default print-access-token failed."
+  token=$(_vertex_access_token "$account") ||
+    die "Vertex auth: gcloud print-access-token failed."
   body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
 import json, os
 print(json.dumps({
@@ -685,6 +851,7 @@ print(json.dumps({
 }))') || die "Failed to build Vertex Anthropic request"
   url=$(_vertex_endpoint "$project" "$region" "anthropic" "$model" "rawPredict")
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  trap 'rm -f "$curl_cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
   response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" -d "$body" "$url")
   local curl_status=$?
@@ -698,10 +865,10 @@ print(data["content"][0]["text"])
 }
 
 _run_vertex_gemini_api() {
-  local model="$1" prompt="$2" input="$3" project="$4" region="$5"
+  local model="$1" prompt="$2" input="$3" project="$4" region="$5" account="${6:-}"
   local token body url curl_cfg response
-  token=$(_vertex_access_token) ||
-    die "Vertex auth: gcloud auth application-default print-access-token failed."
+  token=$(_vertex_access_token "$account") ||
+    die "Vertex auth: gcloud print-access-token failed."
   body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
 import json, os
 print(json.dumps({
@@ -710,6 +877,7 @@ print(json.dumps({
 }))') || die "Failed to build Vertex Gemini request"
   url=$(_vertex_endpoint "$project" "$region" "google" "$model" "generateContent")
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  trap 'rm -f "$curl_cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
   response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" -d "$body" "$url")
   local curl_status=$?
@@ -738,6 +906,7 @@ print(json.dumps({
 }))
 ') || die "Failed to build Anthropic API request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  trap 'rm -f "$curl_cfg"' EXIT
   printf 'header = "x-api-key: %s"\n' "$ANTHROPIC_API_KEY" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
@@ -772,6 +941,7 @@ print(json.dumps({
 }))
 ') || die "Failed to build OpenAI API request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  trap 'rm -f "$curl_cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$OPENAI_API_KEY" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
@@ -797,10 +967,13 @@ run_provider() {
   local input="$4"
   local selected_model="${5:-}"
   local output
-  local model
+  local model provider_base_name
+  # A provider may be profile-qualified (base@profile); dispatch on the base,
+  # but look up account/project config under the full token (= section name).
+  provider_base_name="${provider%%@*}"
   model=$(resolve_model "$tool_name" "$provider" "$selected_model")
 
-  case $provider in
+  case $provider_base_name in
     claude-code)
       command -v claude >/dev/null 2>&1 ||
         die "Claude Code auth requires the Claude Code CLI. See: https://claude.ai/code"
@@ -815,17 +988,38 @@ run_provider() {
       ;;
     vertex-gemini|vertex-anthropic)
       load_google_env
-      _gemini_has_adc ||
-        die "Vertex auth not found. Configure gcloud ADC or GOOGLE_APPLICATION_CREDENTIALS."
-      local vertex_project vertex_region
-      vertex_project="${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}"
-      vertex_region="${VERTEX_LOCATION:-${GOOGLE_VERTEX_LOCATION:-${GOOGLE_CLOUD_LOCATION:-us-central1}}}"
+      # Per-provider account config (options.conf) overrides env. account=
+      # selects a gcloud user credential; credentials= points ADC at a
+      # service-account JSON. Both are optional — absent both, plain ADC is used.
+      local vertex_project vertex_region vertex_account vertex_creds
+      vertex_account=$(vertex_resolve "$provider" account)
+      vertex_creds=$(vertex_resolve "$provider" credentials)
+      vertex_project=$(vertex_resolve "$provider" project)
+      vertex_project="${vertex_project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
+      vertex_region=$(vertex_resolve "$provider" region)
+      vertex_region="${vertex_region:-${VERTEX_LOCATION:-${GOOGLE_VERTEX_LOCATION:-${GOOGLE_CLOUD_LOCATION:-us-central1}}}}"
+
+      if [[ -n "$vertex_creds" ]]; then
+        export GOOGLE_APPLICATION_CREDENTIALS="$vertex_creds"
+      fi
+
+      _vertex_has_auth "$vertex_account" ||
+        die "Vertex auth not found. Configure gcloud ADC, set account=/credentials= under [$provider] in options.conf, or GOOGLE_APPLICATION_CREDENTIALS."
       [[ -n "$vertex_project" ]] ||
-        die "Vertex auth requires GOOGLE_CLOUD_PROJECT or GOOGLE_VERTEX_PROJECT."
-      if [[ "$provider" == "vertex-anthropic" ]]; then
-        _run_vertex_anthropic_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" | strip_fences
+        die "Vertex auth requires a project (set project= under [$provider] in options.conf, or GOOGLE_CLOUD_PROJECT/GOOGLE_VERTEX_PROJECT)."
+
+      if [[ -n "$vertex_account" ]]; then
+        echo "git-ai: Vertex account ${vertex_account} · project ${vertex_project} (${vertex_region})" >&2
+      elif [[ -n "$vertex_creds" ]]; then
+        echo "git-ai: Vertex credentials ${vertex_creds} · project ${vertex_project} (${vertex_region})" >&2
       else
-        _run_vertex_gemini_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" | strip_fences
+        echo "git-ai: Vertex ADC · project ${vertex_project} (${vertex_region})" >&2
+      fi
+
+      if [[ "$provider_base_name" == "vertex-anthropic" ]]; then
+        _run_vertex_anthropic_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account" | strip_fences
+      else
+        _run_vertex_gemini_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account" | strip_fences
       fi
       ;;
     gemini-api)
