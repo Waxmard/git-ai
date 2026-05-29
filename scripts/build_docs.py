@@ -40,17 +40,17 @@ def _header(template: str) -> str:
     )
 
 
+def _sub(match: re.Match[str]) -> str:
+    partial = (SRC / match.group(1)).read_text(encoding="utf-8")
+    return partial.strip()
+
+
 def render(template: str) -> str:
     """Expand a template's include directives, resolving nested includes."""
     text = (SRC / template).read_text(encoding="utf-8")
     for _ in range(MAX_PASSES):
         if not INCLUDE_RE.search(text):
             break
-
-        def _sub(match: re.Match[str]) -> str:
-            partial = (SRC / match.group(1)).read_text(encoding="utf-8")
-            return partial.strip()
-
         text = INCLUDE_RE.sub(_sub, text)
     else:
         raise SystemExit(

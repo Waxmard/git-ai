@@ -546,6 +546,11 @@ parse_user_options() {
       if provider_is_valid "$candidate" && [[ "$candidate" != "last" ]]; then
         section="$candidate"
       else
+        # Unrecognised headers (incl. the shared [vertex] section, which is not
+        # a valid provider on its own) clear `section`, so any model IDs listed
+        # under them are silently skipped — only their key=value lines (e.g.
+        # [vertex] projects=) are consumed, via vertex_config_value. A model put
+        # under [vertex] by mistake belongs under [vertex-gemini]/[vertex-anthropic].
         section=""
       fi
       continue
@@ -577,7 +582,9 @@ parse_user_options() {
 
 # vertex_config_value PROVIDER KEY
 # Emit the value of a key=value line under the given provider's section in the
-# user options file. Recognised keys: project, region, account, credentials.
+# user options file. Recognised keys: project, projects, region, account,
+# credentials. (`projects` is the comma/space-separated list read from the
+# shared [vertex] section to expand profiles; see parse_user_options.)
 # A leading '~/' in the value is expanded to $HOME. Prints nothing (and returns
 # 0) when the file, section, or key is absent.
 vertex_config_value() {
@@ -844,6 +851,7 @@ print(json.dumps({
 }))') || die "Failed to build Vertex Anthropic request"
   url=$(_vertex_endpoint "$project" "$region" "anthropic" "$model" "rawPredict")
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  trap 'rm -f "$curl_cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
   response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" -d "$body" "$url")
   local curl_status=$?
@@ -869,6 +877,7 @@ print(json.dumps({
 }))') || die "Failed to build Vertex Gemini request"
   url=$(_vertex_endpoint "$project" "$region" "google" "$model" "generateContent")
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  trap 'rm -f "$curl_cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
   response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" -d "$body" "$url")
   local curl_status=$?
@@ -897,6 +906,7 @@ print(json.dumps({
 }))
 ') || die "Failed to build Anthropic API request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  trap 'rm -f "$curl_cfg"' EXIT
   printf 'header = "x-api-key: %s"\n' "$ANTHROPIC_API_KEY" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
@@ -931,6 +941,7 @@ print(json.dumps({
 }))
 ') || die "Failed to build OpenAI API request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  trap 'rm -f "$curl_cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$OPENAI_API_KEY" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
