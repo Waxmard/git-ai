@@ -159,24 +159,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("updated", help="Path to updated PR text")
     args = parser.parse_args(argv)
 
-    existing = Path(args.existing).read_text(encoding="utf-8")
-    updated = Path(args.updated).read_text(encoding="utf-8")
+    try:
+        existing = Path(args.existing).read_text(encoding="utf-8")
+        updated = Path(args.updated).read_text(encoding="utf-8")
 
-    # No prior draft or non-interactive stdout: emit the updated text verbatim.
-    if not existing.strip() or not _is_interactive():
+        # No prior draft or non-interactive stdout: emit updated text verbatim.
+        if not existing.strip() or not _is_interactive():
+            sys.stdout.write(updated)
+            return 0
+
+        if existing == updated:
+            sys.stderr.write(
+                "git-ai: regenerated PR is unchanged; no changes to show\n"
+            )
+            sys.stdout.write(updated)
+            return 0
+
+        summary = summarize_pr_changes(existing, updated)
+        if summary:
+            sys.stdout.write(summary + "\n---\n\n")
         sys.stdout.write(updated)
         return 0
-
-    if existing == updated:
-        sys.stderr.write("git-ai: regenerated PR is unchanged; no changes to show\n")
-        sys.stdout.write(updated)
-        return 0
-
-    summary = summarize_pr_changes(existing, updated)
-    if summary:
-        sys.stdout.write(summary + "\n---\n\n")
-    sys.stdout.write(updated)
-    return 0
+    except (RuntimeError, ValueError, OSError) as exc:
+        sys.stderr.write(f"git-ai: {exc}\n")
+        return 1
 
 
 if __name__ == "__main__":
