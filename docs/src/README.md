@@ -1,5 +1,3 @@
-<!-- Generated from docs/src/README.md by scripts/build_docs.py. Run `make docs-build` to regenerate. Do not edit directly. -->
-
 # git-ai
 
 LLM-powered git workflow tools. Generate commit messages and PR titles using explicit auth methods and model IDs from the CLI, Lazygit, and other git environments that expose normal Git state.
@@ -120,7 +118,7 @@ pip install waxmard-git-ai
 # or: uv add waxmard-git-ai
 ```
 
-The companion `waxmard-git-ai` Python package is **provider-agnostic** and ships with **zero runtime dependencies**: it owns prompt assembly, diff-stat derivation, fence-stripping, git helpers, and `.git/pr-cache` management, and never calls an LLM itself — consumers wire their own model call between `build_*_prompt` and `parse_*_response`. Bring your own Claude / Gemini / OpenAI / ADK / anything — sync or async.
+{{ include:partials/python-library.md }} Bring your own Claude / Gemini / OpenAI / ADK / anything — sync or async.
 
 **Commit message** (data-mode):
 

@@ -18,3 +18,7 @@ pre-commit:
         uv run dmypy run -- python/git_ai test/python
         make py-test
       stage_fixed: true
+
+    docs:
+      glob: "{docs/src/**,scripts/build_docs.py,README.md,CLAUDE.md,AGENTS.md}"
+      run: make docs-check

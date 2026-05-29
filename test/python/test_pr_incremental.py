@@ -6,7 +6,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from git_ai import (
     build_mr_prompt,
     get_git_dir,
@@ -327,3 +326,25 @@ def test_prepare_repo_pr_context_non_ancestor_cached_sha_falls_back(
     assert ctx.input_base == "main"
     assert ctx.no_changes is False
     assert "feat: add first" in ctx.commit_log
+
+
+def test_prepare_repo_pr_context_raises_on_missing_base_branch(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+
+    with pytest.raises(RuntimeError, match="base branch 'dev' not found"):
+        prepare_repo_pr_context(repo, base_branch="dev")
+
+
+def test_prepare_repo_pr_context_missing_base_hints_remote_fallback(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    head_sha = _commit(repo, "one.txt", "one\n", "feat: add first")
+    # Simulate a fetched-but-not-checked-out default branch: only origin/dev exists.
+    _git(repo, "update-ref", "refs/remotes/origin/dev", head_sha)
+
+    with pytest.raises(RuntimeError, match="origin/dev"):
+        prepare_repo_pr_context(repo, base_branch="dev")

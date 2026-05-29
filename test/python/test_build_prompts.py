@@ -1,8 +1,8 @@
 """Tests for prompt builders, response parsers, and diff helpers."""
+
 from __future__ import annotations
 
 import pytest
-
 from git_ai import (
     build_commit_prompt,
     build_mr_prompt,
@@ -50,10 +50,7 @@ def test_format_commit_log_subjects_only() -> None:
 def test_format_commit_log_with_bodies() -> None:
     log = format_commit_log([("feat: a", "body line 1\nbody line 2"), ("fix: b", "")])
     assert log == (
-        "GITAI_COMMIT feat: a\n"
-        "body line 1\n"
-        "body line 2\n"
-        "GITAI_COMMIT fix: b\n"
+        "GITAI_COMMIT feat: a\nbody line 1\nbody line 2\nGITAI_COMMIT fix: b\n"
     )
 
 
@@ -71,9 +68,7 @@ def test_derive_diff_stat_counts_per_file() -> None:
     lines = stat.splitlines()
     assert any("foo.py" in line and " 3 " in line for line in lines[:-1])
     assert any("bar.md" in line and " 3 " in line for line in lines[:-1])
-    assert (
-        lines[-1] == " 2 files changed, 4 insertions(+), 2 deletions(-)"
-    )
+    assert lines[-1] == " 2 files changed, 4 insertions(+), 2 deletions(-)"
 
 
 def test_derive_diff_stat_binary_file() -> None:
@@ -173,10 +168,7 @@ _CONVENTIONAL_LOG = (
     "GITAI_COMMIT chore: bump deps\n"
 )
 
-_NON_CONVENTIONAL_LOG = (
-    "GITAI_COMMIT WIP: half done\n"
-    "GITAI_COMMIT random update\n"
-)
+_NON_CONVENTIONAL_LOG = "GITAI_COMMIT WIP: half done\nGITAI_COMMIT random update\n"
 
 
 def test_build_mr_prompt_returns_non_empty_pair() -> None:

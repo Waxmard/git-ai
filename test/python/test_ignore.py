@@ -29,7 +29,7 @@ def test_default_excludes_match_shared_file() -> None:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     )
-    assert DEFAULT_EXCLUDES == expected
+    assert expected == DEFAULT_EXCLUDES
 
 
 def test_load_returns_defaults_when_no_ignore_file(tmp_path: Path) -> None:

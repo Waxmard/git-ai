@@ -13,8 +13,9 @@ make_test_repo() {
   local repo
   repo="$(mktemp -d)"
   git -C "$repo" init -q
-  git -C "$repo" config user.email "test@test.com"
-  git -C "$repo" config user.name "Test"
+  # Append the identity directly to .git/config instead of two `git config`
+  # subprocesses — persists for later commits the same as `git config` would.
+  printf '[user]\n\temail = test@test.com\n\tname = Test\n' >>"$repo/.git/config"
   # Need at least one commit so git rev-parse --git-dir works reliably
   git -C "$repo" commit -q --allow-empty -m "init"
   printf '%s' "$repo"

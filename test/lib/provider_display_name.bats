@@ -59,3 +59,9 @@ setup() {
   assert_success
   assert_output ""
 }
+
+@test "provider_display_name: profile-qualified token is labelled with [profile]" {
+  run provider_display_name "vertex-anthropic@acme"
+  assert_success
+  assert_output "Vertex AI (Anthropic) [acme]"
+}
