@@ -164,6 +164,20 @@ def prepare_repo_pr_context(
     ):
         input_base = cached_sha
 
+    if input_base == base_branch and not git_ref_exists(repo_path, base_branch):
+        remote_ref = f"origin/{base_branch}"
+        if git_ref_exists(repo_path, remote_ref):
+            hint = (
+                f" It exists as {remote_ref!r} but is not checked out locally —"
+                f" run `git fetch origin {base_branch}:{base_branch}` or pass"
+                f" `--base {remote_ref}`."
+            )
+        else:
+            hint = ""
+        raise RuntimeError(
+            f"base branch {base_branch!r} not found in this repository.{hint}"
+        )
+
     commit_log = get_commit_log(repo_path, input_base)
     if input_base != base_branch and effective_existing and not commit_log.strip():
         return RepoPrContext(
