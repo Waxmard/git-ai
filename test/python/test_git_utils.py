@@ -4,8 +4,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-from git_ai import get_diff, get_diff_stat, get_staged_diff
+from git_ai import (
+    get_branch_commit_subjects,
+    get_default_branch,
+    get_diff,
+    get_diff_stat,
+    get_git_dir,
+    get_staged_diff,
+    resolve_commit_base,
+)
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
+from git_ai._pr_incremental import branch_cache_dir
 
 # ---------------------------------------------------------------------------
 # count_conventional_commits
@@ -346,3 +355,96 @@ def test_get_diff_stat_excludes_default_lockfiles(tmp_path: Path) -> None:
 
     assert "app.py" in stat
     assert "package-lock.json" not in stat
+
+
+# ---------------------------------------------------------------------------
+# branch-aware commit base resolution
+# ---------------------------------------------------------------------------
+
+
+def _checkout(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "checkout", *args], cwd=repo, check=True)
+
+
+def test_get_default_branch_none_without_origin(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "i"], cwd=repo, check=True)
+
+    assert get_default_branch(repo) is None
+
+
+def test_resolve_commit_base_returns_main_on_feature_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+    _commit_files(repo, {"b.py": "2\n"}, "test: b")
+
+    assert resolve_commit_base(repo) == "main"
+
+    subjects = get_branch_commit_subjects(repo, "main")
+    assert subjects.splitlines() == ["test: b", "feat: a"]
+
+
+def test_resolve_commit_base_none_on_base_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+
+    # HEAD is main itself — no commits ahead of any candidate base.
+    assert resolve_commit_base(repo) is None
+
+
+def test_resolve_commit_base_picks_closest_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "dev")
+    _commit_files(repo, {"d.py": "d\n"}, "feat: dev work")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.py": "f\n"}, "feat: feature work")
+
+    # main..HEAD = 2 commits, dev..HEAD = 1 — dev is the closer (real) base.
+    assert resolve_commit_base(repo) == "dev"
+
+
+def test_resolve_commit_base_honors_override(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+
+    assert resolve_commit_base(repo, override="HEAD~1") == "HEAD~1"
+
+
+def test_resolve_commit_base_prefers_pr_cache_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    # dev and main point at the same commit, so closest-base ties and main wins.
+    subprocess.run(["git", "branch", "dev"], cwd=repo, check=True)
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+
+    git_dir = get_git_dir(repo)
+    # Simulate a prior `git-ai pr --base dev` on this branch.
+    branch_cache_dir(git_dir, "feature", "dev").mkdir(parents=True)
+
+    assert resolve_commit_base(repo, git_dir=git_dir, branch="feature") == "dev"

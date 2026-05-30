@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ._ignore import load_ignore_patterns, to_pathspec_args
@@ -204,6 +204,191 @@ def get_mr_release_context(repo_path: str | Path) -> str:
         f"Release context: current version {last_tag},"
         f" {commits_since} commits since last release{semver_context}"
     )
+
+
+_BASE_CANDIDATE_NAMES = ("main", "master", "dev")
+
+
+def _load_branch_cache_dir() -> Callable[..., Path]:
+    """Lazily import branch_cache_dir, avoiding a circular import at module load."""
+    if __package__ in (None, ""):
+        import importlib  # noqa: PLC0415
+
+        return cast(
+            "Callable[..., Path]",
+            importlib.import_module("_pr_incremental").branch_cache_dir,
+        )
+    from ._pr_incremental import branch_cache_dir  # noqa: PLC0415
+
+    return branch_cache_dir
+
+
+def get_default_branch(repo_path: str | Path) -> str | None:
+    """Return the remote's default branch name (origin/HEAD), or None.
+
+    Strips the ``origin/`` prefix so the result is a bare branch name such as
+    ``main`` or ``dev``.
+    """
+    result = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        name = result.stdout.strip()
+        if name:
+            return name.removeprefix("origin/")
+    return None
+
+
+def _best_base_ref(repo_path: str | Path, name: str) -> str | None:
+    """Resolve a base name to a usable ref, preferring the remote-tracking copy."""
+    for ref in (f"origin/{name}", name):
+        if git_ref_exists(repo_path, ref):
+            return ref
+    return None
+
+
+def _candidate_base_names(repo_path: str | Path) -> list[str]:
+    """Ordered, de-duped base candidates: default branch first, then conventions."""
+    names: list[str] = []
+    default = get_default_branch(repo_path)
+    if default:
+        names.append(default)
+    for name in _BASE_CANDIDATE_NAMES:
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def _commits_ahead(repo_path: str | Path, base_ref: str) -> int | None:
+    """Count commits on HEAD not reachable from base_ref. None on git failure."""
+    result = subprocess.run(
+        ["git", "rev-list", "--count", f"{base_ref}..HEAD"],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _base_name_from_pr_cache(
+    git_dir: str | Path | None, branch: str | None, names: list[str]
+) -> str | None:
+    """Return the most-recent candidate base the user drafted a PR against.
+
+    git-ai's PR cache lives under ``<git-dir>/pr-cache/<hash(branch+base)>/``;
+    the base is not stored, so we probe each candidate's cache dir and pick the
+    most recently written match. Reflects an explicit ``git-ai pr`` choice.
+    """
+    if not git_dir or not branch:
+        return None
+    branch_cache_dir = _load_branch_cache_dir()
+    best: tuple[float, str] | None = None
+    for name in names:
+        cache_dir = branch_cache_dir(git_dir, branch, name)
+        try:
+            mtime = cache_dir.stat().st_mtime
+        except OSError:
+            continue
+        if cache_dir.is_dir() and (best is None or mtime > best[0]):
+            best = (mtime, name)
+    return best[1] if best else None
+
+
+def resolve_commit_base(
+    repo_path: str | Path,
+    *,
+    override: str | None = None,
+    git_dir: str | Path | None = None,
+    branch: str | None = None,
+) -> str | None:
+    """Resolve the ref to compare the current branch against for commit context.
+
+    Local-only cascade, first hit wins:
+
+    1. ``override`` (e.g. ``--base`` / ``GIT_AI_COMMIT_BASE``)
+    2. the base the user last drafted a PR against (git-ai PR cache)
+    3. the closest base by commits-ahead among default/main/master/dev
+    4. ``None`` when HEAD has no commits ahead of any candidate — i.e. the
+       commit is on the base branch itself, detached at base, or the base is
+       unresolvable; callers should then omit branch context entirely.
+    """
+    if override:
+        ref = _best_base_ref(repo_path, override)
+        if ref is None and git_ref_exists(repo_path, override):
+            ref = override
+        return ref
+
+    names = _candidate_base_names(repo_path)
+
+    cached = _base_name_from_pr_cache(git_dir, branch, names)
+    if cached:
+        ref = _best_base_ref(repo_path, cached)
+        if ref and (_commits_ahead(repo_path, ref) or 0) > 0:
+            return ref
+
+    best_ref: str | None = None
+    best_count: int | None = None
+    for name in names:
+        ref = _best_base_ref(repo_path, name)
+        if ref is None:
+            continue
+        count = _commits_ahead(repo_path, ref)
+        if count is None or count == 0:
+            continue
+        if best_count is None or count < best_count:
+            best_ref = ref
+            best_count = count
+    return best_ref
+
+
+def get_branch_commit_subjects(
+    repo_path: str | Path, base_ref: str, *, limit: int = 30
+) -> str:
+    """Return up to ``limit`` non-merge commit subjects on HEAD since base_ref."""
+    return _git(
+        repo_path,
+        "log",
+        "--no-merges",
+        "--pretty=%s",
+        f"-n{limit}",
+        f"{base_ref}..HEAD",
+    ).strip()
+
+
+def format_branch_context(
+    *,
+    branch_name: str | None = None,
+    branch_commits: str | None = None,
+    branch_diffstat: str | None = None,
+) -> str:
+    """Assemble the optional branch-context block for a commit prompt.
+
+    Each tag is emitted only when its value is non-empty, so a fresh branch
+    (no commits yet) or a commit made directly on the base branch yields an
+    empty string. Returns the block without surrounding blank lines.
+    """
+    segments: list[str] = []
+    if branch_name and branch_name.strip():
+        segments.append(f"<branch>{branch_name.strip()}</branch>")
+    if branch_commits and branch_commits.strip():
+        segments.append(
+            f"<branch_commits>\n{branch_commits.strip()}\n</branch_commits>"
+        )
+    if branch_diffstat and branch_diffstat.strip():
+        segments.append(
+            f"<branch_diffstat>\n{branch_diffstat.strip()}\n</branch_diffstat>"
+        )
+    return "\n".join(segments)
 
 
 def get_commit_log(repo_path: str | Path, base_branch: str) -> str:

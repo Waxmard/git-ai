@@ -100,7 +100,22 @@ render_pr_output() {
 # ---------------------------------------------------------------------------
 
 cmd_commit() {
-  local PROVIDER MODEL
+  local PROVIDER MODEL BASE=""
+  local -a rest=()
+  # Pull --base out of the args; everything else stays positional.
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --base)
+        BASE="$2"
+        shift 2
+        ;;
+      *)
+        rest+=("$1")
+        shift
+        ;;
+    esac
+  done
+  set -- ${rest[@]+"${rest[@]}"}
   PROVIDER="${1:-}"
   MODEL="${2:-}"
   # Accept single-arg "provider:model" form (used by the lazygit fzf flow).
@@ -163,7 +178,21 @@ cmd_commit() {
     RELEASE_CONTEXT="Release context: no release tags found — treat all changes as unreleased"
   fi
 
-  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"$'\n\n'"<diff>
+  # Best-effort branch context so the prefix is chosen from the perspective of
+  # the whole branch. Never blocks a commit: failures yield an empty block.
+  local BRANCH_CONTEXT
+  local -a bc_cmd=(
+    "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_commit_cli.py"
+    branch-context --repo "$REPO_ROOT"
+  )
+  [[ -n "$BASE" ]] && bc_cmd+=(--base "$BASE")
+  BRANCH_CONTEXT=$("${bc_cmd[@]}" 2>/dev/null) || BRANCH_CONTEXT=""
+
+  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"
+  if [[ -n "$BRANCH_CONTEXT" ]]; then
+    INPUT+=$'\n\n'"${BRANCH_CONTEXT}"
+  fi
+  INPUT+=$'\n\n'"<diff>
 ${STAGED_DIFF}
 </diff>"
 
