@@ -304,6 +304,120 @@ def _base_name_from_pr_cache(
     return best[1] if best else None
 
 
+# Cap on branches scored by the fork-parent heuristic, so a repo with
+# thousands of stale remote branches can't make a commit crawl. Branches are
+# considered most-recently-committed first, so the relevant ones are kept.
+_MAX_ENUMERATED_BRANCHES = 250
+
+
+def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list[str]:
+    """Local + origin branch short-refs, newest first, minus the current branch.
+
+    Excludes the current branch (and its ``origin/`` counterpart) and the
+    ``origin/HEAD`` pointer, then caps the list at
+    :data:`_MAX_ENUMERATED_BRANCHES`.
+    """
+    result = subprocess.run(
+        [
+            "git",
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            "refs/heads",
+            "refs/remotes/origin",
+        ],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    exclude = {"origin"}
+    if current_branch:
+        exclude.add(current_branch)
+        exclude.add(f"origin/{current_branch}")
+    refs: list[str] = []
+    for line in result.stdout.splitlines():
+        ref = line.strip()
+        if not ref or ref in exclude or ref.endswith("/HEAD"):
+            continue
+        refs.append(ref)
+        if len(refs) >= _MAX_ENUMERATED_BRANCHES:
+            break
+    return refs
+
+
+def _ahead_behind(repo_path: str | Path, ref: str) -> tuple[int, int] | None:
+    """Return (ahead, behind): HEAD-only and ref-only commit counts. None on error."""
+    result = subprocess.run(
+        ["git", "rev-list", "--left-right", "--count", f"{ref}...HEAD"],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.split()
+    if len(parts) != 2:
+        return None
+    try:
+        behind, ahead = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    return ahead, behind
+
+
+def _base_name_rank(ref: str, default_name: str | None) -> int:
+    """Tie-break preference for equally-near bases: lower is preferred.
+
+    Favours the remote's default branch, then conventional names, and the
+    remote-tracking copy over an identical local branch.
+    """
+    name = ref.removeprefix("origin/")
+    is_remote = ref.startswith("origin/")
+    if default_name and name == default_name:
+        base = 0
+    elif name == "main":
+        base = 1
+    elif name == "master":
+        base = 2
+    elif name == "dev":
+        base = 3
+    else:
+        base = 5
+    return base * 2 + (0 if is_remote else 1)
+
+
+def _nearest_fork_parent(
+    repo_path: str | Path, current_branch: str | None
+) -> str | None:
+    """Return the branch HEAD most likely forked from, or None.
+
+    Scores every other branch by ``(commits-ahead, commits-behind, name-rank)``
+    and picks the smallest: the nearest ancestor with the least divergence.
+    This finds the real base regardless of name — ``release/*``, ``staging``, a
+    parent feature branch in a stacked PR — not just ``main``/``master``/``dev``.
+    Branches that already contain all of HEAD (nothing ahead) are skipped.
+    """
+    default_name = get_default_branch(repo_path)
+    best_key: tuple[int, int, int] | None = None
+    best_ref: str | None = None
+    for ref in _list_branch_refs(repo_path, current_branch):
+        ahead_behind = _ahead_behind(repo_path, ref)
+        if ahead_behind is None:
+            continue
+        ahead, behind = ahead_behind
+        if ahead == 0:
+            continue
+        key = (ahead, behind, _base_name_rank(ref, default_name))
+        if best_key is None or key < best_key:
+            best_key = key
+            best_ref = ref
+    return best_ref
+
+
 def resolve_commit_base(
     repo_path: str | Path,
     *,
@@ -316,10 +430,13 @@ def resolve_commit_base(
     Local-only cascade, first hit wins:
 
     1. ``override`` (e.g. ``--base`` / ``GIT_AI_COMMIT_BASE``)
-    2. the base the user last drafted a PR against (git-ai PR cache)
-    3. the closest base by commits-ahead among default/main/master/dev
-    4. ``None`` when HEAD has no commits ahead of any candidate — i.e. the
-       commit is on the base branch itself, detached at base, or the base is
+    2. the base the user last drafted a PR against (git-ai PR cache), probed
+       across the conventional base names
+    3. the nearest fork-parent among all local/origin branches — handles
+       ``main``/``master``/``dev`` plus ``release/*``, ``staging``, and stacked
+       parent branches
+    4. ``None`` when HEAD has no commits ahead of any branch — i.e. the commit
+       is on the base branch itself, detached at base, or the base is
        unresolvable; callers should then omit branch context entirely.
     """
     if override:
@@ -328,27 +445,13 @@ def resolve_commit_base(
             ref = override
         return ref
 
-    names = _candidate_base_names(repo_path)
-
-    cached = _base_name_from_pr_cache(git_dir, branch, names)
+    cached = _base_name_from_pr_cache(git_dir, branch, _candidate_base_names(repo_path))
     if cached:
         ref = _best_base_ref(repo_path, cached)
         if ref and (_commits_ahead(repo_path, ref) or 0) > 0:
             return ref
 
-    best_ref: str | None = None
-    best_count: int | None = None
-    for name in names:
-        ref = _best_base_ref(repo_path, name)
-        if ref is None:
-            continue
-        count = _commits_ahead(repo_path, ref)
-        if count is None or count == 0:
-            continue
-        if best_count is None or count < best_count:
-            best_ref = ref
-            best_count = count
-    return best_ref
+    return _nearest_fork_parent(repo_path, branch)
 
 
 def get_branch_commit_subjects(

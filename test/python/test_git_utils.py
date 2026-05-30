@@ -418,6 +418,38 @@ def test_resolve_commit_base_picks_closest_base(tmp_path: Path) -> None:
     assert resolve_commit_base(repo) == "dev"
 
 
+def test_resolve_commit_base_detects_non_standard_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "release/2.0")
+    _commit_files(repo, {"r.py": "r\n"}, "feat: release prep")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.py": "f\n"}, "feat: feature work")
+
+    # main..HEAD = 2, release/2.0..HEAD = 1 — the release branch is the real base.
+    assert resolve_commit_base(repo) == "release/2.0"
+
+
+def test_resolve_commit_base_detects_stacked_parent(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature-a")
+    _commit_files(repo, {"a.py": "a\n"}, "feat: a")
+    _checkout(repo, "-b", "feature-b")
+    _commit_files(repo, {"b.py": "b\n"}, "feat: b")
+
+    # A stacked branch should target its immediate parent, not main.
+    assert resolve_commit_base(repo) == "feature-a"
+
+
 def test_resolve_commit_base_honors_override(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
