@@ -433,11 +433,12 @@ def _branch_ahead_behind(
         if len(parts) != 2:
             continue
         try:
-            git_ahead, git_behind = int(parts[0]), int(parts[1])
+            ref_only, head_only = int(parts[0]), int(parts[1])
         except ValueError:
             continue
-        # git's "ahead" is ref-only (our behind); its "behind" is HEAD-only (our ahead).
-        rows.append((ref, git_behind, git_ahead))
+        # `ahead-behind:HEAD` prints "<ref-ahead-of-HEAD> <HEAD-ahead-of-ref>",
+        # i.e. ref-only then HEAD-only — our (ahead=HEAD-only, behind=ref-only).
+        rows.append((ref, head_only, ref_only))
         if len(rows) >= _MAX_ENUMERATED_BRANCHES:
             break
     return rows

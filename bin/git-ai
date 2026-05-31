@@ -185,6 +185,8 @@ cmd_commit() {
     "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_commit_cli.py"
     branch-context --repo "$REPO_ROOT"
   )
+  # Only --base is forwarded here; GIT_AI_COMMIT_BASE is consumed inside Python
+  # (_emit_branch_context), so it still applies when --base isn't passed.
   [[ -n "$BASE" ]] && bc_cmd+=(--base "$BASE")
   BRANCH_CONTEXT=$("${bc_cmd[@]}" 2>/dev/null) || BRANCH_CONTEXT=""
 
