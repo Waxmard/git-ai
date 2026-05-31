@@ -7,6 +7,7 @@ from git_ai import (
     build_commit_prompt,
     build_mr_prompt,
     derive_diff_stat,
+    format_branch_context,
     format_commit_log,
     parse_commit_response,
     parse_mr_response,
@@ -132,6 +133,67 @@ def test_build_commit_prompt_respects_release_context_override() -> None:
 def test_build_commit_prompt_rejects_empty_diff() -> None:
     with pytest.raises(ValueError, match="diff is empty"):
         build_commit_prompt("   \n")
+
+
+def test_build_commit_prompt_omits_branch_block_by_default() -> None:
+    _, user = build_commit_prompt(_SAMPLE_DIFF)
+    assert "<branch>" not in user
+    assert "<branch_commits>" not in user
+    assert "<branch_diffstat>" not in user
+
+
+def test_build_commit_prompt_embeds_branch_context() -> None:
+    _, user = build_commit_prompt(
+        _SAMPLE_DIFF,
+        branch_name="feat/file-notes",
+        branch_commits="feat: add panel\ntest: cover panel",
+        branch_diffstat="panel.tsx | 10 ++",
+    )
+    assert "<branch>feat/file-notes</branch>" in user
+    assert (
+        "<branch_commits>\nfeat: add panel\ntest: cover panel\n</branch_commits>"
+        in user
+    )
+    assert "<branch_diffstat>\npanel.tsx | 10 ++\n</branch_diffstat>" in user
+    # Branch context sits between release context and the diff.
+    assert (
+        user.index("<release_context>") < user.index("<branch>") < user.index("<diff>")
+    )
+
+
+def test_build_commit_prompt_emits_only_non_empty_branch_tags() -> None:
+    _, user = build_commit_prompt(
+        _SAMPLE_DIFF, branch_name="dev-branch", branch_commits="  ", branch_diffstat=""
+    )
+    assert "<branch>dev-branch</branch>" in user
+    assert "<branch_commits>" not in user
+    assert "<branch_diffstat>" not in user
+
+
+# ---------------------------------------------------------------------------
+# format_branch_context
+# ---------------------------------------------------------------------------
+
+
+def test_format_branch_context_all_empty_returns_blank() -> None:
+    assert format_branch_context() == ""
+    assert (
+        format_branch_context(branch_name="  ", branch_commits="", branch_diffstat=None)
+        == ""
+    )
+
+
+def test_format_branch_context_strips_and_tags_each_part() -> None:
+    block = format_branch_context(
+        branch_name="  topic  ",
+        branch_commits="  feat: x  ",
+        branch_diffstat="  a | 1 +  ",
+    )
+    assert block == (
+        "<branch>topic</branch>\n"
+        "<branch_commits>\nfeat: x\n</branch_commits>\n"
+        "<branch_diffstat>\na | 1 +\n</branch_diffstat>"
+    )
 
 
 # ---------------------------------------------------------------------------

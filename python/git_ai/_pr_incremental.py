@@ -6,7 +6,7 @@ import importlib
 import json
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ._git import (
         check_git_repo,
+        get_branch_churn_subjects,
         get_commit_log,
         get_current_branch,
         get_diff,
@@ -31,6 +32,7 @@ elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _git = importlib.import_module("_git")
     check_git_repo = _git.check_git_repo
+    get_branch_churn_subjects = _git.get_branch_churn_subjects
     get_commit_log = _git.get_commit_log
     get_current_branch = _git.get_current_branch
     get_diff = _git.get_diff
@@ -46,6 +48,7 @@ elif __package__ in (None, ""):
 else:
     from ._git import (
         check_git_repo,
+        get_branch_churn_subjects,
         get_commit_log,
         get_current_branch,
         get_diff,
@@ -72,6 +75,7 @@ class RepoPrContext:
     diff_stat: str
     release_context: str
     no_changes: bool = False
+    churn_subjects: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=True)
@@ -203,6 +207,17 @@ def prepare_repo_pr_context(
 
     three_dot = input_base == base_branch
     patterns = load_ignore_patterns(get_repo_root(repo_path))
+    # Detect intra-branch refinements so the draft can fold follow-up
+    # fix/refactor/perf/docs commits into the feature they refine. Membership
+    # uses the whole branch (base_branch when resolvable, else the diff base);
+    # classification covers only the commits the draft will list (input_base).
+    churn_base = base_branch
+    if not git_ref_exists(repo_path, churn_base):
+        remote_ref = f"origin/{base_branch}"
+        churn_base = remote_ref if git_ref_exists(repo_path, remote_ref) else input_base
+    churn_subjects = get_branch_churn_subjects(
+        repo_path, churn_base, classify_base=input_base
+    )
     return RepoPrContext(
         base_branch=base_branch,
         current_branch=current_branch,
@@ -217,6 +232,7 @@ def prepare_repo_pr_context(
             repo_path, input_base, three_dot=three_dot, exclude_patterns=patterns
         ),
         release_context=get_mr_release_context(repo_path),
+        churn_subjects=churn_subjects,
     )
 
 

@@ -43,6 +43,10 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
                 rendered = ""
             elif isinstance(value, bool):
                 rendered = "true" if value else "false"
+            elif isinstance(value, list):
+                # Commit subjects are single-line, so newline-join is a safe
+                # delimiter the build-input step can split back apart.
+                rendered = "\n".join(str(item) for item in value)
             else:
                 rendered = str(value)
             sys.stdout.write(f"{key.upper()}={shlex.quote(rendered)}\n")
@@ -69,6 +73,14 @@ def _read_optional(path: str | None) -> str | None:
     return Path(path).read_text(encoding="utf-8")
 
 
+def _read_subjects(path: str | None) -> set[str] | None:
+    text = _read_optional(path)
+    if text is None:
+        return None
+    subjects = {line.strip() for line in text.splitlines() if line.strip()}
+    return subjects or None
+
+
 def _cmd_build_input(args: argparse.Namespace) -> int:
     prompt_name, user_input = build_mr_prompt_input(
         diff=Path(args.diff_file).read_text(encoding="utf-8"),
@@ -76,6 +88,7 @@ def _cmd_build_input(args: argparse.Namespace) -> int:
         diff_stat=_read_optional(args.diff_stat_file),
         release_context=_read_optional(args.release_context_file),
         existing_pr=_read_optional(args.existing_pr_file),
+        churn_subjects=_read_subjects(args.churn_subjects_file),
     )
     sys.stdout.write(json.dumps({"prompt_name": prompt_name, "user_input": user_input}))
     return 0
@@ -108,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--diff-stat-file")
     build.add_argument("--release-context-file")
     build.add_argument("--existing-pr-file")
+    build.add_argument("--churn-subjects-file")
     build.set_defaults(func=_cmd_build_input)
 
     args = parser.parse_args(argv)

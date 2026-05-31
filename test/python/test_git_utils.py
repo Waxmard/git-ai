@@ -4,8 +4,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-from git_ai import get_diff, get_diff_stat, get_staged_diff
+import pytest
+from git_ai import (
+    get_branch_churn_subjects,
+    get_branch_commit_subjects,
+    get_default_branch,
+    get_diff,
+    get_diff_stat,
+    get_git_dir,
+    get_staged_diff,
+    resolve_commit_base,
+)
+from git_ai._commit_cli import _emit_branch_context
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
+from git_ai._pr_incremental import branch_cache_dir
 
 # ---------------------------------------------------------------------------
 # count_conventional_commits
@@ -346,3 +358,254 @@ def test_get_diff_stat_excludes_default_lockfiles(tmp_path: Path) -> None:
 
     assert "app.py" in stat
     assert "package-lock.json" not in stat
+
+
+# ---------------------------------------------------------------------------
+# branch-aware commit base resolution
+# ---------------------------------------------------------------------------
+
+
+def _checkout(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "checkout", *args], cwd=repo, check=True)
+
+
+def test_get_default_branch_none_without_origin(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "i"], cwd=repo, check=True)
+
+    assert get_default_branch(repo) is None
+
+
+def test_resolve_commit_base_returns_main_on_feature_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+    _commit_files(repo, {"b.py": "2\n"}, "test: b")
+
+    assert resolve_commit_base(repo) == "main"
+
+    subjects = get_branch_commit_subjects(repo, "main")
+    assert subjects.splitlines() == ["test: b", "feat: a"]
+
+
+def test_resolve_commit_base_none_on_base_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+
+    # HEAD is main itself — no commits ahead of any candidate base.
+    assert resolve_commit_base(repo) is None
+
+
+def test_resolve_commit_base_picks_closest_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "dev")
+    _commit_files(repo, {"d.py": "d\n"}, "feat: dev work")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.py": "f\n"}, "feat: feature work")
+
+    # main..HEAD = 2 commits, dev..HEAD = 1 — dev is the closer (real) base.
+    assert resolve_commit_base(repo) == "dev"
+
+
+def test_resolve_commit_base_detects_non_standard_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "release/2.0")
+    _commit_files(repo, {"r.py": "r\n"}, "feat: release prep")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.py": "f\n"}, "feat: feature work")
+
+    # main..HEAD = 2, release/2.0..HEAD = 1 — the release branch is the real base.
+    assert resolve_commit_base(repo) == "release/2.0"
+
+
+def test_resolve_commit_base_detects_stacked_parent(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature-a")
+    _commit_files(repo, {"a.py": "a\n"}, "feat: a")
+    _checkout(repo, "-b", "feature-b")
+    _commit_files(repo, {"b.py": "b\n"}, "feat: b")
+
+    # A stacked branch should target its immediate parent, not main.
+    assert resolve_commit_base(repo) == "feature-a"
+
+
+def test_resolve_commit_base_stacked_parent_after_parent_advances(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature-a")
+    _commit_files(repo, {"a.py": "a\n"}, "feat: a")
+    _checkout(repo, "-b", "feature-b")
+    _commit_files(repo, {"b.py": "b\n"}, "feat: b")
+    # The parent advances *after* feature-b forked off it, so feature-a is no
+    # longer an ancestor of HEAD (a bare `--merged HEAD` fast-path would miss it
+    # and wrongly fall back to main). feature-a..HEAD = 1 ahead / 1 behind still
+    # beats main..HEAD = 2 ahead / 0 behind on the ahead count.
+    _checkout(repo, "feature-a")
+    _commit_files(repo, {"a2.py": "a2\n"}, "feat: a more")
+    _checkout(repo, "feature-b")
+
+    assert resolve_commit_base(repo) == "feature-a"
+
+
+def test_resolve_commit_base_honors_override(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+
+    assert resolve_commit_base(repo, override="HEAD~1") == "HEAD~1"
+
+
+def test_resolve_commit_base_prefers_pr_cache_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    # dev and main point at the same commit, so closest-base ties and main wins.
+    subprocess.run(["git", "branch", "dev"], cwd=repo, check=True)
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+
+    git_dir = get_git_dir(repo)
+    # Simulate a prior `git-ai pr --base dev` on this branch.
+    branch_cache_dir(git_dir, "feature", "dev").mkdir(parents=True)
+
+    assert resolve_commit_base(repo, git_dir=git_dir, branch="feature") == "dev"
+
+
+def test_emit_branch_context_honors_env_base(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+    _commit_files(repo, {"b.py": "2\n"}, "feat: b")
+
+    # Auto-resolution would pick main (both commits ahead). GIT_AI_COMMIT_BASE
+    # is honored even without --base, narrowing the base to HEAD~1 so only the
+    # most recent commit is in scope.
+    monkeypatch.setenv("GIT_AI_COMMIT_BASE", "HEAD~1")
+    _emit_branch_context(str(repo), None)
+
+    block = capsys.readouterr().out
+    assert "<branch>feature</branch>" in block
+    assert "feat: b" in block
+    assert "feat: a" not in block
+
+
+# ---------------------------------------------------------------------------
+# intra-branch churn detection
+# ---------------------------------------------------------------------------
+
+
+def _churn_repo(repo: Path) -> None:
+    """Build a branch where one commit refines branch-new code and one fixes
+    pre-existing (base) code."""
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"core.py": "a\nb\nc\n"}, "chore: base")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"new.py": "x\ny\nz\n"}, "feat: add new module")
+    _commit_files(repo, {"new.py": "x\nY2\nz\n"}, "perf: tune new module")
+    _commit_files(repo, {"core.py": "a\nB2\nc\n"}, "fix: correct base bug")
+
+
+def test_churn_detects_refinement_of_branch_code(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _churn_repo(repo)
+
+    # perf tunes a line introduced earlier in the branch → churn.
+    # feat purely adds new.py (no pre-image) and fix edits base code → neither.
+    assert get_branch_churn_subjects(repo, "main") == ["perf: tune new module"]
+
+
+def test_churn_pure_addition_is_not_churn(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"core.py": "a\n"}, "chore: base")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"one.py": "1\n"}, "feat: add one")
+    _commit_files(repo, {"two.py": "2\n"}, "test: add two")
+
+    # Both commits only add brand-new files — they introduce, not refine.
+    assert get_branch_churn_subjects(repo, "main") == []
+
+
+def test_churn_classify_base_narrows_scope(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"core.py": "a\n"}, "chore: base")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"new.py": "x\ny\nz\n"}, "feat: add new module")
+    _commit_files(repo, {"new.py": "x\nY2\nz\n"}, "perf: tune new module")
+    _commit_files(repo, {"new.py": "x\nY2\nZ3\n"}, "refactor: rework new module")
+
+    # Both follow-ups refine branch-new code (newest first).
+    assert get_branch_churn_subjects(repo, "main") == [
+        "refactor: rework new module",
+        "perf: tune new module",
+    ]
+    # classify_base=HEAD~1 limits classification to the newest commit only.
+    assert get_branch_churn_subjects(repo, "main", classify_base="HEAD~1") == [
+        "refactor: rework new module",
+    ]
+
+
+def test_churn_over_limit_returns_empty(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _churn_repo(repo)
+
+    assert get_branch_churn_subjects(repo, "main", limit=0) == []
+
+
+def test_churn_bad_base_returns_empty(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _churn_repo(repo)
+
+    # An unresolvable base must not raise — churn detection is best-effort.
+    assert get_branch_churn_subjects(repo, "no-such-branch") == []
