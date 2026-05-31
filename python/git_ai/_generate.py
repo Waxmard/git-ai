@@ -126,6 +126,7 @@ def build_mr_prompt(
     diff_stat: str | None = None,
     release_context: str | None = None,
     existing_pr: str | None = None,
+    churn_subjects: set[str] | None = None,
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for MR/PR generation.
 
@@ -141,6 +142,9 @@ def build_mr_prompt(
         release_context: Optional release-context blurb.
         existing_pr: Prior PR text to refine against. When supplied, the
             update-flavoured prompt variant is selected.
+        churn_subjects: Subjects of commits that only refine code introduced
+            earlier in this same branch. Folded in the two-pass draft instead
+            of emitted as standalone sections. Optional.
 
     Returns:
         ``(system_prompt, user_input)`` — feed both to your LLM, then run the
@@ -164,6 +168,7 @@ def build_mr_prompt(
         diff_stat=diff_stat,
         release_context=release_context,
         existing_pr=existing_pr,
+        churn_subjects=churn_subjects,
     )
     return _load_prompt(prompt_name), user_input
 

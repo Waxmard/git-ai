@@ -529,6 +529,124 @@ def get_branch_commit_subjects(
     ).strip()
 
 
+# Cap on commits classified by churn detection. Each commit costs one
+# `git show` plus a `git blame` per modified file, so an unbounded branch could
+# make `git-ai pr` crawl; over the cap we skip churn detection entirely.
+_MAX_CHURN_COMMITS = 50
+
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+")
+_PORCELAIN_SHA_RE = re.compile(r"^([0-9a-f]{40}) ")
+
+
+def _commit_preimage_ranges(
+    repo_path: str | Path, commit: str
+) -> list[tuple[str, int, int]] | None:
+    """Return ``(pre_image_path, start, count)`` for lines a commit edits/deletes.
+
+    Pure additions (old hunk count 0) are skipped — they introduce code rather
+    than refine existing code. Returns None on a git failure.
+    """
+    try:
+        diff = _git(repo_path, "show", "--no-color", "-M", "-U0", "--format=", commit)
+    except RuntimeError:
+        return None
+    ranges: list[tuple[str, int, int]] = []
+    current_a: str | None = None
+    for line in diff.splitlines():
+        header_match = _DIFF_FILE_HEADER.match(line)
+        if header_match:
+            current_a = header_match.group("a")
+            continue
+        if line.startswith("@@") and current_a is not None:
+            hunk = _HUNK_RE.match(line)
+            if hunk:
+                start = int(hunk.group(1))
+                count = int(hunk.group(2)) if hunk.group(2) is not None else 1
+                if count > 0:
+                    ranges.append((current_a, start, count))
+    return ranges
+
+
+def _blame_introducers(
+    repo_path: str | Path, rev: str, file: str, start: int, count: int
+) -> set[str] | None:
+    """Return the SHAs that introduced lines ``start..start+count-1`` of ``file``
+    at ``rev``. Returns None when blame fails (e.g. file absent at ``rev``)."""
+    end = start + count - 1
+    result = subprocess.run(
+        ["git", "blame", "--porcelain", "-l", f"-L{start},{end}", rev, "--", file],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    shas: set[str] = set()
+    for line in result.stdout.splitlines():
+        match = _PORCELAIN_SHA_RE.match(line)
+        if match:
+            shas.add(match.group(1))
+    return shas
+
+
+def get_branch_churn_subjects(
+    repo_path: str | Path,
+    branch_base: str,
+    *,
+    classify_base: str | None = None,
+    limit: int = _MAX_CHURN_COMMITS,
+) -> list[str]:
+    """Subjects of commits that only refine code this branch itself introduced.
+
+    A commit in ``classify_base..HEAD`` is *intra-branch churn* when every
+    pre-image line it modifies or deletes was introduced by a branch-local
+    commit — i.e. ``git blame`` of its parent traces those lines to a commit in
+    ``branch_base..HEAD``. Such a commit (a follow-up ``fix``/``refactor``/
+    ``perf``/``docs`` on code added earlier in the same PR) is invisible from
+    the base branch's perspective: the net diff only shows the final feature.
+
+    Pure-addition commits never count as churn — they introduce code, so they
+    keep their own section. ``classify_base`` defaults to ``branch_base``; pass
+    the incremental base (e.g. a cached HEAD SHA) to classify only new commits
+    while still treating the whole branch as "branch-introduced".
+
+    Best-effort: returns ``[]`` on any git failure or when the classify range
+    exceeds ``limit`` commits.
+    """
+    if classify_base is None:
+        classify_base = branch_base
+    try:
+        branch_shas = set(_git(repo_path, "rev-list", f"{branch_base}..HEAD").split())
+        commits = _git(
+            repo_path, "rev-list", "--no-merges", f"{classify_base}..HEAD"
+        ).split()
+    except RuntimeError:
+        return []
+    if not commits or len(commits) > limit:
+        return []
+
+    churn: list[str] = []
+    for commit in commits:
+        ranges = _commit_preimage_ranges(repo_path, commit)
+        if not ranges:
+            continue  # parse failure or pure-addition commit → not churn
+        branch_local = True
+        for file, start, count in ranges:
+            shas = _blame_introducers(repo_path, f"{commit}^", file, start, count)
+            if not shas or not shas <= branch_shas:
+                branch_local = False
+                break
+        if branch_local:
+            try:
+                subject = _git(repo_path, "show", "-s", "--format=%s", commit).strip()
+            except RuntimeError:
+                continue
+            if subject:
+                churn.append(subject)
+    return churn
+
+
 def format_branch_context(
     *,
     branch_name: str | None = None,

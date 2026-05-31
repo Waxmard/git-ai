@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from git_ai import (
+    get_branch_churn_subjects,
     get_branch_commit_subjects,
     get_default_branch,
     get_diff,
@@ -533,3 +534,78 @@ def test_emit_branch_context_honors_env_base(
     assert "<branch>feature</branch>" in block
     assert "feat: b" in block
     assert "feat: a" not in block
+
+
+# ---------------------------------------------------------------------------
+# intra-branch churn detection
+# ---------------------------------------------------------------------------
+
+
+def _churn_repo(repo: Path) -> None:
+    """Build a branch where one commit refines branch-new code and one fixes
+    pre-existing (base) code."""
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"core.py": "a\nb\nc\n"}, "chore: base")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"new.py": "x\ny\nz\n"}, "feat: add new module")
+    _commit_files(repo, {"new.py": "x\nY2\nz\n"}, "perf: tune new module")
+    _commit_files(repo, {"core.py": "a\nB2\nc\n"}, "fix: correct base bug")
+
+
+def test_churn_detects_refinement_of_branch_code(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _churn_repo(repo)
+
+    # perf tunes a line introduced earlier in the branch → churn.
+    # feat purely adds new.py (no pre-image) and fix edits base code → neither.
+    assert get_branch_churn_subjects(repo, "main") == ["perf: tune new module"]
+
+
+def test_churn_pure_addition_is_not_churn(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"core.py": "a\n"}, "chore: base")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"one.py": "1\n"}, "feat: add one")
+    _commit_files(repo, {"two.py": "2\n"}, "test: add two")
+
+    # Both commits only add brand-new files — they introduce, not refine.
+    assert get_branch_churn_subjects(repo, "main") == []
+
+
+def test_churn_classify_base_narrows_scope(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"core.py": "a\n"}, "chore: base")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"new.py": "x\ny\nz\n"}, "feat: add new module")
+    _commit_files(repo, {"new.py": "x\nY2\nz\n"}, "perf: tune new module")
+    _commit_files(repo, {"new.py": "x\nY2\nZ3\n"}, "refactor: rework new module")
+
+    # Both follow-ups refine branch-new code (newest first).
+    assert get_branch_churn_subjects(repo, "main") == [
+        "refactor: rework new module",
+        "perf: tune new module",
+    ]
+    # classify_base=HEAD~1 limits classification to the newest commit only.
+    assert get_branch_churn_subjects(repo, "main", classify_base="HEAD~1") == [
+        "refactor: rework new module",
+    ]
+
+
+def test_churn_over_limit_returns_empty(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _churn_repo(repo)
+
+    assert get_branch_churn_subjects(repo, "main", limit=0) == []
+
+
+def test_churn_bad_base_returns_empty(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _churn_repo(repo)
+
+    # An unresolvable base must not raise — churn detection is best-effort.
+    assert get_branch_churn_subjects(repo, "no-such-branch") == []

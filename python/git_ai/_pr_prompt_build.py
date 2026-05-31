@@ -38,8 +38,14 @@ def build_mr_prompt_input(
     diff_stat: str | None = None,
     release_context: str | None = None,
     existing_pr: str | None = None,
+    churn_subjects: set[str] | None = None,
 ) -> tuple[str, str]:
-    """Return (prompt_filename, user_input) for MR generation."""
+    """Return (prompt_filename, user_input) for MR generation.
+
+    ``churn_subjects`` (commit subjects that only refine code introduced earlier
+    in the same branch) is forwarded to the two-pass draft so those entries are
+    folded rather than emitted as standalone sections.
+    """
     if not diff.strip():
         raise ValueError("diff is empty")
     if release_context is None:
@@ -52,7 +58,7 @@ def build_mr_prompt_input(
     two_pass = total_count > 0 and conventional_count * 2 >= total_count
 
     if two_pass:
-        draft = analyze(_to_rs_delimited_log(log)).draft_body
+        draft = analyze(_to_rs_delimited_log(log), churn_subjects).draft_body
         if existing_pr:
             prompt_name = "pr-two-pass-update.txt"
             user_input = (
