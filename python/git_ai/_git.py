@@ -386,7 +386,7 @@ def _base_name_rank(ref: str, default_name: str | None) -> int:
     elif name == "dev":
         base = 3
     else:
-        base = 5
+        base = 4
     return base * 2 + (0 if is_remote else 1)
 
 

@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from git_ai import (
     get_branch_commit_subjects,
     get_default_branch,
@@ -13,6 +14,7 @@ from git_ai import (
     get_staged_diff,
     resolve_commit_base,
 )
+from git_ai._commit_cli import _emit_branch_context
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
 from git_ai._pr_incremental import branch_cache_dir
 
@@ -480,3 +482,30 @@ def test_resolve_commit_base_prefers_pr_cache_base(tmp_path: Path) -> None:
     branch_cache_dir(git_dir, "feature", "dev").mkdir(parents=True)
 
     assert resolve_commit_base(repo, git_dir=git_dir, branch="feature") == "dev"
+
+
+def test_emit_branch_context_honors_env_base(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+    _commit_files(repo, {"b.py": "2\n"}, "feat: b")
+
+    # Auto-resolution would pick main (both commits ahead). GIT_AI_COMMIT_BASE
+    # is honored even without --base, narrowing the base to HEAD~1 so only the
+    # most recent commit is in scope.
+    monkeypatch.setenv("GIT_AI_COMMIT_BASE", "HEAD~1")
+    _emit_branch_context(str(repo), None)
+
+    block = capsys.readouterr().out
+    assert "<branch>feature</branch>" in block
+    assert "feat: b" in block
+    assert "feat: a" not in block

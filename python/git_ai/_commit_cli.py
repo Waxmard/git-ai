@@ -60,7 +60,7 @@ def _emit_branch_context(repo: str, override: str | None) -> None:
     block = format_branch_context(
         branch_name=branch,
         branch_commits=get_branch_commit_subjects(repo, base),
-        branch_diffstat=get_diff_stat(repo, base, three_dot=True),
+        branch_diffstat=get_diff_stat(repo, base),
     )
     if block:
         sys.stdout.write(block)
