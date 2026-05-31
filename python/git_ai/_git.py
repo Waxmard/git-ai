@@ -307,7 +307,7 @@ def _base_name_from_pr_cache(
 # Cap on branches scored by the fork-parent heuristic, so a repo with
 # thousands of stale remote branches can't make a commit crawl. Branches are
 # considered most-recently-committed first, so the relevant ones are kept.
-_MAX_ENUMERATED_BRANCHES = 250
+_MAX_ENUMERATED_BRANCHES = 50
 
 
 def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list[str]:
@@ -390,6 +390,59 @@ def _base_name_rank(ref: str, default_name: str | None) -> int:
     return base * 2 + (0 if is_remote else 1)
 
 
+def _branch_ahead_behind(
+    repo_path: str | Path, current_branch: str | None
+) -> list[tuple[str, int, int]] | None:
+    """One-shot ``(ref, ahead, behind)`` for every candidate branch, or None.
+
+    Uses ``for-each-ref``'s ``ahead-behind:HEAD`` token (git >= 2.41) to compute
+    each branch's divergence from HEAD in a single subprocess, replacing one
+    ``git rev-list`` probe per branch. ``ahead``/``behind`` match
+    :func:`_ahead_behind` (``ahead`` = HEAD-only commits, ``behind`` = ref-only).
+    Returns None when the token is unsupported (older git exits non-zero) so the
+    caller can fall back to per-ref probing. Same exclusions and
+    :data:`_MAX_ENUMERATED_BRANCHES` cap as :func:`_list_branch_refs`.
+    """
+    result = subprocess.run(
+        [
+            "git",
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)\t%(ahead-behind:HEAD)",
+            "refs/heads",
+            "refs/remotes/origin",
+        ],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    exclude = {"origin"}
+    if current_branch:
+        exclude.add(current_branch)
+        exclude.add(f"origin/{current_branch}")
+    rows: list[tuple[str, int, int]] = []
+    for line in result.stdout.splitlines():
+        ref, _, counts = line.partition("\t")
+        ref = ref.strip()
+        if not ref or ref in exclude or ref.endswith("/HEAD"):
+            continue
+        parts = counts.split()
+        if len(parts) != 2:
+            continue
+        try:
+            git_ahead, git_behind = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        # git's "ahead" is ref-only (our behind); its "behind" is HEAD-only (our ahead).
+        rows.append((ref, git_behind, git_ahead))
+        if len(rows) >= _MAX_ENUMERATED_BRANCHES:
+            break
+    return rows
+
+
 def _nearest_fork_parent(
     repo_path: str | Path, current_branch: str | None
 ) -> str | None:
@@ -400,15 +453,22 @@ def _nearest_fork_parent(
     This finds the real base regardless of name — ``release/*``, ``staging``, a
     parent feature branch in a stacked PR — not just ``main``/``master``/``dev``.
     Branches that already contain all of HEAD (nothing ahead) are skipped.
+
+    Divergence comes from a single :func:`_branch_ahead_behind` call, falling
+    back to per-ref :func:`_ahead_behind` probing only on git too old for the
+    ``ahead-behind`` token.
     """
     default_name = get_default_branch(repo_path)
+    rows = _branch_ahead_behind(repo_path, current_branch)
+    if rows is None:
+        rows = [
+            (ref, ahead_behind[0], ahead_behind[1])
+            for ref in _list_branch_refs(repo_path, current_branch)
+            if (ahead_behind := _ahead_behind(repo_path, ref)) is not None
+        ]
     best_key: tuple[int, int, int] | None = None
     best_ref: str | None = None
-    for ref in _list_branch_refs(repo_path, current_branch):
-        ahead_behind = _ahead_behind(repo_path, ref)
-        if ahead_behind is None:
-            continue
-        ahead, behind = ahead_behind
+    for ref, ahead, behind in rows:
         if ahead == 0:
             continue
         key = (ahead, behind, _base_name_rank(ref, default_name))

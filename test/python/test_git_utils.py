@@ -452,6 +452,30 @@ def test_resolve_commit_base_detects_stacked_parent(tmp_path: Path) -> None:
     assert resolve_commit_base(repo) == "feature-a"
 
 
+def test_resolve_commit_base_stacked_parent_after_parent_advances(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "feature-a")
+    _commit_files(repo, {"a.py": "a\n"}, "feat: a")
+    _checkout(repo, "-b", "feature-b")
+    _commit_files(repo, {"b.py": "b\n"}, "feat: b")
+    # The parent advances *after* feature-b forked off it, so feature-a is no
+    # longer an ancestor of HEAD (a bare `--merged HEAD` fast-path would miss it
+    # and wrongly fall back to main). feature-a..HEAD = 1 ahead / 1 behind still
+    # beats main..HEAD = 2 ahead / 0 behind on the ahead count.
+    _checkout(repo, "feature-a")
+    _commit_files(repo, {"a2.py": "a2\n"}, "feat: a more")
+    _checkout(repo, "feature-b")
+
+    assert resolve_commit_base(repo) == "feature-a"
+
+
 def test_resolve_commit_base_honors_override(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
