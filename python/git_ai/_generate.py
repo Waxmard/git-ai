@@ -15,6 +15,7 @@ from pathlib import Path
 from ._git import (
     DEFAULT_RELEASE_CONTEXT,
     derive_diff_stat,
+    format_branch_context,
     largest_diff_files,
 )
 from ._pr_prompt_build import build_mr_prompt_input
@@ -69,6 +70,9 @@ def build_commit_prompt(
     diff: str,
     *,
     release_context: str | None = None,
+    branch_name: str | None = None,
+    branch_commits: str | None = None,
+    branch_diffstat: str | None = None,
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for commit-message generation.
 
@@ -76,6 +80,15 @@ def build_commit_prompt(
         diff: Unified diff string (e.g. ``git diff --staged`` output).
         release_context: Optional release-context blurb. Defaults to a generic
             "no release tags found" string.
+        branch_name: Current branch name. Surfaced so the model can pick the
+            commit prefix from the perspective of the whole branch.
+        branch_commits: Newline-separated subjects of the commits already on
+            this branch since its base (most recent first).
+        branch_diffstat: ``git diff --stat`` of the whole branch vs its base.
+
+    The branch_* values describe the branch's overall purpose; the prompt uses
+    them only to disambiguate the prefix when the staged diff alone is
+    ambiguous. Any branch tag whose value is empty is omitted.
 
     Returns:
         ``(system_prompt, user_input)`` — feed both to your LLM, then run the
@@ -93,11 +106,17 @@ def build_commit_prompt(
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
 
-    user_input = (
-        f"<release_context>{release_context}</release_context>\n\n"
-        f"<diff>\n{diff}\n</diff>"
+    parts = [f"<release_context>{release_context}</release_context>"]
+    branch_block = format_branch_context(
+        branch_name=branch_name,
+        branch_commits=branch_commits,
+        branch_diffstat=branch_diffstat,
     )
-    return _load_prompt("commit.txt"), user_input
+    if branch_block:
+        parts.append(branch_block)
+    parts.append(f"<diff>\n{diff}\n</diff>")
+
+    return _load_prompt("commit.txt"), "\n\n".join(parts)
 
 
 def build_mr_prompt(
@@ -107,6 +126,7 @@ def build_mr_prompt(
     diff_stat: str | None = None,
     release_context: str | None = None,
     existing_pr: str | None = None,
+    churn_subjects: set[str] | None = None,
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for MR/PR generation.
 
@@ -122,6 +142,9 @@ def build_mr_prompt(
         release_context: Optional release-context blurb.
         existing_pr: Prior PR text to refine against. When supplied, the
             update-flavoured prompt variant is selected.
+        churn_subjects: Subjects of commits that only refine code introduced
+            earlier in this same branch. Folded in the two-pass draft instead
+            of emitted as standalone sections. Optional.
 
     Returns:
         ``(system_prompt, user_input)`` — feed both to your LLM, then run the
@@ -145,6 +168,7 @@ def build_mr_prompt(
         diff_stat=diff_stat,
         release_context=release_context,
         existing_pr=existing_pr,
+        churn_subjects=churn_subjects,
     )
     return _load_prompt(prompt_name), user_input
 

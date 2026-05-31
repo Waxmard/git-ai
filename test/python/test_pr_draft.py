@@ -65,3 +65,45 @@ def test_section_order_follows_catalog() -> None:
     idx_fix = result.draft_body.find("### Bug Fixes")
     assert idx_feat != -1 and idx_fix != -1
     assert idx_feat < idx_fix
+
+
+def test_churn_commits_folded_into_refinements_block() -> None:
+    log = _log("feat: add thing", "perf: speed it up", "docs: document it")
+    result = analyze(log, churn_subjects={"perf: speed it up", "docs: document it"})
+
+    # The feature stays in its own section...
+    assert "### Features" in result.draft_body
+    assert "- add thing" in result.draft_body
+    # ...while churn entries leave their type sections for the refinements block.
+    assert "### Performance" not in result.draft_body
+    assert "### Docs" not in result.draft_body
+    assert "### Intra-branch refinements" in result.draft_body
+    assert "- speed it up" in result.draft_body
+    assert "- document it" in result.draft_body
+    # The refinements block trails the real sections.
+    assert result.draft_body.find("### Features") < result.draft_body.find(
+        "### Intra-branch refinements"
+    )
+
+
+def test_churn_only_section_drops_the_section_header() -> None:
+    # The only perf commit is churn → no ### Performance section at all.
+    log = _log("feat: a", "perf: tune internal helper")
+    result = analyze(log, churn_subjects={"perf: tune internal helper"})
+    assert "### Performance" not in result.draft_body
+    assert "### Intra-branch refinements" in result.draft_body
+
+
+def test_no_churn_block_when_subjects_empty() -> None:
+    log = _log("feat: a", "perf: real win")
+    result = analyze(log, churn_subjects=set())
+    assert "### Performance" in result.draft_body
+    assert "### Intra-branch refinements" not in result.draft_body
+
+
+def test_churn_subject_must_match_full_subject() -> None:
+    # Matching is on the full subject, so a bare description does not fold.
+    log = _log("feat: a", "perf: real win")
+    result = analyze(log, churn_subjects={"real win"})
+    assert "### Performance" in result.draft_body
+    assert "### Intra-branch refinements" not in result.draft_body

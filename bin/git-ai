@@ -100,7 +100,22 @@ render_pr_output() {
 # ---------------------------------------------------------------------------
 
 cmd_commit() {
-  local PROVIDER MODEL
+  local PROVIDER MODEL BASE=""
+  local -a rest=()
+  # Pull --base out of the args; everything else stays positional.
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --base)
+        BASE="$2"
+        shift 2
+        ;;
+      *)
+        rest+=("$1")
+        shift
+        ;;
+    esac
+  done
+  set -- ${rest[@]+"${rest[@]}"}
   PROVIDER="${1:-}"
   MODEL="${2:-}"
   # Accept single-arg "provider:model" form (used by the lazygit fzf flow).
@@ -163,7 +178,23 @@ cmd_commit() {
     RELEASE_CONTEXT="Release context: no release tags found — treat all changes as unreleased"
   fi
 
-  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"$'\n\n'"<diff>
+  # Best-effort branch context so the prefix is chosen from the perspective of
+  # the whole branch. Never blocks a commit: failures yield an empty block.
+  local BRANCH_CONTEXT
+  local -a bc_cmd=(
+    "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_commit_cli.py"
+    branch-context --repo "$REPO_ROOT"
+  )
+  # Only --base is forwarded here; GIT_AI_COMMIT_BASE is consumed inside Python
+  # (_emit_branch_context), so it still applies when --base isn't passed.
+  [[ -n "$BASE" ]] && bc_cmd+=(--base "$BASE")
+  BRANCH_CONTEXT=$("${bc_cmd[@]}" 2>/dev/null) || BRANCH_CONTEXT=""
+
+  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"
+  if [[ -n "$BRANCH_CONTEXT" ]]; then
+    INPUT+=$'\n\n'"${BRANCH_CONTEXT}"
+  fi
+  INPUT+=$'\n\n'"<diff>
 ${STAGED_DIFF}
 </diff>"
 
@@ -277,7 +308,7 @@ cmd_pr() {
     }
   printf '%s\n' "$PREP_OUTPUT" >"$PREP_FILE"
   # Variables set by sourced prep file (BASE_BRANCH/INPUT_BASE consumed but not referenced directly)
-  local CURRENT_BRANCH HEAD_SHA EXISTING_PR COMMIT_LOG DIFF DIFF_STAT RELEASE_CONTEXT NO_CHANGES
+  local CURRENT_BRANCH HEAD_SHA EXISTING_PR COMMIT_LOG DIFF DIFF_STAT RELEASE_CONTEXT NO_CHANGES CHURN_SUBJECTS
   # shellcheck disable=SC1090
   source "$PREP_FILE"
   rm -f "$PREP_FILE"
@@ -290,25 +321,28 @@ cmd_pr() {
 
   check_diff_size_or_die "$DIFF"
 
-  local BUILD_FILE PROMPT_NAME PROMPT INPUT DIFF_FILE LOG_FILE STAT_FILE RELEASE_FILE EXISTING_FILE
+  local BUILD_FILE PROMPT_NAME PROMPT INPUT DIFF_FILE LOG_FILE STAT_FILE RELEASE_FILE EXISTING_FILE CHURN_FILE
   BUILD_FILE=$(mktemp) || die "failed to allocate temp file"
   DIFF_FILE=$(mktemp) || die "failed to allocate temp file"
   LOG_FILE=$(mktemp) || die "failed to allocate temp file"
   STAT_FILE=$(mktemp) || die "failed to allocate temp file"
   RELEASE_FILE=$(mktemp) || die "failed to allocate temp file"
   EXISTING_FILE=$(mktemp) || die "failed to allocate temp file"
+  CHURN_FILE=$(mktemp) || die "failed to allocate temp file"
   printf '%s' "$DIFF" >"$DIFF_FILE"
   printf '%s' "$COMMIT_LOG" >"$LOG_FILE"
   printf '%s' "$DIFF_STAT" >"$STAT_FILE"
   printf '%s' "$RELEASE_CONTEXT" >"$RELEASE_FILE"
   printf '%s' "$EXISTING_PR" >"$EXISTING_FILE"
+  printf '%s' "$CHURN_SUBJECTS" >"$CHURN_FILE"
   "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_repo_cli.py" build-input \
     --diff-file "$DIFF_FILE" \
     --commit-log-file "$LOG_FILE" \
     --diff-stat-file "$STAT_FILE" \
     --release-context-file "$RELEASE_FILE" \
-    --existing-pr-file "$EXISTING_FILE" >"$BUILD_FILE" || {
-      rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE"
+    --existing-pr-file "$EXISTING_FILE" \
+    --churn-subjects-file "$CHURN_FILE" >"$BUILD_FILE" || {
+      rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE"
       die "failed to build PR prompt input"
     }
   PROMPT_NAME=$("${GIT_AI_PYTHON:-python3}" - <<'PY' "$BUILD_FILE"
@@ -323,7 +357,7 @@ from pathlib import Path
 print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["user_input"])
 PY
 )
-  rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE"
+  rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE"
 
   case "$PROMPT_NAME" in
     pr-two-pass.txt) PROMPT="$PROMPT_TWO_PASS" ;;
