@@ -41,7 +41,10 @@ def _header(template: str) -> str:
 
 
 def _sub(match: re.Match[str]) -> str:
-    partial = (SRC / match.group(1)).read_text(encoding="utf-8")
+    resolved = (SRC / match.group(1)).resolve()
+    if not resolved.is_relative_to(SRC.resolve()):
+        raise SystemExit(f"error: include escapes docs/src/: {match.group(1)}")
+    partial = resolved.read_text(encoding="utf-8")
     return partial.strip()
 
 
