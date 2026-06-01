@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     func = cast(Callable[[argparse.Namespace], int], args.func)
     try:
         return func(args)
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         sys.stderr.write(f"git-ai: {exc}\n")
         return 1
 
