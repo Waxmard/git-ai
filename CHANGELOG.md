@@ -1,5 +1,18 @@
 # Changelog
 
+## [6.2.0](https://github.com/Waxmard/git-ai/compare/v6.1.0...v6.2.0) (2026-06-01)
+
+
+### Features
+
+* branch-aware commit prefixes and intra-branch churn folding in PR drafts ([#58](https://github.com/Waxmard/git-ai/issues/58)) ([0de98fb](https://github.com/Waxmard/git-ai/commit/0de98fbb957c06563edb6a4c9be80d01c32948c9))
+* Vertex multi-profile layered config, docs generation pipeline, and security CI ([#57](https://github.com/Waxmard/git-ai/issues/57)) ([aa4a001](https://github.com/Waxmard/git-ai/commit/aa4a0016f9c68f9d70948c9077735b54698a5594))
+
+
+### Bug Fixes
+
+* guard path traversal in docs include and catch OSError in pr-repo CLI ([a1861fc](https://github.com/Waxmard/git-ai/commit/a1861fca8eaf8f3c01bc447eb996d54c800b464c))
+
 ## [6.1.0](https://github.com/Waxmard/git-ai/compare/v6.0.1...v6.1.0) (2026-05-28)
 
 
