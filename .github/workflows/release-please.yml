@@ -17,6 +17,10 @@ jobs:
         id: release
         with:
           token: ${{ secrets.GIT_AI_RELEASE_PLEASE_TOKEN }}
+          # Pin to main — release-please-action defaults target-branch to the
+          # repo's default branch (currently dev), which would cut releases off
+          # the wrong branch.
+          target-branch: main
 
       - name: Auto-merge release PR
         if: steps.release.outputs.pr != ''
