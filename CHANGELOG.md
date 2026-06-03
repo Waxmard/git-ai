@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.2.1](https://github.com/Waxmard/git-ai/compare/v6.2.0...v6.2.1) (2026-06-03)
+
+
+### Bug Fixes
+
+* sharpen commit prefix rules for restructuring and config-file changes ([#65](https://github.com/Waxmard/git-ai/issues/65)) ([eaaeac8](https://github.com/Waxmard/git-ai/commit/eaaeac88c35c59c30510ce9fca549a7db201fceb))
+
 ## [6.2.0](https://github.com/Waxmard/git-ai/compare/v6.1.0...v6.2.0) (2026-06-01)
 
 
