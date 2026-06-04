@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.2.2](https://github.com/Waxmard/git-ai/compare/v6.2.1...v6.2.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* add type-selection precedence and role-based classification rules to PR prompts ([f096966](https://github.com/Waxmard/git-ai/commit/f0969664e8b01450971fd680755fa549945b7725))
+
 ## [6.2.1](https://github.com/Waxmard/git-ai/compare/v6.2.0...v6.2.1) (2026-06-03)
 
 
