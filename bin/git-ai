@@ -1,7 +1,7 @@
 #!/bin/bash
 set -o pipefail
 # git-ai - LLM-powered git workflow tools
-# Usage: git-ai <commit|pr|providers|models> [...]
+# Usage: git-ai <commit|pr|setup|providers|models|options> [...]
 
 SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 # shellcheck source=lib/ai-common.sh
@@ -393,6 +393,117 @@ cmd_options() {
   list_options "${1:-commit}"
 }
 
+# Canonical provider order for the setup wizard (mirrors list_providers).
+SETUP_PROVIDERS=(gemini-api claude-code codex anthropic-api openai-api vertex-gemini vertex-anthropic)
+
+# Print the readiness status table for every provider.
+_setup_status_table() {
+  local p reason
+  printf 'Detected providers:\n\n'
+  for p in "${SETUP_PROVIDERS[@]}"; do
+    if reason=$(provider_ready "$p" 2>&1 1>/dev/null); then
+      printf '  [ready]  %s\n' "$(provider_display_name "$p")"
+    else
+      printf '  [setup]  %-22s — %s\n' "$(provider_display_name "$p")" "$reason"
+    fi
+  done
+  printf '\n'
+}
+
+# Pick one or more providers. Prefers fzf; falls back to a numbered prompt.
+# Prints chosen provider tokens, one per line.
+_setup_pick_providers() {
+  local p line
+  if command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
+    for p in "${SETUP_PROVIDERS[@]}"; do
+      printf '%s|%s\n' "$p" "$(provider_display_name "$p")"
+    done | fzf --multi --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
+      --prompt='enable providers (tab to multi-select)> ' --height=50% --reverse |
+      while IFS='|' read -r p _; do printf '%s\n' "$p"; done
+    return
+  fi
+
+  # Numbered fallback.
+  local i=1
+  for p in "${SETUP_PROVIDERS[@]}"; do
+    printf '  %d) %s\n' "$i" "$(provider_display_name "$p")" >&2
+    i=$((i + 1))
+  done
+  printf 'Select providers by number (space-separated): ' >&2
+  read -r line
+  local n
+  for n in $line; do
+    [[ "$n" =~ ^[0-9]+$ ]] || continue
+    ((n >= 1 && n <= ${#SETUP_PROVIDERS[@]})) || continue
+    printf '%s\n' "${SETUP_PROVIDERS[$((n - 1))]}"
+  done
+}
+
+# Pick one or more models for PROVIDER. Prefers fzf; falls back to the default
+# model. Prints chosen model IDs, one per line.
+_setup_pick_models() {
+  local provider="$1"
+  local default_model
+  default_model=$(default_model_for_provider commit "$provider" 2>/dev/null)
+  if command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
+    models_for_provider "$provider" | fzf --multi --no-sort --tiebreak=index \
+      --prompt="models for ${provider} (tab to multi-select)> " --height=40% --reverse \
+      --query="" && return
+  fi
+  # Fallback: the catalog default for this provider.
+  [[ -n "$default_model" ]] && printf '%s\n' "$default_model"
+}
+
+cmd_setup() {
+  printf '\ngit-ai setup\n'
+  printf '============\n\n'
+  printf 'Configure which LLM providers and models git-ai offers in its picker.\n\n'
+
+  _setup_status_table
+
+  local -a chosen=()
+  while IFS= read -r p; do [[ -n "$p" ]] && chosen+=("$p"); done < <(_setup_pick_providers)
+  if [[ ${#chosen[@]} -eq 0 ]]; then
+    die "No providers selected — nothing to configure."
+  fi
+
+  # Build provider:model lines for the chosen providers.
+  local combos="" provider model
+  for provider in "${chosen[@]}"; do
+    local got_model=""
+    while IFS= read -r model; do
+      [[ -n "$model" ]] || continue
+      combos+="${provider}:${model}"$'\n'
+      got_model=1
+    done < <(_setup_pick_models "$provider")
+    # A provider with no model picked still gets enabled (empty header is valid).
+    [[ -n "$got_model" ]] || combos+="${provider}:"$'\n'
+  done
+
+  # Write options.conf, backing up any existing file.
+  local conf_path conf_dir
+  conf_path=$(user_options_path)
+  conf_dir=$(dirname "$conf_path")
+  mkdir -p "$conf_dir" || die "Cannot create config dir: $conf_dir"
+  if [[ -e "$conf_path" ]]; then
+    cp "$conf_path" "${conf_path}.bak" || die "Cannot back up existing config"
+    printf 'Backed up existing config to %s.bak\n' "$conf_path"
+  fi
+  printf '%s' "$combos" | render_options_conf >"$conf_path" ||
+    die "Failed to write $conf_path"
+  printf 'Wrote %s\n' "$conf_path"
+
+  # Best-effort: seed the per-repo default so the next commit/pr has a pick
+  # ready without prompting. Only meaningful inside a git repo.
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    save_last_provider commit "${chosen[0]}"
+    save_last_provider pr "${chosen[0]}"
+    printf 'Default provider for this repo set to %s.\n' "$(provider_display_name "${chosen[0]}")"
+  fi
+
+  printf '\nDone. Try:  git add -A && git-ai commit\n'
+}
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -404,11 +515,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   case "$CMD" in
     commit)    cmd_commit "$@" ;;
     pr|mr)     cmd_pr "$@" ;;
+    setup)     cmd_setup "$@" ;;
     providers) cmd_providers "$@" ;;
     models)    cmd_models "$@" ;;
     options)   cmd_options "$@" ;;
     tiers)     die "'tiers' has been removed; use 'models' instead" ;;
-    "")        die "usage: git-ai <commit|pr|providers|models|options> [...]" ;;
+    "")        die "usage: git-ai <commit|pr|setup|providers|models|options> [...]" ;;
     *)         die "unknown command: $CMD" ;;
   esac
 fi

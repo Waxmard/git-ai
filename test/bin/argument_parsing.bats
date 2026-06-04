@@ -38,6 +38,34 @@ setup() {
   assert_output --partial " · Vertex AI (Gemini)"
 }
 
+@test "git-ai: usage mentions setup" {
+  run "$GIT_AI"
+  assert_output --partial "setup"
+}
+
+@test "git-ai setup: routes to the wizard (not unknown command)" {
+  local repo xdg
+  repo=$(make_test_repo)
+  xdg=$(mktemp -d)
+  # Numbered fallback: pick provider 1, default model. Isolated config + repo.
+  run bash -c "cd '$repo' && XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 printf '1\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 '$GIT_AI' setup"
+  local conf="$xdg/git-ai/options.conf"
+  local written=""; [[ -f "$conf" ]] && written=$(cat "$conf")
+  rm -rf "$repo" "$xdg"
+  assert_success
+  assert_output --partial "git-ai setup"
+  [[ "$written" == *"[gemini-api]"* ]]
+}
+
+@test "git-ai setup: no providers selected exits 1" {
+  local xdg
+  xdg=$(mktemp -d)
+  run bash -c "XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 printf '\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 '$GIT_AI' setup"
+  rm -rf "$xdg"
+  assert_failure 1
+  assert_output --partial "No providers selected"
+}
+
 @test "git-ai: unknown subcommand exits 1" {
   run "$GIT_AI" boguscommand
   assert_failure 1
