@@ -1,6 +1,6 @@
 # git-ai
 
-LLM-powered git workflow tools. Generate commit messages and PR titles using explicit auth methods and model IDs from the CLI, Lazygit, and other git environments that expose normal Git state.
+LLM-powered git workflow tools. Generate Conventional Commits messages and PR descriptions from your staged changes and branch — in the CLI, Lazygit, or any git environment.
 
 ## Install
 
@@ -8,35 +8,54 @@ LLM-powered git workflow tools. Generate commit messages and PR titles using exp
 npm install -g @waxmard/git-ai
 ```
 
-Or clone and symlink for local development:
+Or clone and symlink for local development (edits are live):
 
 ```bash
-make install   # symlinks to ~/.local/bin and ~/.local/lib; edits are live
+make install   # symlinks to ~/.local/bin and ~/.local/lib
 make uninstall
 ```
 
-## Prerequisites
+## Quickstart
 
-At least one auth method must be available:
+Most users authenticate through the [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini-api`). Set a key once, then generate:
 
-| Auth Method | Runtime | Auth |
-|-------------|---------|------|
+```bash
+export GEMINI_API_KEY=your-key        # or store it in your keychain — see Auth methods
+
+git add -A
+git-ai commit gemini-api              # prints a Conventional Commits message to stdout
+git commit -m "$(git-ai commit gemini-api)"   # …or commit with it in one line
+```
+
+Generate a PR title + body for the current branch:
+
+```bash
+git-ai pr gemini-api --base main
+```
+
+Run `git-ai commit` or `git-ai pr` with no auth method to pick one from an interactive [fzf](https://github.com/junegunn/fzf) picker. Both `git-ai` and `aigit` are interchangeable.
+
+## Auth methods
+
+git-ai needs at least one of these. `gemini-api` (Gemini CLI) and the two Vertex methods are the common choices; the rest are available if you already use that provider's CLI or API.
+
+| Auth Method | Runtime | Credentials |
+|-------------|---------|-------------|
+| `gemini-api` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `GEMINI_API_KEY` or system keychain |
 | `vertex-gemini` | `curl` + `python3` + `gcloud` | Google ADC / Vertex credentials |
 | `vertex-anthropic` | `curl` + `python3` + `gcloud` | Google ADC / Vertex credentials |
-
-> **Vertex AI support is limited to Gemini (`vertex-gemini`) and Anthropic (`vertex-anthropic`) model families.** Other publishers available on Vertex (Meta Llama, Mistral, etc.) are not yet supported.
-
-| `gemini-api` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `GEMINI_API_KEY` or system keychain |
 | `claude-code` | [Claude Code CLI](https://claude.ai/code) | Claude Code CLI session |
-| `anthropic-api` | `curl` + `python3` | `ANTHROPIC_API_KEY` |
 | `codex` | [Codex CLI](https://github.com/openai/codex) | Codex CLI session |
+| `anthropic-api` | `curl` + `python3` | `ANTHROPIC_API_KEY` |
 | `openai-api` | `curl` + `python3` | `OPENAI_API_KEY` |
 
-`anthropic-api` and `openai-api` require `curl` and `python3`, both standard on macOS and most Linux systems.
+`curl` and `python3` are standard on macOS and most Linux systems.
+
+> **Vertex AI support covers only the Gemini (`vertex-gemini`) and Anthropic (`vertex-anthropic`) model families.** Other Vertex publishers (Meta Llama, Mistral, etc.) are not yet supported. To pin a GCP account or run multiple projects, see [Pinning a GCP account (Vertex)](#pinning-a-gcp-account-vertex).
 
 ### Gemini API auth
 
-git-ai tries these in order until one succeeds:
+For `gemini-api`, git-ai resolves the key in this order until one succeeds:
 
 1. `GEMINI_API_KEY` environment variable
 2. System keychain — store the key as `gemini-api-key`:
@@ -44,13 +63,10 @@ git-ai tries these in order until one succeeds:
    - **GNOME / libsecret:** `secret-tool store --label="Gemini API Key" service gemini-api-key`
    - **pass:** `pass insert gemini-api-key`
    - **KDE Wallet:** `kwallet-query kdewallet -w gemini-api-key`
-3. Google Application Default Credentials (ADC):
-   - `gcloud auth application-default login`
-   - or set `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json`
+
+For Google ADC / service-account credentials (`gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`), use a `vertex-gemini` or `vertex-anthropic` auth method instead.
 
 ## Commands
-
-Both `git-ai` and `aigit` work identically — use whichever you prefer.
 
 ### commit
 
