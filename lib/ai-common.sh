@@ -270,12 +270,19 @@ resolve_gemini_bin() {
   return 1
 }
 
-resolve_gemini_api_key() {
+# resolve_api_key SERVICE ENVVAR
+# Resolve a provider API key, first hit wins: the named env var, then the OS
+# secret store keyed on SERVICE (macOS Keychain, libsecret, pass, KDE Wallet).
+# Prints the key on stdout; returns non-zero when nothing is found.
+resolve_api_key() {
+  local service="$1"
+  local envvar="$2"
   local keychain_account
   local key
+  local env_val="${!envvar:-}"
 
-  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
-    printf '%s\n' "$GEMINI_API_KEY"
+  if [[ -n "$env_val" ]]; then
+    printf '%s\n' "$env_val"
     return 0
   fi
 
@@ -283,12 +290,12 @@ resolve_gemini_api_key() {
   if command -v security >/dev/null 2>&1; then
     keychain_account="${USER:-${LOGNAME:-$(id -un 2>/dev/null)}}"
     if [[ -n "$keychain_account" ]]; then
-      key=$(security find-generic-password -a "$keychain_account" -s "gemini-api-key" -w 2>/dev/null) && [[ -n "$key" ]] && {
+      key=$(security find-generic-password -a "$keychain_account" -s "$service" -w 2>/dev/null) && [[ -n "$key" ]] && {
         printf '%s\n' "$key"
         return 0
       }
     fi
-    key=$(security find-generic-password -s "gemini-api-key" -w 2>/dev/null) && [[ -n "$key" ]] && {
+    key=$(security find-generic-password -s "$service" -w 2>/dev/null) && [[ -n "$key" ]] && {
       printf '%s\n' "$key"
       return 0
     }
@@ -296,7 +303,7 @@ resolve_gemini_api_key() {
 
   # Linux: libsecret / GNOME Keyring
   if command -v secret-tool >/dev/null 2>&1; then
-    key=$(secret-tool lookup service gemini-api-key 2>/dev/null) && [[ -n "$key" ]] && {
+    key=$(secret-tool lookup service "$service" 2>/dev/null) && [[ -n "$key" ]] && {
       printf '%s\n' "$key"
       return 0
     }
@@ -304,7 +311,7 @@ resolve_gemini_api_key() {
 
   # Linux: pass (password-store)
   if command -v pass >/dev/null 2>&1; then
-    key=$(pass show gemini-api-key 2>/dev/null) && [[ -n "$key" ]] && {
+    key=$(pass show "$service" 2>/dev/null) && [[ -n "$key" ]] && {
       printf '%s\n' "$key"
       return 0
     }
@@ -312,12 +319,57 @@ resolve_gemini_api_key() {
 
   # Linux: KDE Wallet
   if command -v kwallet-query >/dev/null 2>&1; then
-    key=$(kwallet-query kdewallet -r gemini-api-key 2>/dev/null) && [[ -n "$key" ]] && {
+    key=$(kwallet-query kdewallet -r "$service" 2>/dev/null) && [[ -n "$key" ]] && {
       printf '%s\n' "$key"
       return 0
     }
   fi
 
+  return 1
+}
+
+# Gemini key resolution is just the generic resolver under the gemini service.
+resolve_gemini_api_key() {
+  resolve_api_key gemini-api-key GEMINI_API_KEY
+}
+
+# provider_ready PROVIDER
+# True when PROVIDER could authenticate right now, mirroring run_provider's
+# per-provider preconditions. On failure, prints a one-line reason to stderr.
+# Used by the setup wizard's status table; run_provider's own checks defer to
+# the same primitives (resolve_api_key, _vertex_has_auth, command -v).
+provider_ready() {
+  local provider="${1:-}"
+  case ${provider%%@*} in
+    claude-code)
+      command -v claude >/dev/null 2>&1 && return 0
+      printf 'Claude Code CLI not installed\n' >&2 ;;
+    codex)
+      command -v codex >/dev/null 2>&1 && return 0
+      printf 'Codex CLI not installed\n' >&2 ;;
+    anthropic-api)
+      resolve_api_key anthropic-api-key ANTHROPIC_API_KEY >/dev/null 2>&1 && return 0
+      printf 'ANTHROPIC_API_KEY not set (env or keychain)\n' >&2 ;;
+    openai-api)
+      resolve_api_key openai-api-key OPENAI_API_KEY >/dev/null 2>&1 && return 0
+      printf 'OPENAI_API_KEY not set (env or keychain)\n' >&2 ;;
+    gemini-api)
+      resolve_gemini_api_key >/dev/null 2>&1 && return 0
+      printf 'Gemini auth not found (GEMINI_API_KEY or keychain)\n' >&2 ;;
+    vertex-gemini|vertex-anthropic)
+      local account project
+      account=$(vertex_resolve "$provider" account)
+      if ! _vertex_has_auth "$account"; then
+        printf 'Vertex auth not found (gcloud ADC, account=, or credentials=)\n' >&2
+        return 1
+      fi
+      project=$(vertex_resolve "$provider" project)
+      project="${project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
+      [[ -n "$project" ]] && return 0
+      printf 'Vertex project not set (project= or GOOGLE_CLOUD_PROJECT)\n' >&2 ;;
+    *)
+      printf 'unknown provider: %s\n' "$provider" >&2 ;;
+  esac
   return 1
 }
 
@@ -981,8 +1033,10 @@ run_provider() {
         die "Claude generation failed"
       ;;
     anthropic-api)
-      [[ -n "${ANTHROPIC_API_KEY:-}" ]] ||
-        die "Anthropic API auth requires ANTHROPIC_API_KEY."
+      local anthropic_key
+      anthropic_key=$(resolve_api_key anthropic-api-key ANTHROPIC_API_KEY) ||
+        die "Anthropic API auth not found. Set ANTHROPIC_API_KEY or store 'anthropic-api-key' in your keychain."
+      export ANTHROPIC_API_KEY="$anthropic_key"
       _run_anthropic_api "$model" "$prompt" "$input" | strip_fences ||
         die "Anthropic API generation failed"
       ;;
@@ -1056,8 +1110,10 @@ run_provider() {
       printf '\n%s\n' "$output" | strip_fences
       ;;
     openai-api)
-      [[ -n "${OPENAI_API_KEY:-}" ]] ||
-        die "OpenAI API auth requires OPENAI_API_KEY."
+      local openai_key
+      openai_key=$(resolve_api_key openai-api-key OPENAI_API_KEY) ||
+        die "OpenAI API auth not found. Set OPENAI_API_KEY or store 'openai-api-key' in your keychain."
+      export OPENAI_API_KEY="$openai_key"
       _run_openai_api "$model" "$prompt" "$input" | strip_fences ||
         die "OpenAI API generation failed"
       ;;
