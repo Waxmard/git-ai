@@ -454,6 +454,68 @@ _setup_pick_models() {
   [[ -n "$default_model" ]] && printf '%s\n' "$default_model"
 }
 
+# Help the user authenticate PROVIDER if it isn't ready yet. Key providers get
+# an interactive key prompt + storage choice; CLI/vertex providers get a hint.
+_setup_ensure_auth() {
+  local provider="$1"
+  local label
+  label=$(provider_display_name "$provider")
+
+  if provider_ready "$provider" 2>/dev/null; then
+    printf '  %s: already authenticated.\n' "$label"
+    return 0
+  fi
+
+  local meta service envvar
+  if meta=$(provider_key_meta "$provider"); then
+    read -r service envvar <<<"$meta"
+    printf '\n%s needs an API key.\n' "$label"
+    local key
+    read -rsp "  Paste key (blank to skip): " key
+    printf '\n'
+    if [[ -z "$key" ]]; then
+      printf '  Skipped — set %s later or re-run "git-ai setup".\n' "$envvar"
+      return 0
+    fi
+    printf '  Store it: 1) OS keychain  2) shell rc (plaintext)  3) skip saving\n'
+    local how
+    read -rp "  Choice [1]: " how
+    case "${how:-1}" in
+      1)
+        if store_api_key "$service" "$key"; then
+          printf '  Saved to your keychain (service: %s).\n' "$service"
+        else
+          printf '  No keychain backend found. Falling back to shell rc.\n'
+          local rc
+          rc=$(persist_key_to_rc "$envvar" "$key") &&
+            printf '  Appended export to %s — open a new shell or "source" it.\n' "$rc"
+        fi
+        ;;
+      2)
+        local rc
+        rc=$(persist_key_to_rc "$envvar" "$key") &&
+          printf '  Appended export to %s (plaintext) — open a new shell or "source" it.\n' "$rc"
+        ;;
+      *)
+        printf '  Not saved — export %s yourself to use this provider.\n' "$envvar"
+        ;;
+    esac
+    return 0
+  fi
+
+  # Non-key providers: point at the right install/auth step.
+  case "${provider%%@*}" in
+    claude-code)
+      printf '  %s: install the CLI — https://claude.ai/code\n' "$label" ;;
+    codex)
+      printf '  %s: install the CLI — https://github.com/openai/codex\n' "$label" ;;
+    vertex-gemini|vertex-anthropic)
+      printf '  %s: run "gcloud auth application-default login" and set a project\n' "$label"
+      printf '    (GOOGLE_CLOUD_PROJECT, or project= under [%s] in options.conf).\n' "$provider" ;;
+  esac
+  return 0
+}
+
 cmd_setup() {
   printf '\ngit-ai setup\n'
   printf '============\n\n'
@@ -492,6 +554,12 @@ cmd_setup() {
   printf '%s' "$combos" | render_options_conf >"$conf_path" ||
     die "Failed to write $conf_path"
   printf 'Wrote %s\n' "$conf_path"
+
+  # Authenticate any chosen provider that isn't ready yet.
+  printf '\nChecking access:\n'
+  for provider in "${chosen[@]}"; do
+    _setup_ensure_auth "$provider"
+  done
 
   # Best-effort: seed the per-repo default so the next commit/pr has a pick
   # ready without prompting. Only meaningful inside a git repo.

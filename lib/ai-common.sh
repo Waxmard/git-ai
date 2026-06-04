@@ -333,6 +333,63 @@ resolve_gemini_api_key() {
   resolve_api_key gemini-api-key GEMINI_API_KEY
 }
 
+# store_api_key SERVICE KEY
+# Persist KEY in the OS secret store under SERVICE, using whichever backend is
+# available — mirroring the read order in resolve_api_key so the key round-trips.
+# Returns non-zero when no secret-store backend is installed (caller should then
+# offer the shell-rc fallback).
+store_api_key() {
+  local service="$1" key="$2" account
+  account="${USER:-${LOGNAME:-$(id -un 2>/dev/null)}}"
+
+  if command -v security >/dev/null 2>&1; then
+    security add-generic-password -U -a "$account" -s "$service" -w "$key" 2>/dev/null && return 0
+  fi
+  if command -v secret-tool >/dev/null 2>&1; then
+    printf '%s' "$key" | secret-tool store --label="$service" service "$service" 2>/dev/null && return 0
+  fi
+  if command -v pass >/dev/null 2>&1; then
+    printf '%s\n' "$key" | pass insert -m -f "$service" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
+# shell_rc_path [SHELL]
+# Print the rc file to append an env export to, inferred from SHELL (or the
+# given shell basename).
+shell_rc_path() {
+  local sh="${1:-${SHELL##*/}}"
+  case "$sh" in
+    zsh)  printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash) printf '%s\n' "$HOME/.bashrc" ;;
+    fish) printf '%s\n' "$HOME/.config/fish/config.fish" ;;
+    *)    printf '%s\n' "$HOME/.profile" ;;
+  esac
+}
+
+# format_key_export ENVVAR KEY [SHELL]
+# Print the shell line that exports ENVVAR=KEY, in the syntax of the target
+# shell (fish uses `set -gx`; everything else POSIX `export`).
+format_key_export() {
+  local envvar="$1" key="$2" sh="${3:-${SHELL##*/}}"
+  case "$sh" in
+    fish) printf "set -gx %s '%s'\n" "$envvar" "$key" ;;
+    *)    printf "export %s='%s'\n" "$envvar" "$key" ;;
+  esac
+}
+
+# persist_key_to_rc ENVVAR KEY
+# Append an env export for KEY to the user's shell rc. Prints the rc path on
+# success. The key lands in plaintext — callers should warn the user.
+persist_key_to_rc() {
+  local envvar="$1" key="$2" rc line
+  rc=$(shell_rc_path) || return 1
+  line=$(format_key_export "$envvar" "$key")
+  mkdir -p "$(dirname "$rc")" 2>/dev/null || true
+  printf '\n# Added by git-ai setup\n%s\n' "$line" >>"$rc" || return 1
+  printf '%s\n' "$rc"
+}
+
 # provider_ready PROVIDER
 # True when PROVIDER could authenticate right now, mirroring run_provider's
 # per-provider preconditions. On failure, prints a one-line reason to stderr.
@@ -443,6 +500,19 @@ provider_family() {
     vertex-gemini|gemini-api) printf '%s\n' "gemini" ;;
     vertex-anthropic|claude-code|anthropic-api) printf '%s\n' "claude" ;;
     codex|openai-api) printf '%s\n' "openai" ;;
+    *) return 1 ;;
+  esac
+}
+
+# provider_key_meta PROVIDER
+# For an API-key provider, print "SERVICE ENVVAR" (the keychain service name and
+# the environment variable resolve_api_key consults). Returns non-zero for
+# providers that don't authenticate via a stored key (CLI / vertex).
+provider_key_meta() {
+  case ${1%%@*} in
+    anthropic-api) printf 'anthropic-api-key ANTHROPIC_API_KEY\n' ;;
+    openai-api)    printf 'openai-api-key OPENAI_API_KEY\n' ;;
+    gemini-api)    printf 'gemini-api-key GEMINI_API_KEY\n' ;;
     *) return 1 ;;
   esac
 }
