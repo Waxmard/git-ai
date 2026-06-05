@@ -357,6 +357,7 @@ store_api_key() {
 # shell_rc_path [SHELL]
 # Print the rc file to append an env export to, inferred from SHELL (or the
 # given shell basename).
+# shellcheck disable=SC2120  # SHELL arg is optional; persist_key_to_rc omits it, tests pass it
 shell_rc_path() {
   local sh="${1:-${SHELL##*/}}"
   case "$sh" in
@@ -383,6 +384,7 @@ format_key_export() {
 # success. The key lands in plaintext — callers should warn the user.
 persist_key_to_rc() {
   local envvar="$1" key="$2" rc line
+  # shellcheck disable=SC2119  # intentional: no SHELL arg, use $SHELL default
   rc=$(shell_rc_path) || return 1
   line=$(format_key_export "$envvar" "$key")
   mkdir -p "$(dirname "$rc")" 2>/dev/null || true
