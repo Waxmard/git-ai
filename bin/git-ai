@@ -128,6 +128,8 @@ cmd_commit() {
 
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
+  [[ -z "$PROVIDER" ]] && maybe_first_run_setup commit
+
   if [[ -z "$PROVIDER" ]]; then
     local IS_TTY=false PICKED
     [[ -t 1 ]] && IS_TTY=true
@@ -260,6 +262,8 @@ cmd_pr() {
         ;;
     esac
   done
+
+  [[ -z "$PROVIDER" ]] && maybe_first_run_setup pr
 
   if [[ -z "$PROVIDER" ]]; then
     local IS_TTY=false PICKED
@@ -452,6 +456,31 @@ _setup_pick_models() {
   fi
   # Fallback: the catalog default for this provider.
   [[ -n "$default_model" ]] && printf '%s\n' "$default_model"
+}
+
+# maybe_first_run_setup TOOL
+# Launch the setup wizard the first time a user runs commit/pr with nothing
+# configured, mimicking Claude Code's first-run flow. No-ops (returns 0) when
+# anything is already configured, when not on an interactive tty, or when
+# explicitly disabled — so scripts and the lazygit capture path are never
+# interrupted.
+maybe_first_run_setup() {
+  local tool="$1"
+  local conf sentinel
+  conf=$(user_options_path)
+  sentinel="$(dirname "$conf")/.setup-done"
+
+  # Already configured / already prompted → nothing to do.
+  [[ -e "$conf" || -e "$sentinel" ]] && return 0
+  [[ -n "$(get_last_provider "$tool" 2>/dev/null)" ]] && return 0
+  # Interactive only; never in CI, pipes, or when opted out.
+  [[ -t 0 && -t 1 ]] || return 0
+  [[ -z "${CI:-}" && -z "${GIT_AI_NO_SETUP:-}" ]] || return 0
+
+  printf 'git-ai: no providers configured — launching setup (GIT_AI_NO_SETUP=1 to skip).\n' >&2
+  cmd_setup
+  mkdir -p "$(dirname "$sentinel")" 2>/dev/null || true
+  : >"$sentinel" 2>/dev/null || true
 }
 
 # Help the user authenticate PROVIDER if it isn't ready yet. Key providers get

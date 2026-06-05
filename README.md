@@ -19,23 +19,23 @@ make uninstall
 
 ## Quickstart
 
-Most users authenticate through the [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini-api`). Set a key once, then generate:
+Run the setup wizard once — it detects your installed provider CLIs and keys, helps you authenticate, and writes your config:
 
 ```bash
-export GEMINI_API_KEY=your-key        # or store it in your keychain — see Auth methods
+git-ai setup
+```
 
+The first time you run `git-ai commit` or `git-ai pr` with nothing configured, the wizard launches automatically (skip with `GIT_AI_NO_SETUP=1`). Then generate:
+
+```bash
 git add -A
-git-ai commit gemini-api              # prints a Conventional Commits message to stdout
-git commit -m "$(git-ai commit gemini-api)"   # …or commit with it in one line
+git-ai commit                         # prints a Conventional Commits message to stdout
+git commit -m "$(git-ai commit)"      # …or commit with it in one line
+
+git-ai pr --base main                 # PR title + body for the current branch
 ```
 
-Generate a PR title + body for the current branch:
-
-```bash
-git-ai pr gemini-api --base main
-```
-
-Run `git-ai commit` or `git-ai pr` with no auth method to pick one from an interactive [fzf](https://github.com/junegunn/fzf) picker. Both `git-ai` and `aigit` are interchangeable.
+With no auth method on the command line, git-ai uses your configured default or pops an interactive [fzf](https://github.com/junegunn/fzf) picker. You can still pass one explicitly — `git-ai commit gemini-api`. Both `git-ai` and `aigit` are interchangeable.
 
 ## Auth methods
 
@@ -55,12 +55,12 @@ git-ai needs at least one of these. `gemini-api` (Gemini CLI) and the two Vertex
 
 > **Vertex AI support covers only the Gemini (`vertex-gemini`) and Anthropic (`vertex-anthropic`) model families.** Other Vertex publishers (Meta Llama, Mistral, etc.) are not yet supported. To pin a GCP account or run multiple projects, see [Pinning a GCP account (Vertex)](#pinning-a-gcp-account-vertex).
 
-### Gemini API auth
+### API key auth (`gemini-api`, `anthropic-api`, `openai-api`)
 
-For `gemini-api`, git-ai resolves the key in this order until one succeeds:
+`git-ai setup` prompts for these keys and stores them for you (keychain or shell rc). To do it by hand, git-ai resolves each key in this order until one succeeds:
 
-1. `GEMINI_API_KEY` environment variable
-2. System keychain — store the key as `gemini-api-key`:
+1. The environment variable — `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`.
+2. System keychain, under the service name `<provider>-api-key` (e.g. `gemini-api-key`, `anthropic-api-key`, `openai-api-key`):
    - **macOS:** `security add-generic-password -s gemini-api-key -a "$USER" -w YOUR_KEY`
    - **GNOME / libsecret:** `secret-tool store --label="Gemini API Key" service gemini-api-key`
    - **pass:** `pass insert gemini-api-key`
@@ -69,6 +69,20 @@ For `gemini-api`, git-ai resolves the key in this order until one succeeds:
 For Google ADC / service-account credentials (`gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`), use a `vertex-gemini` or `vertex-anthropic` auth method instead.
 
 ## Commands
+
+### setup
+
+Interactive wizard to configure providers and authentication.
+
+```bash
+git-ai setup
+```
+
+- Shows a readiness table for every provider (which CLIs are installed, which keys are present)
+- Lets you pick the providers and models to enable, then writes `options.conf` (backs up any existing file to `options.conf.bak`)
+- For API-key providers, prompts for the key and offers to store it in your OS keychain or shell rc
+- Seeds the per-repo default so the next `commit`/`pr` runs without prompting
+- Runs automatically on first use when nothing is configured; set `GIT_AI_NO_SETUP=1` to disable that
 
 ### commit
 
@@ -80,7 +94,7 @@ git-ai commit [auth-method] [model-id]
 
 - Reads `git diff --staged` and produces a Conventional Commits message
 - Includes a description body for non-trivial changes
-- No default auth method on a fresh repo; choose one explicitly
+- Uses your configured default (from `git-ai setup`) or the interactive picker; pass an auth method to override
 - All auth methods default to a lightweight model when `model-id` is omitted
 - Pass `last` as the provider to reuse the previously generated message
 
@@ -100,7 +114,7 @@ git-ai mr [...]   # alias for pr
 - Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
 - Use `--fresh` to ignore the saved output and regenerate from scratch
 - Use `--from-sha` to override the saved HEAD and regenerate only from commits after a specific prior generated commit
-- No default auth method on a fresh repo; choose one explicitly
+- Uses your configured default (from `git-ai setup`) or the interactive picker; pass an auth method to override
 - All auth methods default to a stronger model when `model-id` is omitted
 
 ### options
