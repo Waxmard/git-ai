@@ -545,14 +545,150 @@ _setup_ensure_auth() {
   return 0
 }
 
-cmd_setup() {
-  printf '\ngit-ai setup\n'
-  printf '============\n\n'
+# Numbered single-choice over provider tokens. Prints the menu to stderr and
+# echoes the chosen token to stdout; returns non-zero on cancel/empty.
+_setup_choose_provider() {
+  local prompt="$1"
+  shift
+  local -a items=("$@")
+  [[ ${#items[@]} -gt 0 ]] || return 1
+  local i=1 p
+  for p in "${items[@]}"; do
+    printf '  %d) %s\n' "$i" "$(provider_display_name "$p")" >&2
+    i=$((i + 1))
+  done
+  local n
+  read -rp "$prompt" n
+  [[ "$n" =~ ^[0-9]+$ ]] && ((n >= 1 && n <= ${#items[@]})) || return 1
+  printf '%s\n' "${items[$((n - 1))]}"
+}
+
+# Apply a surgical conf filter (conf_add_section / conf_remove_section / …) to
+# CONF in place via a temp file, so a failed edit never truncates the config.
+_conf_apply() {
+  local conf="$1"
+  shift
+  local tmp
+  tmp=$(mktemp) || { printf 'edit failed (mktemp)\n' >&2; return 1; }
+  if "$@" <"$conf" >"$tmp"; then
+    mv "$tmp" "$conf"
+  else
+    rm -f "$tmp"
+    printf 'edit failed\n' >&2
+    return 1
+  fi
+}
+
+# Pick models for PROVIDER and print them space-joined into an array via stdout
+# (one per line). Shared by add / change-models actions.
+_setup_models_for() {
+  local provider="$1" m
+  while IFS= read -r m; do [[ -n "$m" ]] && printf '%s\n' "$m"; done < <(_setup_pick_models "$provider")
+}
+
+_setup_print_summary() {
+  local conf="$1" p any=0
+  printf 'Currently enabled:\n'
+  while IFS= read -r p; do
+    printf '  • %s\n' "$(provider_display_name "$p")"
+    any=1
+  done < <(conf_section_providers <"$conf")
+  [[ $any -eq 1 ]] || printf '  (none)\n'
+}
+
+# Add a provider that isn't already in the config.
+_setup_action_add() {
+  local conf="$1" p base present=$'\n'
+  while IFS= read -r p; do present+="${p%%@*}"$'\n'; done < <(conf_section_providers <"$conf")
+  local -a cands=()
+  for p in "${SETUP_PROVIDERS[@]}"; do
+    case "$present" in *$'\n'"$p"$'\n'*) ;; *) cands+=("$p") ;; esac
+  done
+  if [[ ${#cands[@]} -eq 0 ]]; then
+    printf 'All providers are already enabled.\n'
+    return 0
+  fi
+  local provider
+  provider=$(_setup_choose_provider 'Add which provider? ' "${cands[@]}") || { printf 'Cancelled.\n'; return 0; }
+  local -a models=()
+  while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
+  _conf_apply "$conf" conf_add_section "$provider" ${models[@]+"${models[@]}"} &&
+    printf 'Added %s.\n' "$(provider_display_name "$provider")"
+  _setup_ensure_auth "$provider"
+}
+
+# Remove a provider section (preserving the rest of the file).
+_setup_action_remove() {
+  local conf="$1" p
+  local -a secs=()
+  while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
+  local provider
+  provider=$(_setup_choose_provider 'Remove which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+  _conf_apply "$conf" conf_remove_section "$provider" &&
+    printf 'Removed %s.\n' "$(provider_display_name "$provider")"
+}
+
+# Change the models listed under an existing provider (settings preserved).
+_setup_action_models() {
+  local conf="$1" p
+  local -a secs=()
+  while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
+  local provider
+  provider=$(_setup_choose_provider 'Edit models for which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+  local -a models=()
+  while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
+  _conf_apply "$conf" conf_set_section_models "$provider" ${models[@]+"${models[@]}"} &&
+    printf 'Updated models for %s.\n' "$(provider_display_name "$provider")"
+}
+
+# Authenticate an existing provider.
+_setup_action_auth() {
+  local conf="$1" p
+  local -a secs=()
+  while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
+  local provider
+  provider=$(_setup_choose_provider 'Auth for which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+  _setup_ensure_auth "$provider"
+}
+
+# Edit an existing config additively: add/remove providers or change models, one
+# operation at a time, each preserving the rest of the file. No overwrite.
+_setup_edit_existing() {
+  local conf="$1"
+  printf 'Editing your config: %s\n(Each change is applied in place — nothing else is touched.)\n\n' "$conf"
+  while true; do
+    _setup_print_summary "$conf"
+    printf '\nActions:\n'
+    printf '  1) Add a provider\n'
+    printf '  2) Remove a provider\n'
+    printf "  3) Change a provider's models\n"
+    printf '  4) Set up auth for a provider\n'
+    printf '  5) Done\n'
+    local act
+    read -rp 'Choose [5]: ' act
+    printf '\n'
+    case "${act:-5}" in
+      1) _setup_action_add "$conf" ;;
+      2) _setup_action_remove "$conf" ;;
+      3) _setup_action_models "$conf" ;;
+      4) _setup_action_auth "$conf" ;;
+      5 | q | Q | done) break ;;
+      *) printf 'Unknown choice.\n' ;;
+    esac
+    printf '\n'
+  done
+  printf 'Done. Config saved at %s\n' "$conf"
+}
+
+# Fresh, from-scratch configuration when no options.conf exists yet.
+_setup_fresh() {
+  local conf="$1"
   printf 'Configure which LLM providers and models git-ai offers in its picker.\n\n'
 
   _setup_status_table
 
   local -a chosen=()
+  local p
   while IFS= read -r p; do [[ -n "$p" ]] && chosen+=("$p"); done < <(_setup_pick_providers)
   if [[ ${#chosen[@]} -eq 0 ]]; then
     die "No providers selected — nothing to configure."
@@ -571,18 +707,12 @@ cmd_setup() {
     [[ -n "$got_model" ]] || combos+="${provider}:"$'\n'
   done
 
-  # Write options.conf, backing up any existing file.
-  local conf_path conf_dir
-  conf_path=$(user_options_path)
-  conf_dir=$(dirname "$conf_path")
+  local conf_dir
+  conf_dir=$(dirname "$conf")
   mkdir -p "$conf_dir" || die "Cannot create config dir: $conf_dir"
-  if [[ -e "$conf_path" ]]; then
-    cp "$conf_path" "${conf_path}.bak" || die "Cannot back up existing config"
-    printf 'Backed up existing config to %s.bak\n' "$conf_path"
-  fi
-  printf '%s' "$combos" | render_options_conf >"$conf_path" ||
-    die "Failed to write $conf_path"
-  printf 'Wrote %s\n' "$conf_path"
+  printf '%s' "$combos" | render_options_conf >"$conf" ||
+    die "Failed to write $conf"
+  printf 'Wrote %s\n' "$conf"
 
   # Authenticate any chosen provider that isn't ready yet.
   printf '\nChecking access:\n'
@@ -599,6 +729,19 @@ cmd_setup() {
   fi
 
   printf '\nDone. Try:  git add -A && git-ai commit\n'
+}
+
+cmd_setup() {
+  printf '\ngit-ai setup\n'
+  printf '============\n\n'
+
+  local conf
+  conf=$(user_options_path)
+  if [[ -e "$conf" ]]; then
+    _setup_edit_existing "$conf"
+  else
+    _setup_fresh "$conf"
+  fi
 }
 
 # ---------------------------------------------------------------------------

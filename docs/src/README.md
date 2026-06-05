@@ -76,8 +76,8 @@ Interactive wizard to configure providers and authentication.
 git-ai setup
 ```
 
-- Shows a readiness table for every provider (which CLIs are installed, which keys are present)
-- Lets you pick the providers and models to enable, then writes `options.conf` (backs up any existing file to `options.conf.bak`)
+- **First run** (no config yet): shows a readiness table for every provider, lets you pick the providers and models to enable, and writes `options.conf`
+- **Later runs** (config exists): opens an additive edit menu — add a provider, remove one, or change a provider's models — applied **in place**, one change at a time, preserving everything else in the file (comments, vertex `account=`/`projects=` settings). Nothing is ever overwritten wholesale
 - For API-key providers, prompts for the key and offers to store it in your OS keychain or shell rc
 - Seeds the per-repo default so the next `commit`/`pr` runs without prompting
 - Runs automatically on first use when nothing is configured; set `GIT_AI_NO_SETUP=1` to disable that

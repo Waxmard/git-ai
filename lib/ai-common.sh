@@ -675,6 +675,86 @@ render_options_conf() {
   done
 }
 
+# The next four helpers are surgical, in-place editors over an existing
+# options.conf: each reads the file on stdin and writes the edited file to
+# stdout, touching only the targeted [provider] section and preserving every
+# other line verbatim (comments, vertex `account=`/`projects=` settings, the
+# shared [vertex] block, unrelated sections). This lets `git-ai setup` add or
+# remove providers/models without ever rewriting — and losing — the rest.
+
+# conf_section_providers
+# Emit the section names that name a real provider (skips the shared [vertex]
+# block and any non-provider headers), one per line, in file order.
+conf_section_providers() {
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^\[(.+)\]$ ]] || continue
+    provider_is_valid "${BASH_REMATCH[1]}" && printf '%s\n' "${BASH_REMATCH[1]}"
+  done
+}
+
+# conf_remove_section PROVIDER
+# Drop the [PROVIDER] header and its body (up to the next header / EOF).
+conf_remove_section() {
+  local target="$1" line in_target=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+      if [[ "${BASH_REMATCH[1]}" == "$target" ]]; then
+        in_target=1
+        continue
+      fi
+      in_target=0
+    fi
+    [[ $in_target -eq 1 ]] && continue
+    printf '%s\n' "$line"
+  done
+}
+
+# conf_add_section PROVIDER [MODEL...]
+# Append a new [PROVIDER] section with the given models. Pure append — the
+# existing file passes through untouched. Caller ensures PROVIDER isn't already
+# present.
+conf_add_section() {
+  local provider="$1"
+  shift
+  cat
+  printf '\n[%s]\n' "$provider"
+  local m
+  for m in "$@"; do
+    printf '%s\n' "$m"
+  done
+}
+
+# conf_set_section_models PROVIDER [MODEL...]
+# Replace the model-ID lines inside [PROVIDER] with the given models, preserving
+# the section's settings (key=value) and comments. A "model line" is any
+# non-blank line in the section that is not a comment, a key=value setting, or a
+# header — matching parse_user_options' notion of a model.
+conf_set_section_models() {
+  local target="$1"
+  shift
+  local line in_target=0 m
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+      in_target=0
+      printf '%s\n' "$line"
+      if [[ "${BASH_REMATCH[1]}" == "$target" ]]; then
+        in_target=1
+        for m in "$@"; do printf '%s\n' "$m"; done
+      fi
+      continue
+    fi
+    if [[ $in_target -eq 1 ]]; then
+      # Keep settings / comments / blanks; drop the old model lines.
+      if [[ -z "$line" || "$line" == \#* || "$line" == *=* ]]; then
+        printf '%s\n' "$line"
+      fi
+      continue
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
 # Parse the user options file and emit one "provider:model" line per enabled
 # combo. Empty sections drop that provider entirely. Unknown provider section
 # names are silently ignored. Custom model IDs (not in the shipped catalog)
