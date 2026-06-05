@@ -81,6 +81,7 @@ git-ai setup
 - **First run** (no config yet): shows a readiness table for every provider, lets you pick the providers and models to enable, and writes `options.conf`
 - **Later runs** (config exists): opens an additive edit menu — add a provider, remove one, or change a provider's models — applied **in place**, one change at a time, preserving everything else in the file (comments, vertex `account=`/`projects=` settings). Nothing is ever overwritten wholesale
 - For API-key providers, prompts for the key and offers to store it in your OS keychain or shell rc
+- For Vertex providers, offers to run `gcloud auth application-default login` and prompts for `project` (required) / `region` / `account`, writing them into that provider's section. The shared `[vertex]` block, profiles, and `credentials=` stay manual — see [Pinning a GCP account (Vertex)](#pinning-a-gcp-account-vertex)
 - Seeds the per-repo default so the next `commit`/`pr` runs without prompting
 - Runs automatically on first use when nothing is configured; set `GIT_AI_NO_SETUP=1` to disable that
 
@@ -290,7 +291,9 @@ gpt-5.4-mini
 
 ### Pinning a GCP account (Vertex)
 
-If you have multiple GCP accounts, a `[vertex-*]` section accepts optional `key = value` lines alongside its model IDs to pin which account and project that provider uses (these keys are not models and never appear in the picker):
+`git-ai setup` writes `project` / `region` / `account` for a single Vertex provider for you. This section is the manual reference for that, plus the advanced cases the wizard leaves alone: service-account `credentials=`, the shared `[vertex]` block, and multi-project profiles.
+
+A `[vertex-*]` section accepts optional `key = value` lines alongside its model IDs to pin which account and project that provider uses (these keys are not models and never appear in the picker):
 
 ```ini
 [vertex-anthropic]

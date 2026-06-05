@@ -483,10 +483,82 @@ maybe_first_run_setup() {
   : >"$sentinel" 2>/dev/null || true
 }
 
+# Interactive vertex auth assist: offer ADC login, then prompt for the common
+# per-section settings (project required, region/account optional) and write
+# them into [PROVIDER] via conf_set_section_setting. The shared [vertex] block,
+# profiles, and service-account credentials stay manual (see the README).
+_setup_vertex_assist() {
+  local provider="$1" conf="$2"
+  local label account project region input ans
+  label=$(provider_display_name "$provider")
+  printf '\n%s needs Google Cloud access.\n' "$label"
+
+  # 1. Application Default Credentials (or a per-section account).
+  account=$(vertex_resolve "$provider" account)
+  if ! _vertex_has_auth "$account"; then
+    read -rp '  Run "gcloud auth application-default login" now? [y/N]: ' ans
+    case "$ans" in
+      y | Y | yes | Yes)
+        if command -v gcloud >/dev/null 2>&1; then
+          gcloud auth application-default login || printf '  gcloud login failed.\n'
+        else
+          printf '  gcloud not installed — see https://cloud.google.com/sdk\n'
+        fi
+        ;;
+      *) printf '  Skipped — run it yourself, then re-run setup.\n' ;;
+    esac
+  fi
+
+  # 2. Project (required). Default-fill from gcloud's active config.
+  project=$(vertex_resolve "$provider" project)
+  project="${project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
+  if [[ -z "$project" ]]; then
+    local default_project=""
+    if command -v gcloud >/dev/null 2>&1; then
+      default_project=$(gcloud config get-value project 2>/dev/null)
+      [[ "$default_project" == "(unset)" ]] && default_project=""
+    fi
+    read -rp "  GCP project${default_project:+ [$default_project]}: " input
+    input="${input:-$default_project}"
+    if [[ -n "$input" ]]; then
+      _conf_apply "$conf" conf_set_section_setting "$provider" project "$input" &&
+        printf '  Set project = %s\n' "$input"
+    else
+      printf '  No project set — vertex requires one to run.\n'
+    fi
+  fi
+
+  # 3. Region (optional; default us-central1).
+  region=$(vertex_resolve "$provider" region)
+  if [[ -z "$region" ]]; then
+    read -rp '  Vertex region [Enter for us-central1]: ' input
+    if [[ -n "$input" ]]; then
+      _conf_apply "$conf" conf_set_section_setting "$provider" region "$input" &&
+        printf '  Set region = %s\n' "$input"
+    fi
+  fi
+
+  # 4. Account (optional; pin a specific gcloud login for token minting).
+  if [[ -z "$account" ]]; then
+    if command -v gcloud >/dev/null 2>&1; then
+      local accts
+      accts=$(gcloud auth list --format="value(account)" 2>/dev/null)
+      [[ -n "$accts" ]] && printf '  Known gcloud accounts:\n%s\n' "$(printf '%s\n' "$accts" | sed 's/^/    /')"
+    fi
+    read -rp '  Pin a gcloud account? [Enter for default ADC]: ' input
+    if [[ -n "$input" ]]; then
+      _conf_apply "$conf" conf_set_section_setting "$provider" account "$input" &&
+        printf '  Set account = %s\n' "$input"
+    fi
+  fi
+}
+
 # Help the user authenticate PROVIDER if it isn't ready yet. Key providers get
-# an interactive key prompt + storage choice; CLI/vertex providers get a hint.
+# an interactive key prompt + storage choice; vertex gets project/region/account
+# assist; CLI providers get an install hint. CONF is the options.conf being
+# edited (vertex settings are written there).
 _setup_ensure_auth() {
-  local provider="$1"
+  local provider="$1" conf="${2:-$(user_options_path)}"
   local label
   label=$(provider_display_name "$provider")
 
@@ -539,8 +611,7 @@ _setup_ensure_auth() {
     codex)
       printf '  %s: install the CLI — https://github.com/openai/codex\n' "$label" ;;
     vertex-gemini|vertex-anthropic)
-      printf '  %s: run "gcloud auth application-default login" and set a project\n' "$label"
-      printf '    (GOOGLE_CLOUD_PROJECT, or project= under [%s] in options.conf).\n' "$provider" ;;
+      _setup_vertex_assist "$provider" "$conf" ;;
   esac
   return 0
 }
@@ -614,7 +685,7 @@ _setup_action_add() {
   while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
   _conf_apply "$conf" conf_add_section "$provider" ${models[@]+"${models[@]}"} &&
     printf 'Added %s.\n' "$(provider_display_name "$provider")"
-  _setup_ensure_auth "$provider"
+  _setup_ensure_auth "$provider" "$conf"
 }
 
 # Remove a provider section (preserving the rest of the file).
@@ -648,7 +719,7 @@ _setup_action_auth() {
   while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
   local provider
   provider=$(_setup_choose_provider 'Auth for which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
-  _setup_ensure_auth "$provider"
+  _setup_ensure_auth "$provider" "$conf"
 }
 
 # Edit an existing config additively: add/remove providers or change models, one
@@ -717,7 +788,7 @@ _setup_fresh() {
   # Authenticate any chosen provider that isn't ready yet.
   printf '\nChecking access:\n'
   for provider in "${chosen[@]}"; do
-    _setup_ensure_auth "$provider"
+    _setup_ensure_auth "$provider" "$conf"
   done
 
   # Best-effort: seed the per-repo default so the next commit/pr has a pick

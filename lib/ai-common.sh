@@ -755,6 +755,38 @@ conf_set_section_models() {
   done
 }
 
+# conf_set_section_setting PROVIDER KEY VALUE
+# Upsert a `KEY = VALUE` setting line inside [PROVIDER] (used for vertex
+# `project`/`region`/`account`), preserving the section's models and other
+# settings. Replaces an existing KEY line wherever it sits; otherwise inserts it
+# right after the header. Appends a new section if PROVIDER isn't present.
+conf_set_section_setting() {
+  local target="$1" key="$2" value="$3"
+  local newline="${key} = ${value}"
+  local line in_target=0 found=0 k
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+      in_target=0
+      printf '%s\n' "$line"
+      if [[ "${BASH_REMATCH[1]}" == "$target" ]]; then
+        in_target=1
+        found=1
+        printf '%s\n' "$newline"
+      fi
+      continue
+    fi
+    if [[ $in_target -eq 1 && "$line" == *=* ]]; then
+      k="${line%%=*}"
+      k="${k//[[:space:]]/}"
+      [[ "$k" == "$key" ]] && continue # drop the old KEY line
+    fi
+    printf '%s\n' "$line"
+  done
+  if [[ $found -eq 0 ]]; then
+    printf '\n[%s]\n%s\n' "$target" "$newline"
+  fi
+}
+
 # Parse the user options file and emit one "provider:model" line per enabled
 # combo. Empty sections drop that provider entirely. Unknown provider section
 # names are silently ignored. Custom model IDs (not in the shipped catalog)

@@ -104,3 +104,37 @@ teardown() {
   run grep -A1 '^\[claude-code\]$' "${TEST_DIR}/out.conf"
   assert_output --partial 'claude-sonnet-4-6'
 }
+
+# --- conf_set_section_setting ----------------------------------------------
+
+@test "conf_set_section_setting: inserts a new setting, keeps models" {
+  run conf_set_section_setting vertex-gemini project my-proj <"$FIXTURE"
+  assert_success
+  assert_line 'project = my-proj'
+  assert_line 'gemini-3.5-flash'
+  assert_line '[vertex-gemini]'
+}
+
+@test "conf_set_section_setting: updates an existing key in place (no dup)" {
+  printf '[vertex-gemini]\nregion = us-central1\ngemini-3.5-flash\n' >"${TEST_DIR}/v.conf"
+  run conf_set_section_setting vertex-gemini region us-east5 <"${TEST_DIR}/v.conf"
+  assert_success
+  assert_line 'region = us-east5'
+  refute_line 'region = us-central1'
+  assert_equal "$(printf '%s\n' "$output" | grep -c '^region')" "1"
+}
+
+@test "conf_set_section_setting: appends a section when the provider is absent" {
+  run conf_set_section_setting vertex-anthropic project acme <"$FIXTURE"
+  assert_success
+  assert_line '[vertex-anthropic]'
+  assert_line 'project = acme'
+}
+
+@test "conf_set_section_setting: leaves the shared [vertex] block untouched" {
+  run conf_set_section_setting vertex-gemini region us-east5 <"$FIXTURE"
+  assert_success
+  # Setting goes in [vertex-gemini], not the shared [vertex] block.
+  assert_line 'account  = me@acme.com'
+  assert_line 'projects = alpha, beta'
+}
