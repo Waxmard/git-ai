@@ -39,6 +39,8 @@ With no auth method on the command line, git-ai uses your configured default or 
 
 ## Auth methods
 
+`git-ai setup` is the way in — it shows which of these are ready, authenticates you, and writes the config. The table is a reference for what exists; you don't configure any of it by hand unless you want to (see [Manual configuration](#manual-configuration-advanced)).
+
 git-ai needs at least one of these. `gemini-api` (Gemini CLI) and the two Vertex methods are the common choices; the rest are available if you already use that provider's CLI or API.
 
 | Auth Method | Runtime | Credentials |
@@ -55,18 +57,7 @@ git-ai needs at least one of these. `gemini-api` (Gemini CLI) and the two Vertex
 
 > **Vertex AI support covers only the Gemini (`vertex-gemini`) and Anthropic (`vertex-anthropic`) model families.** Other Vertex publishers (Meta Llama, Mistral, etc.) are not yet supported. To pin a GCP account or run multiple projects, see [Pinning a GCP account (Vertex)](#pinning-a-gcp-account-vertex).
 
-### API key auth (`gemini-api`, `anthropic-api`, `openai-api`)
-
-`git-ai setup` prompts for these keys and stores them for you (keychain or shell rc). To do it by hand, git-ai resolves each key in this order until one succeeds:
-
-1. The environment variable — `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`.
-2. System keychain, under the service name `<provider>-api-key` (e.g. `gemini-api-key`, `anthropic-api-key`, `openai-api-key`):
-   - **macOS:** `security add-generic-password -s gemini-api-key -a "$USER" -w YOUR_KEY`
-   - **GNOME / libsecret:** `secret-tool store --label="Gemini API Key" service gemini-api-key`
-   - **pass:** `pass insert gemini-api-key`
-   - **KDE Wallet:** `kwallet-query kdewallet -w gemini-api-key`
-
-For Google ADC / service-account credentials (`gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`), use a `vertex-gemini` or `vertex-anthropic` auth method instead.
+For API-key providers (`gemini-api`, `anthropic-api`, `openai-api`), `git-ai setup` prompts for the key and stores it in your OS keychain or shell rc. For Google ADC / service-account credentials, use a `vertex-gemini` or `vertex-anthropic` method and let setup run `gcloud auth application-default login`. To wire any of this up by hand instead, see [Manual configuration](#manual-configuration-advanced).
 
 ## Commands
 
@@ -266,7 +257,24 @@ If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`
 
 In the Python library, `get_staged_diff`, `get_diff`, and `get_diff_stat` auto-load `.git-ai-ignore` and apply built-in lockfile defaults when `exclude_patterns` is omitted. Pass `exclude_patterns=[]` to opt out of all filtering.
 
-## Narrowing the picker list
+## Manual configuration (advanced)
+
+Everything below is handled for you by `git-ai setup`. Reach for it only when you want to script config, edit it by hand, or set up an advanced case the wizard leaves alone (service accounts, multi-project Vertex profiles).
+
+### API keys by hand
+
+For `gemini-api`, `anthropic-api`, and `openai-api`, git-ai resolves each key in this order until one succeeds:
+
+1. The environment variable — `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`.
+2. System keychain, under the service name `<provider>-api-key` (e.g. `gemini-api-key`, `anthropic-api-key`, `openai-api-key`):
+   - **macOS:** `security add-generic-password -s gemini-api-key -a "$USER" -w YOUR_KEY`
+   - **GNOME / libsecret:** `secret-tool store --label="Gemini API Key" service gemini-api-key`
+   - **pass:** `pass insert gemini-api-key`
+   - **KDE Wallet:** `kwallet-query kdewallet -w gemini-api-key`
+
+For Google ADC / service-account credentials, use a `vertex-gemini` or `vertex-anthropic` method (`gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`).
+
+### Narrowing the picker list
 
 By default `git-ai options` enumerates every supported provider/model combo. Most users only have access to a couple. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
 
