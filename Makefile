@@ -47,15 +47,19 @@ install: hooks
 		echo "WARNING: another git-ai shadows this install on your PATH:"; \
 		echo "  PATH resolves:  $$resolved"; \
 		echo "  just installed: $(PREFIX)/bin/git-ai"; \
-		echo "  Remove the other (e.g. npm rm -g waxmard-git-ai) or put $(PREFIX)/bin first on PATH,"; \
-		echo "  then run 'hash -r' (bash) / 'rehash' (zsh), or open a new shell."; \
+		echo "  Remove the other (e.g. npm rm -g waxmard-git-ai) or put $(PREFIX)/bin first on PATH."; \
+		echo "  Then open a new shell, or refresh the command cache in this one:"; \
+		echo "    bash:  hash -r"; \
+		echo "    zsh:   rehash"; \
 	elif [ -n "$$npmdupe" ]; then \
 		echo ""; \
 		echo "WARNING: a waxmard-git-ai npm global is also installed (npm root -g)."; \
 		echo "  This symlink wins on PATH here, but the npm copy may shadow git-ai in other shells."; \
 		echo "  Remove it with: npm rm -g waxmard-git-ai"; \
 	else \
-		echo "  (If your shell still runs an old git-ai, run 'hash -r'/'rehash' or open a new shell.)"; \
+		echo "  If your shell still runs an old git-ai, open a new shell or refresh its command cache:"; \
+		echo "    bash:  hash -r"; \
+		echo "    zsh:   rehash"; \
 	fi
 
 uninstall:
