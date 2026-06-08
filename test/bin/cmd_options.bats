@@ -8,11 +8,26 @@ setup() {
   source "${REPO_ROOT}/lib/ai-common.sh"
   source "${REPO_ROOT}/bin/git-ai"
   export XDG_CONFIG_HOME="$(mktemp -d)"
+
+  # No static catalog: list_options' no-config candidates come from live model
+  # discovery. Block the network and seed a couple providers so the listing is
+  # deterministic and non-empty.
+  STUB="$(mktemp -d)"
+  local c
+  for c in curl security secret-tool pass kwallet-query gcloud; do
+    printf '#!/bin/sh\nexit 1\n' >"${STUB}/${c}"
+    chmod +x "${STUB}/${c}"
+  done
+  export PATH="${STUB}:${PATH}"
+  local cache="${XDG_CONFIG_HOME}/git-ai/models-cache"
+  mkdir -p "$cache"
+  printf 'gpt-5.4-mini\ngpt-5.4\n' >"${cache}/codex.list"
+  printf 'claude-haiku-4-5-20251001\nclaude-opus-4-6\n' >"${cache}/claude-code.list"
 }
 
 teardown() {
   cd /tmp
-  rm -rf "$TEST_REPO" "$XDG_CONFIG_HOME"
+  rm -rf "$TEST_REPO" "$XDG_CONFIG_HOME" "$STUB"
   unset XDG_CONFIG_HOME
 }
 

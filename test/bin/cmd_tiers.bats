@@ -7,11 +7,30 @@ setup() {
   cd "$TEST_REPO"
   source "${REPO_ROOT}/lib/ai-common.sh"
   source "${REPO_ROOT}/bin/git-ai"
+
+  # Model lists come from live discovery now; block the network and seed each
+  # provider's cache so cmd_models returns deterministic, offline results.
+  export XDG_CONFIG_HOME="$(mktemp -d)"
+  STUB="$(mktemp -d)"
+  local c
+  for c in curl security secret-tool pass kwallet-query gcloud; do
+    printf '#!/bin/sh\nexit 1\n' >"${STUB}/${c}"
+    chmod +x "${STUB}/${c}"
+  done
+  export PATH="${STUB}:${PATH}"
+  local cache="${XDG_CONFIG_HOME}/git-ai/models-cache"
+  mkdir -p "$cache"
+  printf 'gemini-3.1-flash-lite-preview\ngemini-3.1-pro-preview\n' >"${cache}/vertex-gemini.list"
+  printf 'gemini-3.1-flash-lite-preview\ngemini-3.1-pro-preview\n' >"${cache}/gemini-api.list"
+  printf 'claude-sonnet-4-6\nclaude-opus-4-6\n' >"${cache}/vertex-anthropic.list"
+  printf 'claude-haiku-4-5-20251001\nclaude-opus-4-6\n' >"${cache}/claude-code.list"
+  printf 'gpt-5.4-mini\ngpt-5.4\n' >"${cache}/codex.list"
 }
 
 teardown() {
   cd /tmp
-  rm -rf "$TEST_REPO"
+  rm -rf "$TEST_REPO" "$XDG_CONFIG_HOME" "$STUB"
+  unset XDG_CONFIG_HOME
 }
 
 @test "cmd_models: vertex-gemini returns gemini models" {

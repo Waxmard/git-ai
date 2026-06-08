@@ -170,13 +170,13 @@ save_last_provider() {
   save_last_choice "${1}-last-provider" "$2"
 }
 
+# Models are no longer a fixed catalog, so any saved id round-trips ("*" accepts
+# the stored value as-is). The provider API validates the model at call time.
 get_last_model() {
   local tool_name="$1"
   local provider="$2"
   local fallback="$3"
-  local valid
-  valid=$(models_for_provider "$provider" | paste -sd'|' -)
-  get_last_choice "${tool_name}-${provider}-last-model" "$fallback" "$valid"
+  get_last_choice "${tool_name}-${provider}-last-model" "$fallback" "*"
 }
 
 save_last_model() {
@@ -519,46 +519,171 @@ provider_key_meta() {
   esac
 }
 
-models_for_family() {
-  case $1 in
-    claude)
-      printf '%s\n' \
-        "claude-haiku-4-5-20251001" \
-        "claude-sonnet-4-6" \
-        "claude-opus-4-6"
-      ;;
-    gemini)
-      printf '%s\n' \
-        "gemini-3.1-flash-lite-preview" \
-        "gemini-3.1-pro-preview"
-      ;;
-    openai)
-      printf '%s\n' \
-        "gpt-5.4-mini" \
-        "gpt-5.4"
-      ;;
+# ---------------------------------------------------------------------------
+# Model discovery (live, cached)
+# ---------------------------------------------------------------------------
+# Model lists are fetched from each provider's own API rather than hardcoded, so
+# new models appear without a git-ai release. Results are cached to disk with a
+# TTL (network calls are slow; don't hit the API on every commit). Discovery is
+# best-effort: providers that can't be listed (the CLIs with no list endpoint,
+# or any provider whose creds aren't set yet) yield nothing, and every picker
+# falls back to free-text entry. Nothing here gates validation — resolve_model
+# accepts any model ID; the provider API is the real validator.
+
+_models_cache_dir() {
+  printf '%s/git-ai/models-cache\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
+}
+
+# Per-provider cache file. Profile-qualified tokens (vertex-x@profile) get their
+# own file so different projects don't clobber each other's catalogs.
+_models_cache_path() {
+  local safe="${1//[^a-zA-Z0-9._@-]/_}"
+  printf '%s/%s.list\n' "$(_models_cache_dir)" "$safe"
+}
+
+# discover_models PROVIDER [--refresh]
+# Print discovered model IDs (one per line). Serves a fresh on-disk cache when
+# present, otherwise fetches, caches, and prints. On a fetch failure, serves a
+# stale cache if one exists. Empty output + non-zero return when nothing can be
+# discovered, so callers know to rely on free-text entry. TTL in minutes via
+# GIT_AI_MODELS_TTL_MIN (default 1440 = 24h); --refresh forces a re-fetch.
+discover_models() {
+  local provider="$1" refresh="${2:-}"
+  local cache ttl="${GIT_AI_MODELS_TTL_MIN:-1440}"
+  cache=$(_models_cache_path "$provider")
+
+  if [[ "$refresh" != "--refresh" && -s "$cache" ]]; then
+    # `find -mmin +TTL` prints the file only when it is OLDER than TTL minutes;
+    # empty output means the cache is still fresh.
+    if [[ -z "$(find "$cache" -mmin +"$ttl" 2>/dev/null)" ]]; then
+      cat "$cache"
+      return 0
+    fi
+  fi
+
+  local fetched
+  fetched=$(_fetch_models "$provider" 2>/dev/null)
+  if [[ -n "$fetched" ]]; then
+    mkdir -p "$(_models_cache_dir)" 2>/dev/null || true
+    printf '%s\n' "$fetched" >"$cache" 2>/dev/null || true
+    printf '%s\n' "$fetched"
+    return 0
+  fi
+
+  # Fetch failed (offline, no creds, API error) — serve any stale cache.
+  [[ -s "$cache" ]] && { cat "$cache"; return 0; }
+  return 1
+}
+
+# Dispatch a provider to its fetch helper. The CLIs have no list endpoint, so
+# they borrow the matching API's catalog when a key is configured.
+_fetch_models() {
+  case ${1%%@*} in
+    gemini-api)       _fetch_models_gemini_api ;;
+    vertex-gemini)    _fetch_models_vertex "$1" google ;;
+    vertex-anthropic) _fetch_models_vertex "$1" anthropic ;;
+    anthropic-api)    _fetch_models_anthropic_api ;;
+    openai-api)       _fetch_models_openai_api ;;
+    claude-code)      _fetch_models_anthropic_api ;;
+    codex)            _fetch_models_openai_api ;;
+    *) return 1 ;;
   esac
 }
 
-models_for_provider() {
-  case ${1%%@*} in
-    vertex-gemini)
-      models_for_family gemini
-      ;;
-    vertex-anthropic)
-      models_for_family claude
-      ;;
-    gemini-api)
-      models_for_family gemini
-      ;;
-    claude-code|anthropic-api)
-      models_for_family claude
-      ;;
-    codex|openai-api)
-      models_for_family openai
-      ;;
-    *) return 1 ;;
-  esac
+# Gemini (AI Studio) — GET /v1beta/models, filtered to generateContent models.
+# The API key goes in the URL, so the whole URL lives in the curl config file
+# rather than argv (keeps the key out of `ps`).
+_fetch_models_gemini_api() {
+  local key cfg resp st
+  key=$(resolve_gemini_api_key) && [[ -n "$key" ]] || return 1
+  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  printf 'url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=%s"\n' "$key" >"$cfg"
+  resp=$(curl -sf -K "$cfg")
+  st=$?
+  rm -f "$cfg"
+  [[ $st -eq 0 ]] || return 1
+  GIT_AI_JSON="$resp" python3 -c '
+import json, os
+for m in json.loads(os.environ["GIT_AI_JSON"]).get("models", []):
+    if "generateContent" in m.get("supportedGenerationMethods", []):
+        name = m.get("baseModelId") or m.get("name", "").split("/")[-1]
+        if name:
+            print(name)
+' 2>/dev/null
+}
+
+# Anthropic — GET /v1/models (newest-first). Key in a header via curl config.
+_fetch_models_anthropic_api() {
+  local key cfg resp st
+  key=$(resolve_api_key anthropic-api-key ANTHROPIC_API_KEY) && [[ -n "$key" ]] || return 1
+  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  printf 'header = "x-api-key: %s"\n' "$key" >"$cfg"
+  resp=$(curl -sf -K "$cfg" -H "anthropic-version: 2023-06-01" \
+    "https://api.anthropic.com/v1/models?limit=1000")
+  st=$?
+  rm -f "$cfg"
+  [[ $st -eq 0 ]] || return 1
+  GIT_AI_JSON="$resp" python3 -c '
+import json, os
+for m in json.loads(os.environ["GIT_AI_JSON"]).get("data", []):
+    i = m.get("id")
+    if i:
+        print(i)
+' 2>/dev/null
+}
+
+# OpenAI — GET /v1/models returns every model (embeddings, tts, …), so filter to
+# chat-capable ids heuristically (gpt* / o<digit>*, minus known non-chat kinds).
+_fetch_models_openai_api() {
+  local key cfg resp st
+  key=$(resolve_api_key openai-api-key OPENAI_API_KEY) && [[ -n "$key" ]] || return 1
+  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  printf 'header = "Authorization: Bearer %s"\n' "$key" >"$cfg"
+  resp=$(curl -sf -K "$cfg" "https://api.openai.com/v1/models")
+  st=$?
+  rm -f "$cfg"
+  [[ $st -eq 0 ]] || return 1
+  GIT_AI_JSON="$resp" python3 -c '
+import json, os, re
+NON_CHAT = ("embedding", "tts", "whisper", "audio", "image", "realtime",
+            "dall-e", "moderation", "transcribe", "search", "similarity", "edit")
+ids = [m.get("id", "") for m in json.loads(os.environ["GIT_AI_JSON"]).get("data", [])]
+keep = [i for i in ids
+        if re.match(r"^(gpt|o[0-9])", i) and not any(x in i for x in NON_CHAT)]
+for i in sorted(set(keep), reverse=True):
+    print(i)
+' 2>/dev/null
+}
+
+# Vertex AI — GET {region}-aiplatform.../publishers/{google|anthropic}/models
+# (Model Garden catalog). Needs only a gcloud access token; the model id is the
+# last path segment of each publisherModels[].name, filtered to the family.
+_fetch_models_vertex() {
+  local provider="$1" publisher="$2"
+  local account region token host cfg resp st
+  account=$(vertex_resolve "$provider" account)
+  region=$(vertex_resolve "$provider" region)
+  region="${region:-us-central1}"
+  token=$(_vertex_access_token "$account") && [[ -n "$token" ]] || return 1
+  [[ "$region" == "global" ]] && host="aiplatform.googleapis.com" \
+                              || host="${region}-aiplatform.googleapis.com"
+  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  printf 'header = "Authorization: Bearer %s"\n' "$token" >"$cfg"
+  resp=$(curl -sf -K "$cfg" \
+    "https://${host}/v1beta1/publishers/${publisher}/models?pageSize=1000")
+  st=$?
+  rm -f "$cfg"
+  [[ $st -eq 0 ]] || return 1
+  GIT_AI_PUB="$publisher" GIT_AI_JSON="$resp" python3 -c '
+import json, os
+prefix = "gemini" if os.environ["GIT_AI_PUB"] == "google" else "claude"
+seen = set()
+for m in json.loads(os.environ["GIT_AI_JSON"]).get("publisherModels", []):
+    name = m.get("name", "").split("/")[-1]
+    if name.startswith(prefix) and name not in seen:
+        seen.add(name)
+        print(name)
+' 2>/dev/null
 }
 
 # order_by_recent LAST ITEM...
@@ -610,7 +735,7 @@ list_models() {
 
   while IFS= read -r model; do
     [[ -n "$model" ]] && all+=("$model")
-  done < <(models_for_provider "$provider")
+  done < <(discover_models "$provider")
   [[ ${#all[@]} -gt 0 ]] || return
 
   if [[ -n "$tool_name" ]]; then
@@ -977,7 +1102,7 @@ list_options() {
         [[ -n "$model" ]] || continue
         short="${model%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
         table+="${provider}:${model}"$'\t'"${short} · ${display}"$'\n'
-      done < <(models_for_provider "$provider")
+      done < <(discover_models "$provider")
     done
   fi
 
@@ -1045,46 +1170,43 @@ pick_via_fzf() {
   printf '%s\n' "${choice%%|*}"
 }
 
+# With no curated catalog there's no hardcoded default. Prefer the tool's last
+# saved pick for this provider; otherwise fall back to the first model discovery
+# returns (which is the API's newest-first / our sort order). May print nothing
+# when offline with a cold cache and no saved pick — resolve_model surfaces that.
 default_model_for_provider() {
   local tool_name="$1"
   local provider="$2"
-  local family
-  family=$(provider_family "$provider") || return 1
+  provider_family "$provider" >/dev/null || return 1
 
-  case "${tool_name}:${family}" in
-    pr:claude) printf '%s\n' "claude-opus-4-6" ;;
-    pr:gemini) printf '%s\n' "gemini-3.1-pro-preview" ;;
-    pr:openai) printf '%s\n' "gpt-5.4" ;;
-    *:claude) printf '%s\n' "claude-haiku-4-5-20251001" ;;
-    *:gemini) printf '%s\n' "gemini-3.1-flash-lite-preview" ;;
-    *:openai) printf '%s\n' "gpt-5.4-mini" ;;
-  esac
+  local last
+  last=$(get_last_model "$tool_name" "$provider" "")
+  if [[ -n "$last" ]]; then
+    printf '%s\n' "$last"
+    return 0
+  fi
+  discover_models "$provider" 2>/dev/null | head -n1
 }
 
+# Model IDs are no longer validated against a fixed list: an explicit model is
+# passed through verbatim (the provider API rejects a genuinely bad id at call
+# time). With no model, fall back to the per-provider default.
 resolve_model() {
   local tool_name="$1"
   local provider="$2"
   local model="${3:-}"
 
   if [[ -n "$model" ]]; then
-    # Read grep's input via process substitution rather than a pipe: with
-    # `set -o pipefail`, `producer | grep -q` returns 141 (SIGPIPE) whenever
-    # grep matches and exits before the producer finishes writing, which would
-    # make a real match look like a failure.
-    if grep -Fxq "$model" < <(models_for_provider "$provider"); then
-      printf '%s\n' "$model"
-      return
-    fi
-    # Permit custom model IDs declared in the user options file — this lets
-    # the config add future model IDs without a git-ai release.
-    if grep -Fxq "${provider}:${model}" < <(parse_user_options); then
-      printf '%s\n' "$model"
-      return
-    fi
-    die "unknown model '$model' for provider '$provider'"
+    printf '%s\n' "$model"
+    return
   fi
 
-  default_model_for_provider "$tool_name" "$provider"
+  local default
+  default=$(default_model_for_provider "$tool_name" "$provider")
+  if [[ -z "$default" ]]; then
+    die "could not determine a model for '$provider' — pass one explicitly (e.g. 'git-ai $tool_name $provider <model>') or run 'git-ai setup'."
+  fi
+  printf '%s\n' "$default"
 }
 
 _run_gemini_cli() {

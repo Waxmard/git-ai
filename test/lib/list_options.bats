@@ -8,11 +8,28 @@ setup() {
   source "${REPO_ROOT}/lib/ai-common.sh"
   # Isolate from any real ~/.config/git-ai/options.conf
   export XDG_CONFIG_HOME="$(mktemp -d)"
+
+  # With no config, list_options draws its candidate combos from live model
+  # discovery. Block the network and seed each provider's cache so the listing
+  # is deterministic offline (these IDs are what the assertions reference).
+  STUB="$(mktemp -d)"
+  local c
+  for c in curl security secret-tool pass kwallet-query gcloud; do
+    printf '#!/bin/sh\nexit 1\n' >"${STUB}/${c}"
+    chmod +x "${STUB}/${c}"
+  done
+  export PATH="${STUB}:${PATH}"
+  local cache="${XDG_CONFIG_HOME}/git-ai/models-cache"
+  mkdir -p "$cache"
+  printf 'claude-haiku-4-5-20251001\nclaude-sonnet-4-6\nclaude-opus-4-6\n' >"${cache}/claude-code.list"
+  printf 'claude-haiku-4-5-20251001\nclaude-opus-4-6\n' >"${cache}/anthropic-api.list"
+  printf 'gemini-3.1-pro-preview\ngemini-3.1-flash\n' >"${cache}/vertex-gemini.list"
+  printf 'gpt-5.4\ngpt-5.4-mini\n' >"${cache}/codex.list"
 }
 
 teardown() {
   cd /tmp
-  rm -rf "$TEST_REPO" "$XDG_CONFIG_HOME"
+  rm -rf "$TEST_REPO" "$XDG_CONFIG_HOME" "$STUB"
   unset XDG_CONFIG_HOME
 }
 

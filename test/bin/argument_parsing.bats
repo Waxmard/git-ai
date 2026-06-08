@@ -28,11 +28,20 @@ setup() {
 }
 
 @test "git-ai options: commit emits pipe-delimited lines" {
-  local repo xdg
+  local repo xdg stub c
   repo=$(make_test_repo)
   xdg=$(mktemp -d)
-  run bash -c "cd '$repo' && XDG_CONFIG_HOME='$xdg' '$GIT_AI' options commit"
-  rm -rf "$repo" "$xdg"
+  # No static catalog: seed a discovered cache and block the network so the
+  # spawned process lists deterministically offline.
+  stub=$(mktemp -d)
+  for c in curl security secret-tool pass kwallet-query gcloud; do
+    printf '#!/bin/sh\nexit 1\n' >"${stub}/${c}"
+    chmod +x "${stub}/${c}"
+  done
+  mkdir -p "${xdg}/git-ai/models-cache"
+  printf 'gemini-3.1-pro-preview\n' >"${xdg}/git-ai/models-cache/vertex-gemini.list"
+  run bash -c "export PATH=\"$stub:\$PATH\"; cd '$repo'; XDG_CONFIG_HOME='$xdg' '$GIT_AI' options commit"
+  rm -rf "$repo" "$xdg" "$stub"
   assert_success
   assert_output --partial "vertex-gemini:"
   assert_output --partial " · Vertex AI (Gemini)"

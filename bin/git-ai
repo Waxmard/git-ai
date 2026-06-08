@@ -443,19 +443,50 @@ _setup_pick_providers() {
   done
 }
 
-# Pick one or more models for PROVIDER. Prefers fzf; falls back to the default
-# model. Prints chosen model IDs, one per line.
+# Pick one or more models for PROVIDER. Models are discovered live from the
+# provider's API (cached); the list is suggestions only — the user can always
+# type a model id that isn't listed. Prints chosen model IDs, one per line.
 _setup_pick_models() {
   local provider="$1"
-  local default_model
-  default_model=$(default_model_for_provider commit "$provider" 2>/dev/null)
+  local listed
+  listed=$(discover_models "$provider" 2>/dev/null)
+
   if command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
-    models_for_provider "$provider" | fzf --multi --no-sort --tiebreak=index \
-      --prompt="models for ${provider} (tab to multi-select)> " --height=40% --reverse \
-      --query="" && return
+    # --print-query emits the typed query as the first output line. We use it as
+    # an escape hatch: if the user selected nothing but typed an id (e.g. a model
+    # not in the discovered list, or none could be discovered), take the query.
+    local out query sels
+    out=$(printf '%s\n' "$listed" | fzf --multi --no-sort --tiebreak=index --print-query \
+      --prompt="models for ${provider} (tab to pick; or type a custom id + Enter)> " \
+      --height=40% --reverse) || return 0
+    query=$(printf '%s\n' "$out" | head -n1)
+    sels=$(printf '%s\n' "$out" | tail -n +2 | awk 'NF')
+    if [[ -n "$sels" ]]; then
+      printf '%s\n' "$sels"
+    elif [[ -n "$query" ]]; then
+      printf '%s\n' "$query"
+    fi
+    return 0
   fi
-  # Fallback: the catalog default for this provider.
-  [[ -n "$default_model" ]] && printf '%s\n' "$default_model"
+
+  # No fzf: show suggestions, accept a comma-separated free-text list. Blank
+  # keeps the first discovered model (if any) as a sensible default.
+  if [[ -n "$listed" ]]; then
+    printf 'Suggested models for %s:\n' "$provider" >&2
+    printf '%s\n' "$listed" | sed 's/^/  /' >&2
+  fi
+  local line m first
+  first=$(printf '%s\n' "$listed" | head -n1)
+  read -rp "Model id(s) for ${provider}, comma-separated${first:+ [$first]}: " line
+  if [[ -z "$line" ]]; then
+    [[ -n "$first" ]] && printf '%s\n' "$first"
+    return 0
+  fi
+  while IFS= read -r m; do
+    m="${m#"${m%%[![:space:]]*}"}"
+    m="${m%"${m##*[![:space:]]}"}"
+    [[ -n "$m" ]] && printf '%s\n' "$m"
+  done < <(printf '%s' "$line" | tr ',' '\n')
 }
 
 # maybe_first_run_setup TOOL
