@@ -17,6 +17,8 @@ make install   # symlinks to ~/.local/bin and ~/.local/lib
 make uninstall
 ```
 
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full dev setup, test commands, and PR/release process.
+
 ## Quickstart
 
 Run the setup wizard once — it detects your installed provider CLIs and keys, helps you authenticate, and writes your config:
