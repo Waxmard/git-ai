@@ -38,13 +38,24 @@ install: hooks
 	@ln -sf $(CURDIR)/lib/ai-common.sh $(PREFIX)/lib/ai-common.sh
 	@echo "Installed git-ai to $(PREFIX)"
 	@resolved=$$(command -v git-ai 2>/dev/null); \
+	npmdupe=""; \
+	if command -v npm >/dev/null 2>&1 && [ -d "$$(npm root -g 2>/dev/null)/waxmard-git-ai" ]; then \
+		npmdupe=1; \
+	fi; \
 	if [ -n "$$resolved" ] && [ "$$resolved" != "$(PREFIX)/bin/git-ai" ]; then \
 		echo ""; \
 		echo "WARNING: another git-ai shadows this install on your PATH:"; \
-		echo "  PATH resolves: $$resolved"; \
+		echo "  PATH resolves:  $$resolved"; \
 		echo "  just installed: $(PREFIX)/bin/git-ai"; \
-		echo "  This is likely an older npm global. Remove it (npm rm -g waxmard-git-ai)"; \
-		echo "  or put $(PREFIX)/bin ahead of it on PATH."; \
+		echo "  Remove the other (e.g. npm rm -g waxmard-git-ai) or put $(PREFIX)/bin first on PATH,"; \
+		echo "  then run 'hash -r' (bash) / 'rehash' (zsh), or open a new shell."; \
+	elif [ -n "$$npmdupe" ]; then \
+		echo ""; \
+		echo "WARNING: a waxmard-git-ai npm global is also installed (npm root -g)."; \
+		echo "  This symlink wins on PATH here, but the npm copy may shadow git-ai in other shells."; \
+		echo "  Remove it with: npm rm -g waxmard-git-ai"; \
+	else \
+		echo "  (If your shell still runs an old git-ai, run 'hash -r'/'rehash' or open a new shell.)"; \
 	fi
 
 uninstall:
