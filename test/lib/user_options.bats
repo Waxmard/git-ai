@@ -169,6 +169,26 @@ EOF
   rm -rf "$stub"
 }
 
+@test "list_options: present config is authoritative — empty sections hide, no discovery flood" {
+  # Regression: a present options.conf whose sections pin no models must NOT fall
+  # back to live discovery (which flooded the picker with every model). An empty
+  # [vertex-gemini] hides that provider even though discovery could list it.
+  cat >"$CONF" <<'EOF'
+[vertex-gemini]
+
+[claude-code]
+claude-sonnet-4-6
+EOF
+  mkdir -p "${TEST_XDG}/git-ai/models-cache"
+  printf 'gemini-3.5-flash\ngemini-3.1-pro-preview\n' >"${TEST_XDG}/git-ai/models-cache/vertex-gemini.list"
+
+  run list_options commit
+  assert_success
+  assert_output --partial "claude-code:claude-sonnet-4-6|"
+  refute_output --partial "vertex-gemini:"      # empty section hidden
+  refute_output --partial "gemini-3.5-flash"    # discovery NOT consulted
+}
+
 # --- resolve_model passes any model id through (no catalog gate) ---
 
 @test "resolve_model: accepts an arbitrary model id" {

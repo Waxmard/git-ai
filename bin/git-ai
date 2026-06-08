@@ -443,49 +443,81 @@ _setup_pick_providers() {
   done
 }
 
-# Pick one or more models for PROVIDER. Models are discovered live from the
-# provider's API (cached); the list is suggestions only — the user can always
-# type a model id that isn't listed. Prints chosen model IDs, one per line.
+# Pick zero or more models for PROVIDER. Models are discovered live from the
+# provider's API (cached) and offered as suggestions; nothing is selected unless
+# the user *explicitly* marks it (Tab) or types it. Prints chosen model IDs, one
+# per line — empty output is valid (the provider is enabled with no pinned model
+# and the model is chosen at commit/pr time). Never adds a model the user didn't
+# deliberately choose.
 _setup_pick_models() {
-  local provider="$1"
-  local listed
+  local provider="$1" listed selected="" line m
   listed=$(discover_models "$provider" 2>/dev/null)
 
-  if command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
-    # --print-query emits the typed query as the first output line. We use it as
-    # an escape hatch: if the user selected nothing but typed an id (e.g. a model
-    # not in the discovered list, or none could be discovered), take the query.
-    local out query sels
-    out=$(printf '%s\n' "$listed" | fzf --multi --no-sort --tiebreak=index --print-query \
-      --prompt="models for ${provider} (tab to pick; or type a custom id + Enter)> " \
-      --height=40% --reverse) || return 0
-    query=$(printf '%s\n' "$out" | head -n1)
-    sels=$(printf '%s\n' "$out" | tail -n +2 | awk 'NF')
-    if [[ -n "$sels" ]]; then
-      printf '%s\n' "$sels"
-    elif [[ -n "$query" ]]; then
-      printf '%s\n' "$query"
+  if [[ -n "$listed" ]] && command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
+    # A leading "skip" sentinel is focused by default, so a bare Enter (no Tab
+    # marks) selects *nothing* — fzf otherwise returns the focused row, which
+    # silently pins a model the user never chose. FZF_DEFAULT_OPTS is cleared so
+    # a user's custom keybindings (e.g. select-all-on-enter) can't auto-select.
+    local skip='— skip / no model —'
+    selected=$(printf '%s\n%s\n' "$skip" "$listed" \
+      | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
+        --no-sort --tiebreak=index --height=40% --reverse \
+      --header='Tab marks a model; Enter confirms marked rows; Esc selects none' \
+      --prompt="models for ${provider}> ") || selected=""
+    # Drop the sentinel if it came back (the bare-Enter / nothing-marked case).
+    selected=$(printf '%s\n' "$selected" | grep -vxF "$skip")
+    if [[ -n "$selected" ]]; then
+      while IFS= read -r m; do [[ -n "$m" ]] && printf '%s\n' "$m"; done <<<"$selected"
+      return 0
     fi
-    return 0
-  fi
-
-  # No fzf: show suggestions, accept a comma-separated free-text list. Blank
-  # keeps the first discovered model (if any) as a sensible default.
-  if [[ -n "$listed" ]]; then
+  elif [[ -n "$listed" ]]; then
     printf 'Suggested models for %s:\n' "$provider" >&2
     printf '%s\n' "$listed" | sed 's/^/  /' >&2
   fi
-  local line m first
-  first=$(printf '%s\n' "$listed" | head -n1)
-  read -rp "Model id(s) for ${provider}, comma-separated${first:+ [$first]}: " line
-  if [[ -z "$line" ]]; then
-    [[ -n "$first" ]] && printf '%s\n' "$first"
-    return 0
-  fi
+
+  # Reached when nothing was marked, fzf is unavailable, or the provider has no
+  # discoverable models (e.g. claude-code/codex without a key). Offer explicit
+  # free-text entry. Blank = leave the provider with no pinned model.
+  read -rp "Model id(s) for ${provider}, comma-separated (blank for none): " line || line=""
+  [[ -n "$line" ]] || return 0
   while IFS= read -r m; do
     m="${m#"${m%%[![:space:]]*}"}"
     m="${m%"${m##*[![:space:]]}"}"
     [[ -n "$m" ]] && printf '%s\n' "$m"
+  done < <(printf '%s' "$line" | tr ',' '\n')
+}
+
+# Multi-select GCP projects for vertex providers, sourced from `gcloud projects
+# list` (fzf multi-select with a free-text fallback). Prints chosen project ids,
+# one per line; empty output means "leave the current projects unchanged".
+_setup_pick_projects() {
+  local listed="" line p
+  command -v gcloud >/dev/null 2>&1 &&
+    listed=$(gcloud projects list --format="value(projectId)" 2>/dev/null)
+
+  if [[ -n "$listed" ]] && command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
+    local skip='— skip / keep current —' selected
+    selected=$(printf '%s\n%s\n' "$skip" "$listed" \
+      | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
+        --no-sort --tiebreak=index --height=40% --reverse \
+        --header='Tab marks GCP project(s); Enter confirms; Esc keeps current' \
+        --prompt='vertex projects> ')
+    selected=$(printf '%s\n' "$selected" | grep -vxF "$skip")
+    if [[ -n "$selected" ]]; then
+      while IFS= read -r p; do [[ -n "$p" ]] && printf '%s\n' "$p"; done <<<"$selected"
+      return 0
+    fi
+  elif [[ -n "$listed" ]]; then
+    printf 'Your GCP projects:\n' >&2
+    printf '%s\n' "$listed" | sed 's/^/  /' >&2
+  fi
+
+  read -rp "GCP project id(s), comma-separated (blank to keep current): " line || line=""
+  [[ -n "$line" ]] || return 0
+  while IFS= read -r p; do
+    p="${p#"${p%%[![:space:]]*}"}"
+    p="${p%"${p##*[![:space:]]}"}"
+    [[ -n "$p" ]] && printf '%s\n' "$p"
   done < <(printf '%s' "$line" | tr ',' '\n')
 }
 
@@ -647,22 +679,50 @@ _setup_ensure_auth() {
   return 0
 }
 
-# Numbered single-choice over provider tokens. Prints the menu to stderr and
-# echoes the chosen token to stdout; returns non-zero on cancel/empty.
+# Single-select over DATA — newline-separated "value<TAB>label" lines passed as
+# $2 (an argument, not stdin, so the numbered-fallback prompt still reads the
+# terminal). Prefers fzf (label shown, value returned); falls back to a numbered
+# prompt. Prints the chosen value; returns non-zero on cancel/empty.
+# FZF_DEFAULT_OPTS is cleared so a user's keybindings can't auto-select.
+_setup_select() {
+  local prompt="$1" data="$2"
+  local -a vals=() labels=()
+  local v l
+  while IFS=$'\t' read -r v l; do
+    [[ -n "$v" ]] || continue
+    vals+=("$v")
+    labels+=("${l:-$v}")
+  done <<<"$data"
+  [[ ${#vals[@]} -gt 0 ]] || return 1
+
+  if command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
+    local i out
+    out=$(for i in "${!vals[@]}"; do printf '%s\t%s\n' "$i" "${labels[$i]}"; done \
+      | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf \
+        --delimiter=$'\t' --with-nth=2 --no-sort --tiebreak=index \
+        --height=40% --reverse --prompt="$prompt") || return 1
+    [[ -n "$out" ]] || return 1
+    printf '%s\n' "${vals[${out%%$'\t'*}]}"
+    return 0
+  fi
+
+  # Numbered fallback.
+  local i n
+  for i in "${!vals[@]}"; do printf '  %d) %s\n' "$((i + 1))" "${labels[$i]}" >&2; done
+  read -rp "$prompt" n
+  [[ "$n" =~ ^[0-9]+$ ]] && ((n >= 1 && n <= ${#vals[@]})) || return 1
+  printf '%s\n' "${vals[$((n - 1))]}"
+}
+
+# Single-choice over provider tokens (fzf or numbered). Echoes the chosen token;
+# returns non-zero on cancel/empty.
 _setup_choose_provider() {
   local prompt="$1"
   shift
-  local -a items=("$@")
-  [[ ${#items[@]} -gt 0 ]] || return 1
-  local i=1 p
-  for p in "${items[@]}"; do
-    printf '  %d) %s\n' "$i" "$(provider_display_name "$p")" >&2
-    i=$((i + 1))
-  done
-  local n
-  read -rp "$prompt" n
-  [[ "$n" =~ ^[0-9]+$ ]] && ((n >= 1 && n <= ${#items[@]})) || return 1
-  printf '%s\n' "${items[$((n - 1))]}"
+  [[ $# -gt 0 ]] || return 1
+  local p data=""
+  for p in "$@"; do data+="${p}"$'\t'"$(provider_display_name "$p")"$'\n'; done
+  _setup_select "$prompt" "$data"
 }
 
 # Apply a surgical conf filter (conf_add_section / conf_remove_section / …) to
@@ -689,34 +749,86 @@ _setup_models_for() {
 }
 
 _setup_print_summary() {
-  local conf="$1" p any=0
-  printf 'Currently enabled:\n'
+  local conf="$1" p any=0 entries models
+  entries=$(parse_user_options)
+  printf 'Configured providers:\n'
   while IFS= read -r p; do
-    printf '  • %s\n' "$(provider_display_name "$p")"
     any=1
+    # Models pinned under this section (matching its base, ignoring @profile).
+    models=$(printf '%s\n' "$entries" | awk -F: -v p="$p" \
+      '{ split($1, a, "@"); if (a[1] == p && $2 != "" && !seen[$2]++) print $2 }' \
+      | paste -sd, - | sed 's/,/, /g')
+    if [[ -n "$models" ]]; then
+      printf '  • %s — %s\n' "$(provider_display_name "$p")" "$models"
+    else
+      printf '  • %s — no models pinned (hidden from the picker until you add one)\n' \
+        "$(provider_display_name "$p")"
+    fi
   done < <(conf_section_providers <"$conf")
   [[ $any -eq 1 ]] || printf '  (none)\n'
 }
 
-# Add a provider that isn't already in the config.
+# Set up a provider that isn't usable yet. A provider counts as "set up" only
+# once it has >=1 pinned model — so this offers every provider that is absent OR
+# present-but-empty (an empty section is practically "not configured").
 _setup_action_add() {
-  local conf="$1" p base present=$'\n'
-  while IFS= read -r p; do present+="${p%%@*}"$'\n'; done < <(conf_section_providers <"$conf")
+  local conf="$1" p prov m
+  # Providers that already have a pinned model (exclude these from the list).
+  local with_models=$'\n'
+  while IFS=: read -r prov _; do
+    [[ -n "$prov" ]] && with_models+="${prov%%@*}"$'\n'
+  done < <(parse_user_options)
+
   local -a cands=()
   for p in "${SETUP_PROVIDERS[@]}"; do
-    case "$present" in *$'\n'"$p"$'\n'*) ;; *) cands+=("$p") ;; esac
+    case "$with_models" in *$'\n'"$p"$'\n'*) ;; *) cands+=("$p") ;; esac
   done
   if [[ ${#cands[@]} -eq 0 ]]; then
-    printf 'All providers are already enabled.\n'
+    printf 'All providers already have models configured.\n'
     return 0
   fi
   local provider
-  provider=$(_setup_choose_provider 'Add which provider? ' "${cands[@]}") || { printf 'Cancelled.\n'; return 0; }
+  provider=$(_setup_choose_provider 'Set up which provider? ' "${cands[@]}") || { printf 'Cancelled.\n'; return 0; }
   local -a models=()
   while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
-  _conf_apply "$conf" conf_add_section "$provider" ${models[@]+"${models[@]}"} &&
-    printf 'Added %s.\n' "$(provider_display_name "$provider")"
+
+  # Present-but-empty section → set its models in place; truly absent → append a
+  # new section. Either way no duplicate [provider] header is created.
+  local present=$'\n'
+  while IFS= read -r p; do present+="$p"$'\n'; done < <(conf_section_providers <"$conf")
+  if [[ "$present" == *$'\n'"$provider"$'\n'* ]]; then
+    _conf_apply "$conf" conf_set_section_models "$provider" ${models[@]+"${models[@]}"} &&
+      printf 'Configured %s.\n' "$(provider_display_name "$provider")"
+  else
+    _conf_apply "$conf" conf_add_section "$provider" ${models[@]+"${models[@]}"} &&
+      printf 'Added %s.\n' "$(provider_display_name "$provider")"
+  fi
+  _setup_choose_vertex_projects "$provider" "$conf"
   _setup_ensure_auth "$provider" "$conf"
+}
+
+# For a vertex provider, let the user pick which GCP project(s) it runs against,
+# written to the shared [vertex] `projects =` list (expanded into per-project
+# picker profiles at commit time). Shared across both vertex providers by design;
+# a blank pick keeps the current list. No-op for non-vertex providers.
+_setup_choose_vertex_projects() {
+  local provider="$1" conf="$2"
+  case "${provider%%@*}" in vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
+
+  local current
+  current=$(vertex_config_value "vertex" projects)
+  [[ -n "$current" ]] && printf 'Current vertex projects: %s\n' "$current"
+
+  local -a projs=()
+  local pr
+  while IFS= read -r pr; do projs+=("$pr"); done < <(_setup_pick_projects)
+  [[ ${#projs[@]} -gt 0 ]] || { printf 'Vertex projects unchanged.\n'; return 0; }
+
+  local joined
+  joined=$(printf '%s, ' "${projs[@]}")
+  joined="${joined%, }"
+  _conf_apply "$conf" conf_set_section_setting vertex projects "$joined" &&
+    printf 'Set vertex projects: %s\n' "$joined"
 }
 
 # Remove a provider section (preserving the rest of the file).
@@ -732,14 +844,20 @@ _setup_action_remove() {
 
 # Change the models listed under an existing provider (settings preserved).
 _setup_action_models() {
-  local conf="$1" p
+  local conf="$1" p m
   local -a secs=()
   while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
   local provider
   provider=$(_setup_choose_provider 'Edit models for which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
   local -a models=()
   while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
-  _conf_apply "$conf" conf_set_section_models "$provider" ${models[@]+"${models[@]}"} &&
+  # Selecting nothing (Esc / skip) must NOT wipe the provider's existing models —
+  # only an explicit pick overwrites. To clear a provider, remove it instead.
+  if [[ ${#models[@]} -eq 0 ]]; then
+    printf 'No models selected — %s left unchanged.\n' "$(provider_display_name "$provider")"
+    return 0
+  fi
+  _conf_apply "$conf" conf_set_section_models "$provider" "${models[@]}" &&
     printf 'Updated models for %s.\n' "$(provider_display_name "$provider")"
 }
 
@@ -760,22 +878,21 @@ _setup_edit_existing() {
   printf 'Editing your config: %s\n(Each change is applied in place — nothing else is touched.)\n\n' "$conf"
   while true; do
     _setup_print_summary "$conf"
-    printf '\nActions:\n'
-    printf '  1) Add a provider\n'
-    printf '  2) Remove a provider\n'
-    printf "  3) Change a provider's models\n"
-    printf '  4) Set up auth for a provider\n'
-    printf '  5) Done\n'
-    local act
-    read -rp 'Choose [5]: ' act
     printf '\n'
-    case "${act:-5}" in
-      1) _setup_action_add "$conf" ;;
-      2) _setup_action_remove "$conf" ;;
-      3) _setup_action_models "$conf" ;;
-      4) _setup_action_auth "$conf" ;;
-      5 | q | Q | done) break ;;
-      *) printf 'Unknown choice.\n' ;;
+    local act menu
+    menu=$'add\tAdd a provider\n'
+    menu+=$'remove\tRemove a provider\n'
+    menu+="models"$'\t'"Change a provider's models"$'\n'
+    menu+=$'auth\tSet up auth for a provider\n'
+    menu+=$'done\tDone'
+    act=$(_setup_select 'Action (Esc to finish)> ' "$menu") || act="done"
+    printf '\n'
+    case "$act" in
+      add) _setup_action_add "$conf" ;;
+      remove) _setup_action_remove "$conf" ;;
+      models) _setup_action_models "$conf" ;;
+      auth) _setup_action_auth "$conf" ;;
+      done | *) break ;;
     esac
     printf '\n'
   done

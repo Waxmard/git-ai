@@ -137,13 +137,17 @@ JSON
   refute_line "dall-e-3"
 }
 
-@test "_fetch_models_vertex: takes last path segment filtered to the family" {
-  printf '#!/bin/sh\necho fake-token\n' >"${STUB}/gcloud"
+@test "_fetch_models_vertex: family filter + text-only, strips path and non-text variants" {
+  # gcloud stub: any invocation (token mint + `config get-value project` for the
+  # quota project) succeeds.
+  printf '#!/bin/sh\necho fake\n' >"${STUB}/gcloud"
   chmod +x "${STUB}/gcloud"
   stub_curl_ok <<'JSON'
 {"publisherModels":[
   {"name":"publishers/google/models/gemini-3.5-pro"},
   {"name":"publishers/google/models/imagen-3.0"},
+  {"name":"publishers/google/models/gemini-embedding-001"},
+  {"name":"publishers/google/models/gemini-2.5-flash-tts"},
   {"name":"publishers/google/models/gemini-3.5-flash"}
 ]}
 JSON
@@ -151,5 +155,7 @@ JSON
   assert_success
   assert_line "gemini-3.5-pro"
   assert_line "gemini-3.5-flash"
-  refute_line "imagen-3.0"
+  refute_line "imagen-3.0"            # wrong family
+  refute_line "gemini-embedding-001"  # non-text variant
+  refute_line "gemini-2.5-flash-tts"  # non-text variant
 }

@@ -561,8 +561,12 @@ discover_models() {
     fi
   fi
 
+  # Authed provider API first (reflects the account's real access); fall back to
+  # the keyless models.dev catalog when there's no key/CLI list (covers the CLI
+  # providers, and any provider whose creds aren't set up).
   local fetched
   fetched=$(_fetch_models "$provider" 2>/dev/null)
+  [[ -n "$fetched" ]] || fetched=$(_fetch_models_modelsdev "$provider" 2>/dev/null)
   if [[ -n "$fetched" ]]; then
     mkdir -p "$(_models_cache_dir)" 2>/dev/null || true
     printf '%s\n' "$fetched" >"$cache" 2>/dev/null || true
@@ -573,6 +577,61 @@ discover_models() {
   # Fetch failed (offline, no creds, API error) — serve any stale cache.
   [[ -s "$cache" ]] && { cat "$cache"; return 0; }
   return 1
+}
+
+# models.dev → git-ai family. Prints "MODELS_DEV_KEY<TAB>FAMILY_PREFIX"; the
+# prefix narrows the (noisy) catalog to the right family (empty for openai, which
+# is matched by a gpt/o-number regex instead). Returns non-zero for unmapped.
+_models_dev_key() {
+  case ${1%%@*} in
+    gemini-api | vertex-gemini)                printf 'google\tgemini\n' ;;
+    anthropic-api | claude-code | vertex-anthropic) printf 'anthropic\tclaude\n' ;;
+    openai-api | codex)                        printf 'openai\t\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Keyless model list from the public models.dev catalog (no auth). The whole
+# api.json is cached once (it covers every provider); per-call we extract the
+# mapped provider's models and filter to text-generation ids.
+_fetch_models_modelsdev() {
+  local provider="$1" meta mdkey fam cache_json ttl tmp
+  meta=$(_models_dev_key "$provider") || return 1
+  IFS=$'\t' read -r mdkey fam <<<"$meta"
+  cache_json="$(_models_cache_dir)/_modelsdev.json"
+  ttl="${GIT_AI_MODELS_TTL_MIN:-1440}"
+
+  if [[ ! -s "$cache_json" || -n "$(find "$cache_json" -mmin +"$ttl" 2>/dev/null)" ]]; then
+    tmp=$(mktemp "${TMPDIR:-/tmp}/git-ai-md.XXXXXX") || return 1
+    if curl -sf "https://models.dev/api.json" -o "$tmp"; then
+      mkdir -p "$(_models_cache_dir)" 2>/dev/null || true
+      mv "$tmp" "$cache_json" 2>/dev/null || rm -f "$tmp"
+    else
+      rm -f "$tmp"
+    fi
+  fi
+  [[ -s "$cache_json" ]] || return 1
+
+  GIT_AI_MDKEY="$mdkey" GIT_AI_FAM="$fam" GIT_AI_CACHE="$cache_json" python3 -c '
+import json, os, re
+SKIP = ("embedding", "-tts", "tts", "-image", "image", "-audio", "audio",
+        "-live", "computer-use", "native-audio", "-guard", "gemma")
+d = json.load(open(os.environ["GIT_AI_CACHE"]))
+fam = os.environ["GIT_AI_FAM"]
+out = []
+for mid in d.get(os.environ["GIT_AI_MDKEY"], {}).get("models", {}):
+    low = mid.lower()
+    if any(s in low for s in SKIP):
+        continue
+    if fam:
+        if not low.startswith(fam):
+            continue
+    elif not re.match(r"^(gpt|o[0-9])", low):
+        continue
+    out.append(mid)
+for m in sorted(set(out), reverse=True):
+    print(m)
+' 2>/dev/null
 }
 
 # Dispatch a provider to its fetch helper. The CLIs have no list endpoint, so
@@ -656,34 +715,71 @@ for i in sorted(set(keep), reverse=True):
 }
 
 # Vertex AI — GET {region}-aiplatform.../publishers/{google|anthropic}/models
-# (Model Garden catalog). Needs only a gcloud access token; the model id is the
-# last path segment of each publisherModels[].name, filtered to the family.
+# (Model Garden catalog). The model id is the last path segment of each
+# publisherModels[].name, filtered to the family and to text-generation models
+# (the catalog also lists embedding / image / tts / audio variants). User ADC
+# requires a quota project (X-Goog-User-Project) or the API 403s; pageSize maxes
+# at 300, and the catalog is paged. We walk up to a few pages.
 _fetch_models_vertex() {
   local provider="$1" publisher="$2"
-  local account region token host cfg resp st
+  local account region project token host cfg
+
   account=$(vertex_resolve "$provider" account)
   region=$(vertex_resolve "$provider" region)
   region="${region:-us-central1}"
   token=$(_vertex_access_token "$account") && [[ -n "$token" ]] || return 1
+
+  # Quota project for the aiplatform API: the provider's own project, else the
+  # gcloud default, else the first shared [vertex] projects entry. Any project
+  # the caller can bill works — it does not affect the (global) catalog.
+  project=$(vertex_resolve "$provider" project)
+  if [[ -z "$project" ]] && command -v gcloud >/dev/null 2>&1; then
+    project=$(gcloud config get-value project 2>/dev/null)
+    [[ "$project" == "(unset)" ]] && project=""
+  fi
+  if [[ -z "$project" ]]; then
+    local projlist
+    projlist=$(vertex_config_value "vertex" projects)
+    project=$(printf '%s' "$projlist" | tr ', ' '\n' | awk 'NF{print;exit}')
+  fi
+  [[ -n "$project" ]] || return 1
+
   [[ "$region" == "global" ]] && host="aiplatform.googleapis.com" \
                               || host="${region}-aiplatform.googleapis.com"
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
-  printf 'header = "Authorization: Bearer %s"\n' "$token" >"$cfg"
-  resp=$(curl -sf -K "$cfg" \
-    "https://${host}/v1beta1/publishers/${publisher}/models?pageSize=1000")
-  st=$?
-  rm -f "$cfg"
-  [[ $st -eq 0 ]] || return 1
-  GIT_AI_PUB="$publisher" GIT_AI_JSON="$resp" python3 -c '
+  printf 'header = "Authorization: Bearer %s"\nheader = "X-Goog-User-Project: %s"\n' \
+    "$token" "$project" >"$cfg"
+
+  local page_token="" url resp st page=0 names="" parsed
+  while ((page < 5)); do
+    url="https://${host}/v1beta1/publishers/${publisher}/models?pageSize=300"
+    [[ -n "$page_token" ]] && url+="&pageToken=${page_token}"
+    resp=$(curl -sf -K "$cfg" "$url")
+    st=$?
+    [[ $st -eq 0 ]] || break
+    parsed=$(GIT_AI_PUB="$publisher" GIT_AI_JSON="$resp" python3 -c '
 import json, os
 prefix = "gemini" if os.environ["GIT_AI_PUB"] == "google" else "claude"
-seen = set()
-for m in json.loads(os.environ["GIT_AI_JSON"]).get("publisherModels", []):
+# Skip non-text variants the catalog mixes in.
+SKIP = ("embedding", "-tts", "-image", "-audio", "-live", "computer-use",
+        "native-audio", "-guard")
+d = json.loads(os.environ["GIT_AI_JSON"])
+# First line is the next page token (may be empty), then one model id per line.
+print(d.get("nextPageToken", ""))
+for m in d.get("publisherModels", []):
     name = m.get("name", "").split("/")[-1]
-    if name.startswith(prefix) and name not in seen:
-        seen.add(name)
+    if name.startswith(prefix) and not any(s in name for s in SKIP):
         print(name)
-' 2>/dev/null
+' 2>/dev/null) || break
+    page_token=$(printf '%s\n' "$parsed" | head -n1)
+    names+=$(printf '%s\n' "$parsed" | tail -n +2)$'\n'
+    page=$((page + 1))
+    [[ -n "$page_token" ]] || break
+  done
+  rm -f "$cfg"
+
+  # De-dup, drop blanks, preserve order.
+  printf '%s' "$names" | awk 'NF && !seen[$0]++'
 }
 
 # order_by_recent LAST ITEM...
@@ -1087,8 +1183,13 @@ list_options() {
   local user_entries
   user_entries=$(parse_user_options)
 
+  # A present options.conf is authoritative: only its pinned provider:model
+  # entries are offered (an empty [provider] section hides that provider, per the
+  # file's own documentation). Live discovery is the fallback ONLY when no
+  # options.conf exists at all — otherwise enabling a provider with no pinned
+  # model would flood the picker with every discovered model.
   local provider model display short
-  if [[ -n "$user_entries" ]]; then
+  if [[ -e "$(user_options_path)" ]]; then
     while IFS=':' read -r provider model; do
       [[ -n "$provider" && -n "$model" ]] || continue
       display=$(provider_display_name "$provider")
