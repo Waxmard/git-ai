@@ -802,9 +802,48 @@ _setup_fresh() {
   printf '\nDone. Try:  git add -A && git-ai commit\n'
 }
 
+# Detect a second git-ai install that may shadow this one and offer to remove
+# it. Targets the identifiable case: a stale `waxmard-git-ai` npm global. We
+# only offer to remove installs we can positively attribute to npm; anything
+# else on PATH we leave alone. Best-effort and silent when npm is absent or no
+# duplicate is found.
+_setup_check_shadow() {
+  command -v npm >/dev/null 2>&1 || return 0
+  local groot
+  groot=$(npm root -g 2>/dev/null) || return 0
+  [[ -n "$groot" && -d "$groot/waxmard-git-ai" ]] || return 0
+
+  printf 'Heads up: an npm-global git-ai is also installed:\n'
+  printf '  %s\n' "$groot/waxmard-git-ai"
+
+  # Note when that npm copy is what PATH actually resolves (i.e. it shadows the
+  # make-install symlink). npm's bin dir is $(npm prefix -g)/bin.
+  local gprefix on_path
+  gprefix=$(npm prefix -g 2>/dev/null)
+  on_path=$(command -v git-ai 2>/dev/null)
+  if [[ -n "$gprefix" && "$on_path" == "$gprefix/bin/git-ai" ]]; then
+    printf '  It currently shadows this install on your PATH.\n'
+  fi
+
+  local ans
+  read -rp '  Remove it with "npm rm -g waxmard-git-ai"? [y/N]: ' ans
+  case "$ans" in
+    y | Y | yes | Yes)
+      if npm rm -g waxmard-git-ai; then
+        printf '  Removed. Re-open your shell so PATH re-resolves git-ai.\n\n'
+      else
+        printf '  npm rm failed — remove it manually.\n\n'
+      fi
+      ;;
+    *) printf '  Left as-is. Ensure ~/.local/bin precedes the npm bin on PATH.\n\n' ;;
+  esac
+}
+
 cmd_setup() {
   printf '\ngit-ai setup\n'
   printf '============\n\n'
+
+  _setup_check_shadow
 
   local conf
   conf=$(user_options_path)

@@ -37,6 +37,15 @@ install: hooks
 	@ln -sf $(CURDIR)/bin/aigit $(PREFIX)/bin/aigit
 	@ln -sf $(CURDIR)/lib/ai-common.sh $(PREFIX)/lib/ai-common.sh
 	@echo "Installed git-ai to $(PREFIX)"
+	@resolved=$$(command -v git-ai 2>/dev/null); \
+	if [ -n "$$resolved" ] && [ "$$resolved" != "$(PREFIX)/bin/git-ai" ]; then \
+		echo ""; \
+		echo "WARNING: another git-ai shadows this install on your PATH:"; \
+		echo "  PATH resolves: $$resolved"; \
+		echo "  just installed: $(PREFIX)/bin/git-ai"; \
+		echo "  This is likely an older npm global. Remove it (npm rm -g waxmard-git-ai)"; \
+		echo "  or put $(PREFIX)/bin ahead of it on PATH."; \
+	fi
 
 uninstall:
 	@rm -f $(PREFIX)/bin/git-ai
