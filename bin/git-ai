@@ -758,6 +758,8 @@ _setup_fresh() {
 
   _setup_status_table
 
+  printf 'Tip: pick as many providers as you want now — you can add more after.\n\n'
+
   local -a chosen=()
   local p
   while IFS= read -r p; do [[ -n "$p" ]] && chosen+=("$p"); done < <(_setup_pick_providers)
@@ -799,7 +801,12 @@ _setup_fresh() {
     printf 'Default provider for this repo set to %s.\n' "$(provider_display_name "${chosen[0]}")"
   fi
 
-  printf '\nDone. Try:  git add -A && git-ai commit\n'
+  # Config now exists — hand off to the additive edit loop so the user can add
+  # more providers, change models, or set up auth without re-running setup.
+  printf '\n'
+  _setup_edit_existing "$conf"
+
+  printf '\nTry:  git add -A && git-ai commit\n'
 }
 
 # Detect a second git-ai install that may shadow this one and offer to remove
