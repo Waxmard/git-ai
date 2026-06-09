@@ -84,6 +84,20 @@ EOF
   assert_line "account = me@example.com"
 }
 
+@test "_setup_fast_path: detected vertex project is written when nothing else resolves" {
+  # The host shell may export a real GCP project — unset both env fallbacks so
+  # only the stashed detection result can resolve.
+  run env -u GOOGLE_VERTEX_PROJECT -u GOOGLE_CLOUD_PROJECT bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    SETUP_VERTEX_DETECTED="detected-proj"
+    GIT_AI_NO_FZF=1 _setup_fast_path "'"$CONF"'" vertex </dev/null
+  '
+  assert_success
+  run cat "$CONF"
+  assert_line "project = detected-proj"
+}
+
 @test "_setup_fast_path: env-derived vertex project is written to the config" {
   run env GOOGLE_CLOUD_PROJECT=env-proj bash -c '
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"

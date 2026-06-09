@@ -224,6 +224,112 @@ EOF
   assert_line "gemini-3.5-flash"
 }
 
+# --- _setup_edit_existing menu (vertex-conditional projects action) ---
+
+# Drive the edit loop with the numbered fallback and EOF stdin: the menu prints
+# its options, then the action read hits EOF and exits via the Done default.
+_edit_menu() {
+  GIT_AI_NO_FZF=1 bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_edit_existing "$1"
+  ' _ "$1" </dev/null 2>&1
+}
+
+@test "_setup_edit_existing: vertex configured offers the projects action" {
+  printf '[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
+  run _edit_menu "$CONF"
+  assert_success
+  assert_output --partial "Change Vertex AI projects (GCP)"
+}
+
+@test "_setup_edit_existing: no vertex, no projects action" {
+  printf '[gemini-api]\ngemini-3.5-flash\n' >"$CONF"
+  run _edit_menu "$CONF"
+  assert_success
+  refute_output --partial "Change Vertex AI projects"
+}
+
+@test "_setup_edit_existing: no standalone auth action (add-provider covers it)" {
+  printf '[gemini-api]\ngemini-3.5-flash\n' >"$CONF"
+  run _edit_menu "$CONF"
+  assert_success
+  refute_output --partial "Set up auth"
+}
+
+# --- _setup_detect_vertex_project (gcloud-backed project auto-pick) ---
+
+# _detect ACTIVE ENABLED_CSV -> runs _setup_detect_vertex_project against a
+# stubbed gcloud: ACTIVE is `config get-value project` output, ENABLED_CSV the
+# comma-list of projects where the Vertex API is "enabled". Project list is
+# fixed at proj-a/proj-b/proj-c.
+_detect() {
+  local stub
+  stub="$(mktemp -d)"
+  cat >"${stub}/gcloud" <<'EOF'
+#!/bin/bash
+case "$1 $2" in
+  "config get-value") printf '%s\n' "${STUB_ACTIVE}" ;;
+  "projects list") printf 'proj-a\nproj-b\nproj-c\n' ;;
+  "services list")
+    p=""
+    for a in "$@"; do case "$a" in --project=*) p="${a#--project=}" ;; esac; done
+    case ",${STUB_ENABLED}," in
+      *",${p},"*) printf 'aiplatform.googleapis.com\n' ;;
+    esac
+    ;;
+esac
+EOF
+  chmod +x "${stub}/gcloud"
+  STUB_ACTIVE="$1" STUB_ENABLED="$2" PATH="${stub}:$PATH" bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_detect_vertex_project
+  '
+  local rc=$?
+  rm -rf "$stub"
+  return $rc
+}
+
+@test "_setup_detect_vertex_project: enabled active project wins immediately" {
+  run _detect "proj-b" "proj-a,proj-b"
+  assert_success
+  assert_output "proj-b"
+}
+
+@test "_setup_detect_vertex_project: no active, single enabled project found" {
+  run _detect "" "proj-b"
+  assert_success
+  assert_output "proj-b"
+}
+
+@test "_setup_detect_vertex_project: active without the API falls to an enabled project" {
+  run _detect "proj-c" "proj-a"
+  assert_success
+  assert_output "proj-a"
+}
+
+@test "_setup_detect_vertex_project: nothing enabled falls back to the active project" {
+  run _detect "proj-c" ""
+  assert_success
+  assert_output "proj-c"
+}
+
+@test "_setup_detect_vertex_project: gcloud erroring yields empty" {
+  local stub
+  stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run env PATH="${stub}:$PATH" bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_detect_vertex_project
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output ""
+}
+
 # --- _setup_action_reset (re-run fresh flow over an existing config) ---
 
 @test "_setup_action_reset: declining keeps the config untouched" {
