@@ -398,6 +398,53 @@ EOF
   assert_line "projects = a, b"
 }
 
+# --- _setup_change_models (replace-style model editing) ---
+
+@test "_setup_change_models: typed list replaces the pinned models" {
+  printf '[gemini-api]\ngemini-old\ngemini-keep\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "gemini-new\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
+  '
+  assert_success
+  assert_output --partial "Set models for Gemini API: gemini-new"
+  run cat "$CONF"
+  assert_line "gemini-new"
+  refute_line "gemini-old"
+  refute_line "gemini-keep"
+}
+
+@test "_setup_change_models: blank entry keeps the current pins" {
+  printf '[gemini-api]\ngemini-old\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
+  '
+  assert_success
+  assert_output --partial "Models unchanged: gemini-old"
+  run cat "$CONF"
+  assert_line "gemini-old"
+}
+
+@test "_setup_change_models: vertex replace clears a family whose models were all dropped" {
+  printf '[vertex-anthropic]\nclaude-x\n\n[vertex-gemini]\ngemini-y\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "gemini-z\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" vertex
+  '
+  assert_success
+  assert_output --partial "Set models for Vertex AI: gemini-z"
+  run cat "$CONF"
+  # The emptied anthropic section stays (hidden from the picker) but loses its pin.
+  assert_line "[vertex-anthropic]"
+  refute_line "claude-x"
+  assert_line "gemini-z"
+  refute_line "gemini-y"
+}
+
 # --- _setup_action_reset (re-run fresh flow over an existing config) ---
 
 @test "_setup_action_reset: declining keeps the config untouched" {

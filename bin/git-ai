@@ -500,11 +500,16 @@ _setup_status_table() {
   printf '\n'
 }
 
+# True when the wizard should drive selections through fzf.
+_setup_has_fzf() {
+  command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]
+}
+
 # Pick one or more providers. Prefers fzf; falls back to a numbered prompt.
 # Prints chosen provider tokens, one per line.
 _setup_pick_providers() {
   local p line
-  if command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
+  if _setup_has_fzf; then
     for p in "${SETUP_PROVIDERS[@]}"; do
       printf '%s|%s\n' "$p" "$(provider_display_name "$p")"
     done | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE \
@@ -530,17 +535,12 @@ _setup_pick_providers() {
   done
 }
 
-# Pick zero or more models for PROVIDER. Models are discovered live from the
-# provider's API (cached) and offered as suggestions; nothing is selected unless
-# the user *explicitly* marks it (Tab) or types it. Prints chosen model IDs, one
-# per line — empty output is valid (the provider is enabled with no pinned model
-# and the model is chosen at commit/pr time). Never adds a model the user didn't
-# deliberately choose.
-_setup_pick_models() {
-  local provider="$1" listed selected="" line m
+# Discovered model suggestions for a wizard provider token: vertex merges both
+# publishers' lists (each pick is routed to the right internal provider later
+# by _setup_provider_for_model); everything else is one discovery call.
+_setup_suggest_models() {
+  local provider="$1" listed
   if [[ "$provider" == vertex ]]; then
-    # One merged suggestion list across both Vertex publishers; each pick is
-    # routed to the right internal provider later by _setup_provider_for_model.
     listed=$(
       discover_models vertex-anthropic 2>/dev/null
       discover_models vertex-gemini 2>/dev/null
@@ -550,32 +550,59 @@ _setup_pick_models() {
   else
     listed=$(discover_models "$provider" 2>/dev/null)
   fi
+  printf '%s\n' "$listed"
+}
 
-  if [[ -n "$listed" ]] && command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
-    # A leading "skip" sentinel is focused by default, so a bare Enter (no Tab
-    # marks) selects *nothing* — fzf otherwise returns the focused row, which
-    # silently pins a model the user never chose. FZF_DEFAULT_OPTS is cleared so
-    # a user's custom keybindings (e.g. select-all-on-enter) can't auto-select.
-    # The fzf choice is final: skipping here does NOT fall through to the
-    # free-text prompt — unlisted ids have their own explicit sentinel row.
-    local skip='— skip / no model —' custom='— type a custom model id… —'
-    selected=$(printf '%s\n%s\n%s\n' "$skip" "$custom" "$listed" \
-      | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
-        --no-sort --tiebreak=index --height=40% --reverse \
-      --header='Tab marks a model; Enter confirms marked rows; Esc selects none' \
-      --prompt="models for ${provider}> ") || selected=""
-    if ! printf '%s\n' "$selected" | grep -qxF "$custom"; then
-      selected=$(printf '%s\n' "$selected" | grep -vxF "$skip")
-      while IFS= read -r m; do [[ -n "$m" ]] && printf '%s\n' "$m"; done <<<"$selected"
-      return 0
+# Build "id|label" picker rows for PROVIDER from the LISTED suggestions: the
+# family's recommended model(s) lead, labelled "(recommended)", so the user
+# never has to know which id in a noisy catalog is the good default; then an
+# explicit custom-id sentinel; then the rest in discovery order (deduped).
+_setup_model_rows() {
+  local provider="$1" listed="$2" c rec m
+  local rows="" seen=$'\n'
+  while IFS= read -r c; do
+    rec=$(recommended_model "$c")
+    [[ -n "$rec" && "$seen" != *$'\n'"$rec"$'\n'* ]] || continue
+    seen+="$rec"$'\n'
+    rows+="${rec}|${rec} (recommended)"$'\n'
+  done < <(_setup_expand_provider "$provider")
+  rows+=$'=custom=|— type a custom model id… —\n'
+  while IFS= read -r m; do
+    [[ -n "$m" && "$seen" != *$'\n'"$m"$'\n'* ]] || continue
+    seen+="$m"$'\n'
+    rows+="${m}|${m}"$'\n'
+  done <<<"$listed"
+  printf '%s' "$rows"
+}
+
+# Pick zero or more models for PROVIDER. Models are discovered live from the
+# provider's API (cached) and offered as suggestions — recommended first — but
+# nothing is selected unless the user *explicitly* marks it (Tab) or types it.
+# Prints chosen model IDs, one per line — empty output is valid (the provider
+# is enabled with no pinned model and the model is chosen at commit/pr time).
+# Never adds a model the user didn't deliberately choose.
+_setup_pick_models() {
+  local provider="$1" listed line m
+  listed=$(_setup_suggest_models "$provider")
+
+  if [[ -n "$listed" ]]; then
+    local rows selected want_custom=""
+    rows=$(_setup_model_rows "$provider" "$listed")
+    if selected=$(_setup_multiselect "models for ${provider}> " \
+        'Tab marks a model; Enter confirms marked rows; Esc selects none' \
+        '— skip / no model —' "$rows"); then
+      # The fzf choice is final: skipping does NOT fall through to the
+      # free-text prompt — unlisted ids go via the explicit custom row, which
+      # emits any models marked alongside it and then drops to the prompt.
+      while IFS= read -r m; do
+        [[ -n "$m" ]] || continue
+        if [[ "$m" == '=custom=' ]]; then want_custom=1; else printf '%s\n' "$m"; fi
+      done <<<"$selected"
+      [[ -n "$want_custom" ]] || return 0
+    else
+      printf 'Suggested models for %s:\n' "$provider" >&2
+      printf '%s\n' "$listed" | sed 's/^/  /' >&2
     fi
-    # Custom row chosen: emit any models marked alongside it, then fall through
-    # to the free-text prompt for the unlisted id(s).
-    printf '%s\n' "$selected" | grep -vxF "$skip" | grep -vxF "$custom" |
-      while IFS= read -r m; do [[ -n "$m" ]] && printf '%s\n' "$m"; done
-  elif [[ -n "$listed" ]]; then
-    printf 'Suggested models for %s:\n' "$provider" >&2
-    printf '%s\n' "$listed" | sed 's/^/  /' >&2
   fi
 
   # Reached via the explicit custom-id row, when fzf is unavailable, or when
@@ -597,7 +624,7 @@ _setup_pick_models() {
 # FZF_DEFAULT_OPTS is cleared so a user's keybindings can't auto-select.
 _setup_multiselect() {
   local prompt="$1" header="$2" skip_label="$3" rows="$4"
-  command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]] || return 1
+  _setup_has_fzf || return 1
   local selected v
   selected=$(printf '—|%s\n%s' "$skip_label" "$rows" \
     | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
@@ -817,7 +844,7 @@ _setup_select() {
   done <<<"$data"
   [[ ${#vals[@]} -gt 0 ]] || return 1
 
-  if command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
+  if _setup_has_fzf; then
     local i out
     out=$(for i in "${!vals[@]}"; do printf '%s\t%s\n' "$i" "${labels[$i]}"; done \
       | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf \
@@ -964,14 +991,14 @@ _setup_action_add() {
   local provider
   provider=$(_setup_choose_provider 'Set up which provider? ' "${cands[@]}") || { printf 'Cancelled.\n'; return 0; }
 
-  # Present section → merge models (never drop earlier picks; an empty pick
-  # leaves models untouched, which is the common case when re-adding vertex
-  # just to attach another project). Truly absent → append a new section.
-  # Either way no duplicate [provider] header is created.
+  # Present section → replace-style model edit (Esc keeps the current pins,
+  # which is the common case when re-adding vertex just to attach another
+  # project). Truly absent → append a new section. Either way no duplicate
+  # [provider] header is created.
   local present=$'\n'
   while IFS= read -r p; do present+="$p"$'\n'; done < <(_setup_conf_wizard_providers "$conf")
   if [[ "$present" == *$'\n'"$provider"$'\n'* ]]; then
-    _setup_apply_merged_models "$conf" "$provider"
+    _setup_change_models "$conf" "$provider"
   else
     local -a models=()
     while IFS= read -r m; do [[ -n "$m" ]] && models+=("$m"); done < <(_setup_pick_models "$provider")
@@ -1129,19 +1156,19 @@ _setup_existing_models() {
 
 # _setup_upsert_section_models CONF PROVIDER [MODEL...]
 # Write MODELS as [PROVIDER]'s pinned set: replace the model lines of a present
-# section, append a new section when absent. No models → no-op (a present
-# section is never cleared, an absent one never created).
+# section (clearing them when MODELS is empty — needed so a replace-style edit
+# can drop one vertex family's pins entirely), append a new section only when
+# it has models — an absent section is never created empty.
 _setup_upsert_section_models() {
   local conf="$1" provider="$2"
   shift 2
-  [[ $# -gt 0 ]] || return 0
   local p present=0
   while IFS= read -r p; do
     [[ "$p" == "$provider" ]] && present=1
   done < <(conf_section_providers <"$conf")
   if [[ $present -eq 1 ]]; then
     _conf_apply "$conf" conf_set_section_models "$provider" "$@"
-  else
+  elif [[ $# -gt 0 ]]; then
     _conf_apply "$conf" conf_add_section "$provider" "$@"
   fi
 }
@@ -1163,51 +1190,81 @@ _setup_write_vertex_models() {
     _setup_upsert_section_models "$conf" vertex-gemini ${gem[@]+"${gem[@]}"}
 }
 
-# Pick models for PROVIDER and MERGE them with those already pinned (deduped,
-# existing first), writing the result back — never dropping earlier choices. An
-# empty pick leaves the section untouched; to drop models, remove and re-add.
-# Shared by the add and change-models actions.
-_setup_apply_merged_models() {
+# Replace-style model editor (mirrors _setup_change_vertex_projects): one
+# multi-select over the union of the models currently pinned (labelled
+# "(current)", listed first) and the discovered catalog — the marked set
+# REPLACES the provider's pins, so a single gesture adds *and* removes.
+# Esc / nothing marked keeps the current pins; the custom-id row adds unlisted
+# ids to the marked set; the no-fzf fallback is a comma-list re-entry (blank
+# keeps current). Clearing every model is done via remove-provider.
+_setup_change_models() {
   local conf="$1" provider="$2" m
-  # Seed the merged set with what's already pinned.
-  local -a models=()
-  local seen=$'\n'
-  while IFS= read -r m; do
-    [[ -n "$m" ]] || continue
-    models+=("$m")
-    seen+="$m"$'\n'
-  done < <(_setup_existing_models "$provider")
+  local current
+  current=$(_setup_existing_models "$provider" | paste -sd, - | sed 's/,/, /g')
+  [[ -n "$current" ]] && printf 'Current models: %s\n' "$current"
 
-  local added=0
-  while IFS= read -r m; do
-    [[ -n "$m" ]] || continue
-    case "$seen" in *$'\n'"$m"$'\n'*) continue ;; esac
-    models+=("$m")
-    seen+="$m"$'\n'
-    added=$((added + 1))
-  done < <(_setup_pick_models "$provider")
+  local -a picked=()
+  local selected want_custom="" line pseen=$'\n'
+  if _setup_has_fzf; then
+    # Union: current pins first (labelled "(current)"), then the suggestion
+    # rows. Built only on the fzf path — the free-text fallback never shows
+    # suggestions, so don't pay for discovery there.
+    local rows="" seen=$'\n' lbl
+    while IFS= read -r m; do
+      [[ -n "$m" && "$seen" != *$'\n'"$m"$'\n'* ]] || continue
+      seen+="$m"$'\n'
+      rows+="${m}|${m} (current)"$'\n'
+    done < <(_setup_existing_models "$provider")
+    while IFS='|' read -r m lbl; do
+      [[ -n "$m" && "$seen" != *$'\n'"$m"$'\n'* ]] || continue
+      [[ "$m" != '=custom=' ]] && seen+="$m"$'\n'
+      rows+="${m}|${lbl}"$'\n'
+    done < <(_setup_model_rows "$provider" "$(_setup_suggest_models "$provider")")
 
-  if [[ $added -eq 0 ]]; then
-    printf 'No new models selected — %s left unchanged.\n' "$(provider_display_name "$provider")"
+    selected=$(_setup_multiselect "models for ${provider}> " \
+      'Tab-mark ALL models to keep — the marked set replaces the pins; Esc keeps current' \
+      '— keep current models —' "$rows")
+    while IFS= read -r m; do
+      [[ -n "$m" && "$pseen" != *$'\n'"$m"$'\n'* ]] || continue
+      if [[ "$m" == '=custom=' ]]; then want_custom=1; else picked+=("$m"); pseen+="$m"$'\n'; fi
+    done <<<"$selected"
+    if [[ -n "$want_custom" ]]; then
+      read -rp 'Additional model id(s), comma-separated: ' line || line=""
+      while IFS= read -r m; do
+        m=$(_trim "$m")
+        [[ -n "$m" && "$pseen" != *$'\n'"$m"$'\n'* ]] && { picked+=("$m"); pseen+="$m"$'\n'; }
+      done < <(printf '%s\n' "${line//,/$'\n'}")
+    fi
+  else
+    read -rp 'Models to keep, comma-separated (blank to keep current): ' line || line=""
+    while IFS= read -r m; do
+      m=$(_trim "$m")
+      [[ -n "$m" && "$pseen" != *$'\n'"$m"$'\n'* ]] && { picked+=("$m"); pseen+="$m"$'\n'; }
+    done < <(printf '%s\n' "${line//,/$'\n'}")
+  fi
+
+  if [[ ${#picked[@]} -eq 0 ]]; then
+    printf 'Models unchanged%s.\n' "${current:+: $current}"
     return 0
   fi
+
   if [[ "$provider" == vertex ]]; then
-    _setup_write_vertex_models "$conf" "${models[@]}"
+    _setup_write_vertex_models "$conf" "${picked[@]}"
   else
-    _conf_apply "$conf" conf_set_section_models "$provider" "${models[@]}"
+    _conf_apply "$conf" conf_set_section_models "$provider" "${picked[@]}"
   fi &&
-    printf 'Updated models for %s (now: %s).\n' \
-      "$(provider_display_name "$provider")" "$(_join_comma "${models[@]}")"
+    printf 'Set models for %s: %s\n' \
+      "$(provider_display_name "$provider")" "$(_join_comma "${picked[@]}")"
 }
 
-# Add models to an existing provider (additive — see _setup_apply_merged_models).
+# Change an existing provider's models (replace-style — see _setup_change_models).
 _setup_action_models() {
   local conf="$1" p
   local -a secs=()
   while IFS= read -r p; do secs+=("$p"); done < <(_setup_conf_wizard_providers "$conf")
   local provider
-  provider=$(_setup_choose_provider 'Add models to which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
-  _setup_apply_merged_models "$conf" "$provider"
+  provider=$(_setup_choose_provider 'Change models for which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+  _setup_change_models "$conf" "$provider"
 }
 
 # Replace the whole config by re-running the fresh flow (fast path first, so
@@ -1434,11 +1491,11 @@ _setup_manual() {
 
   _setup_seed_default_provider "${chosen[0]}"
 
-  # Config now exists — hand off to the additive edit loop so the user can add
-  # more providers, change models, or set up auth without re-running setup.
-  printf '\n'
-  _setup_edit_existing "$conf"
-
+  # The user just made every choice themselves — no need to re-show them.
+  # (The fast path differs: it chooses FOR the user, so it lands on the
+  # overview as the consent moment.)
+  printf '\nDone. Config saved at %s\n' "$conf"
+  printf 'Run "git-ai setup" again anytime to add providers or change models.\n'
   printf '\nTry:  git add -A && git-ai commit\n'
 }
 
