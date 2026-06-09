@@ -755,18 +755,45 @@ _join_comma() {
   printf '%s' "${joined%, }"
 }
 
+# For a vertex base section, format a trailing " (project: …)" suffix (plus the
+# pinned gcloud account when set) so the summary identifies the GCP project/
+# account pair a vertex provider runs against. Empty for non-vertex providers.
+_setup_vertex_summary_detail() {
+  local p="$1" raw account detail="" pr
+  case "$p" in vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
+
+  # Prefer the shared [vertex] projects list (one provider, many projects); fall
+  # back to a per-section project=.
+  raw=$(vertex_config_value "vertex" projects)
+  [[ -n "$raw" ]] || raw=$(vertex_resolve "$p" project)
+  local -a projs=()
+  while IFS= read -r pr || [[ -n "$pr" ]]; do [[ -n "$pr" ]] && projs+=("$pr"); done < <(printf '%s' "$raw" | tr ', ' '\n')
+  if [[ ${#projs[@]} -gt 0 ]]; then
+    if [[ ${#projs[@]} -gt 1 ]]; then
+      detail+=" (projects: $(_join_comma "${projs[@]}"))"
+    else
+      detail+=" (project: ${projs[0]})"
+    fi
+  fi
+
+  account=$(vertex_resolve "$p" account)
+  [[ -n "$account" ]] && detail+=" [account: ${account}]"
+  printf '%s' "$detail"
+}
+
 _setup_print_summary() {
-  local conf="$1" p any=0 models
+  local conf="$1" p any=0 models name
   printf 'Configured providers:\n'
   while IFS= read -r p; do
     any=1
     # Models pinned under this section (deduped, @profiles folded to base).
     models=$(_setup_existing_models "$p" | paste -sd, - | sed 's/,/, /g')
+    name="$(provider_display_name "$p")$(_setup_vertex_summary_detail "$p")"
     if [[ -n "$models" ]]; then
-      printf '  • %s — %s\n' "$(provider_display_name "$p")" "$models"
+      printf '  • %s — %s\n' "$name" "$models"
     else
       printf '  • %s — no models pinned (hidden from the picker until you add one)\n' \
-        "$(provider_display_name "$p")"
+        "$name"
     fi
   done < <(conf_section_providers <"$conf")
   [[ $any -eq 1 ]] || printf '  (none)\n'
@@ -785,7 +812,13 @@ _setup_action_add() {
 
   local -a cands=()
   for p in "${SETUP_PROVIDERS[@]}"; do
-    case "$with_models" in *$'\n'"$p"$'\n'*) ;; *) cands+=("$p") ;; esac
+    case "$p" in
+      # A vertex provider is a (project/account) pair, so it's always re-offered
+      # here even when already configured — adding it again lets the user attach
+      # another GCP project/account to the existing section.
+      vertex-gemini | vertex-anthropic) cands+=("$p") ;;
+      *) case "$with_models" in *$'\n'"$p"$'\n'*) ;; *) cands+=("$p") ;; esac ;;
+    esac
   done
   if [[ ${#cands[@]} -eq 0 ]]; then
     printf 'All providers already have models configured.\n'
@@ -793,17 +826,18 @@ _setup_action_add() {
   fi
   local provider
   provider=$(_setup_choose_provider 'Set up which provider? ' "${cands[@]}") || { printf 'Cancelled.\n'; return 0; }
-  local -a models=()
-  while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
 
-  # Present-but-empty section → set its models in place; truly absent → append a
-  # new section. Either way no duplicate [provider] header is created.
+  # Present section → merge models (never drop earlier picks; an empty pick
+  # leaves models untouched, which is the common case when re-adding a vertex
+  # provider just to attach another project). Truly absent → append a new
+  # section. Either way no duplicate [provider] header is created.
   local present=$'\n'
   while IFS= read -r p; do present+="$p"$'\n'; done < <(conf_section_providers <"$conf")
   if [[ "$present" == *$'\n'"$provider"$'\n'* ]]; then
-    _conf_apply "$conf" conf_set_section_models "$provider" ${models[@]+"${models[@]}"} &&
-      printf 'Configured %s.\n' "$(provider_display_name "$provider")"
+    _setup_apply_merged_models "$conf" "$provider"
   else
+    local -a models=()
+    while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
     _conf_apply "$conf" conf_add_section "$provider" ${models[@]+"${models[@]}"} &&
       printf 'Added %s.\n' "$(provider_display_name "$provider")"
   fi
@@ -853,17 +887,12 @@ _setup_existing_models() {
     '{ split($1, a, "@"); if (a[1] == p && $2 != "" && !seen[$2]++) print $2 }'
 }
 
-# Add models to an existing provider. Picks are MERGED with the models already
-# pinned (deduped, existing first) rather than replacing them — re-running this
-# never drops earlier choices. An empty pick leaves the section untouched; to
-# drop models, remove the provider and re-add.
-_setup_action_models() {
-  local conf="$1" p m
-  local -a secs=()
-  while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
-  local provider
-  provider=$(_setup_choose_provider 'Add models to which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
-
+# Pick models for PROVIDER and MERGE them with those already pinned (deduped,
+# existing first), writing the result back — never dropping earlier choices. An
+# empty pick leaves the section untouched; to drop models, remove and re-add.
+# Shared by the add and change-models actions.
+_setup_apply_merged_models() {
+  local conf="$1" provider="$2" m
   # Seed the merged set with what's already pinned.
   local -a models=()
   local seen=$'\n'
@@ -889,6 +918,16 @@ _setup_action_models() {
   _conf_apply "$conf" conf_set_section_models "$provider" "${models[@]}" &&
     printf 'Updated models for %s (now: %s).\n' \
       "$(provider_display_name "$provider")" "$(_join_comma "${models[@]}")"
+}
+
+# Add models to an existing provider (additive — see _setup_apply_merged_models).
+_setup_action_models() {
+  local conf="$1" p
+  local -a secs=()
+  while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
+  local provider
+  provider=$(_setup_choose_provider 'Add models to which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+  _setup_apply_merged_models "$conf" "$provider"
 }
 
 # Authenticate an existing provider.

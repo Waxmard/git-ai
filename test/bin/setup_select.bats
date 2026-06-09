@@ -60,6 +60,32 @@ EOF
   assert_output --partial "Claude Code — no models pinned"
 }
 
+@test "_setup_print_summary: vertex project + account shown in the header" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+
+[vertex-gemini]
+account = me@example.com
+gemini-3.5-flash
+EOF
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "(projects: proj-a, proj-b)"
+  assert_output --partial "[account: me@example.com]"
+}
+
+@test "_setup_print_summary: single per-section vertex project shown" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+project = solo-proj
+claude-sonnet-4
+EOF
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "(project: solo-proj)"
+}
+
 # --- _setup_existing_models (additive change-models support) ---
 
 @test "_setup_existing_models: lists pinned models, folding @profiles to base" {
