@@ -484,7 +484,7 @@ _setup_pick_models() {
     m="${m#"${m%%[![:space:]]*}"}"
     m="${m%"${m##*[![:space:]]}"}"
     [[ -n "$m" ]] && printf '%s\n' "$m"
-  done < <(printf '%s' "$line" | tr ',' '\n')
+  done < <(printf '%s\n' "$line" | tr ',' '\n')
 }
 
 # Multi-select GCP projects for vertex providers, sourced from `gcloud projects
@@ -518,7 +518,7 @@ _setup_pick_projects() {
     p="${p#"${p%%[![:space:]]*}"}"
     p="${p%"${p##*[![:space:]]}"}"
     [[ -n "$p" ]] && printf '%s\n' "$p"
-  done < <(printf '%s' "$line" | tr ',' '\n')
+  done < <(printf '%s\n' "$line" | tr ',' '\n')
 }
 
 # maybe_first_run_setup TOOL
@@ -842,23 +842,50 @@ _setup_action_remove() {
     printf 'Removed %s.\n' "$(provider_display_name "$provider")"
 }
 
-# Change the models listed under an existing provider (settings preserved).
+# Print the models currently pinned under PROVIDER's base section (deduped),
+# folding any @profile expansions back to the base. Used to merge rather than
+# overwrite when adding models.
+_setup_existing_models() {
+  parse_user_options | awk -F: -v p="$1" \
+    '{ split($1, a, "@"); if (a[1] == p && $2 != "" && !seen[$2]++) print $2 }'
+}
+
+# Add models to an existing provider. Picks are MERGED with the models already
+# pinned (deduped, existing first) rather than replacing them — re-running this
+# never drops earlier choices. An empty pick leaves the section untouched; to
+# drop models, remove the provider and re-add.
 _setup_action_models() {
   local conf="$1" p m
   local -a secs=()
   while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
   local provider
-  provider=$(_setup_choose_provider 'Edit models for which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+  provider=$(_setup_choose_provider 'Add models to which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+
+  # Seed the merged set with what's already pinned.
   local -a models=()
-  while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
-  # Selecting nothing (Esc / skip) must NOT wipe the provider's existing models —
-  # only an explicit pick overwrites. To clear a provider, remove it instead.
-  if [[ ${#models[@]} -eq 0 ]]; then
-    printf 'No models selected — %s left unchanged.\n' "$(provider_display_name "$provider")"
+  local seen=$'\n'
+  while IFS= read -r m; do
+    [[ -n "$m" ]] || continue
+    models+=("$m")
+    seen+="$m"$'\n'
+  done < <(_setup_existing_models "$provider")
+
+  local added=0
+  while IFS= read -r m; do
+    [[ -n "$m" ]] || continue
+    case "$seen" in *$'\n'"$m"$'\n'*) continue ;; esac
+    models+=("$m")
+    seen+="$m"$'\n'
+    added=$((added + 1))
+  done < <(_setup_models_for "$provider")
+
+  if [[ $added -eq 0 ]]; then
+    printf 'No new models selected — %s left unchanged.\n' "$(provider_display_name "$provider")"
     return 0
   fi
   _conf_apply "$conf" conf_set_section_models "$provider" "${models[@]}" &&
-    printf 'Updated models for %s.\n' "$(provider_display_name "$provider")"
+    printf 'Updated models for %s (now: %s).\n' \
+      "$(provider_display_name "$provider")" "$(printf '%s, ' "${models[@]}" | sed 's/, $//')"
 }
 
 # Authenticate an existing provider.

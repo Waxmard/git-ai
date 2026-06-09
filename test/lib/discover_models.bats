@@ -159,3 +159,40 @@ JSON
   refute_line "gemini-embedding-001"  # non-text variant
   refute_line "gemini-2.5-flash-tts"  # non-text variant
 }
+
+# --- models.dev keyless fallback ---
+
+@test "_fetch_models_modelsdev: extracts the mapped provider, filters non-text" {
+  cat >"${CACHE}/_modelsdev.json" <<'JSON'
+{"anthropic":{"models":{"claude-opus-4-8":{},"claude-haiku-4-5":{},"claude-tts-1":{}}},
+ "openai":{"models":{"gpt-5.4":{},"text-embedding-3":{},"o3":{}}}}
+JSON
+  run _fetch_models_modelsdev claude-code
+  assert_success
+  assert_line "claude-opus-4-8"
+  assert_line "claude-haiku-4-5"
+  refute_line "claude-tts-1"
+}
+
+@test "_fetch_models_modelsdev: openai mapping keeps gpt/o ids only" {
+  cat >"${CACHE}/_modelsdev.json" <<'JSON'
+{"openai":{"models":{"gpt-5.4":{},"text-embedding-3":{},"o3":{},"dall-e-3":{}}}}
+JSON
+  run _fetch_models_modelsdev codex
+  assert_success
+  assert_line "gpt-5.4"
+  assert_line "o3"
+  refute_line "text-embedding-3"
+  refute_line "dall-e-3"
+}
+
+@test "discover_models: a keyless CLI provider falls back to models.dev" {
+  # No claude-code cache; authed anthropic fetch fails (stubbed curl + no key);
+  # the seeded models.dev catalog supplies the list.
+  cat >"${CACHE}/_modelsdev.json" <<'JSON'
+{"anthropic":{"models":{"claude-opus-4-8":{}}}}
+JSON
+  run discover_models claude-code
+  assert_success
+  assert_line "claude-opus-4-8"
+}

@@ -59,3 +59,38 @@ EOF
   assert_output --partial "Vertex AI (Gemini) — gemini-3.5-flash, gemini-3.1-pro-preview"
   assert_output --partial "Claude Code — no models pinned"
 }
+
+# --- _setup_existing_models (additive change-models support) ---
+
+@test "_setup_existing_models: lists pinned models, folding @profiles to base" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = a, b
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _setup_existing_models vertex-gemini
+  assert_success
+  assert_line "gemini-3.5-flash"
+  # The two project profiles must collapse to a single base entry.
+  [ "$(grep -c '^gemini-3.5-flash$' <<<"$output")" -eq 1 ]
+}
+
+# --- _setup_pick_projects (vertex project selection, free-text fallback) ---
+
+@test "_setup_pick_projects: free-text fallback splits a comma list" {
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"  # no project list → free-text path
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "proj-a, proj-b\n" | GIT_AI_NO_FZF=1 _setup_pick_projects
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_line "proj-a"
+  assert_line "proj-b"
+}
