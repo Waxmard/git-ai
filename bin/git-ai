@@ -397,11 +397,15 @@ cmd_options() {
   list_options "${1:-commit}"
 }
 
-# Canonical provider order for the setup wizard (mirrors list_providers).
+# Canonical provider order for the setup wizard, by strength of intent signal:
+# an installed CLI or a configured gcloud project is a deliberate act, while an
+# exported API key can be stray spillover from another project. The fast path
+# seeds the per-repo default from the FIRST ready provider in this order, so it
+# must never let a stray key outrank a deliberate install.
 # `vertex` is the single user-facing Vertex AI entry: the wizard never shows
 # the vertex-gemini/vertex-anthropic split — it expands the token itself and
 # routes each model to the right internal provider by its id.
-SETUP_PROVIDERS=(gemini-api claude-code codex anthropic-api openai-api vertex)
+SETUP_PROVIDERS=(claude-code codex vertex gemini-api anthropic-api openai-api)
 
 # Expand a wizard provider token into the concrete runnable provider(s) it
 # stands for: `vertex` covers both internal vertex providers; everything else

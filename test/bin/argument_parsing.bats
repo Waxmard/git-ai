@@ -65,8 +65,9 @@ setup() {
     chmod +x "${stub}/${c}"
   done
   mkdir -p "${xdg}/git-ai/models-cache"
-  printf 'gemini-3.1-flash\n' >"${xdg}/git-ai/models-cache/gemini-api.list"
-  # Numbered fallback: pick provider 1, default model. Isolated config + repo.
+  printf 'claude-sonnet-4-6\n' >"${xdg}/git-ai/models-cache/claude-code.list"
+  # Numbered fallback: pick provider 1 (claude-code, first in SETUP_PROVIDERS),
+  # default model. Isolated config + repo.
   # GIT_AI_NO_SETUP_FAST forces the manual picker (the readiness fast path would
   # otherwise intercept whenever a real provider CLI is present on this machine).
   run bash -c "export PATH=\"$stub:\$PATH\"; cd '$repo' && XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 GIT_AI_NO_SETUP_FAST=1 printf '1\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 GIT_AI_NO_SETUP_FAST=1 '$GIT_AI' setup"
@@ -75,7 +76,7 @@ setup() {
   rm -rf "$repo" "$xdg" "$stub"
   assert_success
   assert_output --partial "git-ai setup"
-  [[ "$written" == *"[gemini-api]"* ]]
+  [[ "$written" == *"[claude-code]"* ]]
 }
 
 @test "git-ai setup: no providers selected exits 1" {
