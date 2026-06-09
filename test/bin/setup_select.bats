@@ -120,3 +120,23 @@ EOF
   assert_line "proj-a"
   assert_line "proj-b"
 }
+
+# --- _merge_vertex_projects (additive project attach) ---
+
+@test "_merge_vertex_projects: new project appended to current list" {
+  run _merge_vertex_projects "the-file-system" "sierra-data-den"
+  assert_success
+  assert_output "the-file-system, sierra-data-den"
+}
+
+@test "_merge_vertex_projects: re-picking an existing project dedupes" {
+  run _merge_vertex_projects "proj-a, proj-b" "proj-b" "proj-c"
+  assert_success
+  assert_output "proj-a, proj-b, proj-c"
+}
+
+@test "_merge_vertex_projects: empty current list yields just the picks" {
+  run _merge_vertex_projects "" "proj-a" "proj-b"
+  assert_success
+  assert_output "proj-a, proj-b"
+}

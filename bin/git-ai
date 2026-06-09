@@ -756,6 +756,27 @@ _join_comma() {
   printf '%s' "${joined%, }"
 }
 
+# _merge_vertex_projects CURRENT NEW...
+# Merge NEW project ids into the comma-separated CURRENT list (current order
+# preserved, additions appended, deduped). Prints the merged comma list.
+_merge_vertex_projects() {
+  local current="$1" p
+  shift
+  local -a merged=()
+  local seen=$'\n'
+  while IFS= read -r p; do
+    p="${p#"${p%%[![:space:]]*}"}"
+    p="${p%"${p##*[![:space:]]}"}"
+    [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
+    merged+=("$p")
+    seen+="$p"$'\n'
+  done < <(
+    printf '%s\n' "${current//,/$'\n'}"
+    [[ $# -gt 0 ]] && printf '%s\n' "$@"
+  )
+  _join_comma ${merged[@]+"${merged[@]}"}
+}
+
 # For a vertex base section, format a trailing " (project: …)" suffix (plus the
 # pinned gcloud account when set) so the summary identifies the GCP project/
 # account pair a vertex provider runs against. Empty for non-vertex providers.
@@ -847,9 +868,10 @@ _setup_action_add() {
 }
 
 # For a vertex provider, let the user pick which GCP project(s) it runs against,
-# written to the shared [vertex] `projects =` list (expanded into per-project
-# picker profiles at commit time). Shared across both vertex providers by design;
-# a blank pick keeps the current list. No-op for non-vertex providers.
+# merged into the shared [vertex] `projects =` list (expanded into per-project
+# picker profiles at commit time) — picks never drop projects already listed.
+# Shared across both vertex providers by design; a blank pick keeps the current
+# list. No-op for non-vertex providers.
 _setup_choose_vertex_projects() {
   local provider="$1" conf="$2"
   case "${provider%%@*}" in vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
@@ -863,8 +885,14 @@ _setup_choose_vertex_projects() {
   while IFS= read -r pr; do projs+=("$pr"); done < <(_setup_pick_projects)
   [[ ${#projs[@]} -gt 0 ]] || { printf 'Vertex projects unchanged.\n'; return 0; }
 
+  # Additive like everything else in the wizard: picking a project attaches it
+  # alongside the ones already configured; removal stays a manual config edit.
   local joined
-  joined=$(_join_comma "${projs[@]}")
+  joined=$(_merge_vertex_projects "$current" "${projs[@]}")
+  if [[ "$joined" == "$current" ]]; then
+    printf 'Vertex projects unchanged: %s\n' "$joined"
+    return 0
+  fi
   _conf_apply "$conf" conf_set_section_setting vertex projects "$joined" &&
     printf 'Set vertex projects: %s\n' "$joined"
 }
