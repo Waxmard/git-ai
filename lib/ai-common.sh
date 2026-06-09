@@ -656,6 +656,7 @@ _fetch_models_gemini_api() {
   local key cfg resp st
   key=$(resolve_gemini_api_key) && [[ -n "$key" ]] || return 1
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  trap 'rm -f "$cfg"' EXIT
   printf 'url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=%s"\n' "$key" >"$cfg"
   resp=$(curl -sf -K "$cfg")
   st=$?
@@ -676,6 +677,7 @@ _fetch_models_anthropic_api() {
   local key cfg resp st
   key=$(resolve_api_key anthropic-api-key ANTHROPIC_API_KEY) && [[ -n "$key" ]] || return 1
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  trap 'rm -f "$cfg"' EXIT
   printf 'header = "x-api-key: %s"\n' "$key" >"$cfg"
   resp=$(curl -sf -K "$cfg" -H "anthropic-version: 2023-06-01" \
     "https://api.anthropic.com/v1/models?limit=1000")
@@ -697,6 +699,7 @@ _fetch_models_openai_api() {
   local key cfg resp st
   key=$(resolve_api_key openai-api-key OPENAI_API_KEY) && [[ -n "$key" ]] || return 1
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  trap 'rm -f "$cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$key" >"$cfg"
   resp=$(curl -sf -K "$cfg" "https://api.openai.com/v1/models")
   st=$?
@@ -747,6 +750,7 @@ _fetch_models_vertex() {
   [[ "$region" == "global" ]] && host="aiplatform.googleapis.com" \
                               || host="${region}-aiplatform.googleapis.com"
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  trap 'rm -f "$cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\nheader = "X-Goog-User-Project: %s"\n' \
     "$token" "$project" >"$cfg"
 

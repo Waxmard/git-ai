@@ -421,7 +421,8 @@ _setup_pick_providers() {
   if command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
     for p in "${SETUP_PROVIDERS[@]}"; do
       printf '%s|%s\n' "$p" "$(provider_display_name "$p")"
-    done | fzf --multi --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
+    done | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE \
+      fzf --multi --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
       --prompt='enable providers (tab to multi-select)> ' --height=50% --reverse |
       while IFS='|' read -r p _; do printf '%s\n' "$p"; done
     return
