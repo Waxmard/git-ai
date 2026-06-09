@@ -53,24 +53,40 @@ setup() {
 }
 
 @test "git-ai setup: routes to the wizard (not unknown command)" {
-  local repo xdg
+  local repo xdg stub c
   repo=$(make_test_repo)
   xdg=$(mktemp -d)
+  # Block the network/keychain and seed a model cache: the wizard's
+  # provider_ready probes and model discovery otherwise hit the real gcloud /
+  # curl on this machine — seconds of subprocess time, nondeterministic result.
+  stub=$(mktemp -d)
+  for c in curl security secret-tool pass kwallet-query gcloud npm; do
+    printf '#!/bin/sh\nexit 1\n' >"${stub}/${c}"
+    chmod +x "${stub}/${c}"
+  done
+  mkdir -p "${xdg}/git-ai/models-cache"
+  printf 'gemini-3.1-flash\n' >"${xdg}/git-ai/models-cache/gemini-api.list"
   # Numbered fallback: pick provider 1, default model. Isolated config + repo.
-  run bash -c "cd '$repo' && XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 printf '1\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 '$GIT_AI' setup"
+  run bash -c "export PATH=\"$stub:\$PATH\"; cd '$repo' && XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 printf '1\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 '$GIT_AI' setup"
   local conf="$xdg/git-ai/options.conf"
   local written=""; [[ -f "$conf" ]] && written=$(cat "$conf")
-  rm -rf "$repo" "$xdg"
+  rm -rf "$repo" "$xdg" "$stub"
   assert_success
   assert_output --partial "git-ai setup"
   [[ "$written" == *"[gemini-api]"* ]]
 }
 
 @test "git-ai setup: no providers selected exits 1" {
-  local xdg
+  local xdg stub c
   xdg=$(mktemp -d)
-  run bash -c "XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 printf '\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 '$GIT_AI' setup"
-  rm -rf "$xdg"
+  # Stub out the wizard's provider_ready probes (real gcloud/keychain hits).
+  stub=$(mktemp -d)
+  for c in curl security secret-tool pass kwallet-query gcloud npm; do
+    printf '#!/bin/sh\nexit 1\n' >"${stub}/${c}"
+    chmod +x "${stub}/${c}"
+  done
+  run bash -c "export PATH=\"$stub:\$PATH\"; XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 printf '\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 '$GIT_AI' setup"
+  rm -rf "$xdg" "$stub"
   assert_failure 1
   assert_output --partial "No providers selected"
 }

@@ -8,9 +8,11 @@ BATS_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 
 
 .PHONY: install uninstall lint test hooks sync py-format py-lint py-type-check py-test docs-build docs-check
 
+# --no-parallelize-within-files: per-test GNU-parallel dispatch costs more than
+# it buys for this suite (measured ~16s vs ~10s wall) — file-level fan-out only.
 test: $(BATS)
 	@if command -v parallel >/dev/null 2>&1 || command -v rush >/dev/null 2>&1; then \
-		$(BATS) --jobs $(BATS_JOBS) --recursive test/; \
+		$(BATS) --jobs $(BATS_JOBS) --no-parallelize-within-files --recursive test/; \
 	else \
 		$(BATS) --recursive test/; \
 	fi

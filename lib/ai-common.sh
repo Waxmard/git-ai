@@ -556,7 +556,9 @@ discover_models() {
     # `find -mmin +TTL` prints the file only when it is OLDER than TTL minutes;
     # empty output means the cache is still fresh.
     if [[ -z "$(find "$cache" -mmin +"$ttl" 2>/dev/null)" ]]; then
-      cat "$cache"
+      # $(<file) reads in-shell — this cache-hit path runs once per provider
+      # on every picker open, so skip the cat fork+exec.
+      printf '%s\n' "$(<"$cache")"
       return 0
     fi
   fi
@@ -575,7 +577,7 @@ discover_models() {
   fi
 
   # Fetch failed (offline, no creds, API error) — serve any stale cache.
-  [[ -s "$cache" ]] && { cat "$cache"; return 0; }
+  [[ -s "$cache" ]] && { printf '%s\n' "$(<"$cache")"; return 0; }
   return 1
 }
 
@@ -1223,7 +1225,13 @@ list_options() {
     case "$emitted" in
       *$'\n'"$entry"$'\n'*) continue ;;
     esac
-    label=$(printf '%s\n' "$table" | awk -F'\t' -v v="$entry" '$1 == v {print $2; exit}')
+    # Pure-bash table lookup — an awk pipeline here costs two forks per
+    # history entry on every picker open.
+    label=""
+    local cand_value cand_label
+    while IFS=$'\t' read -r cand_value cand_label; do
+      [[ "$cand_value" == "$entry" ]] && { label="$cand_label"; break; }
+    done <<< "$table"
     [[ -n "$label" ]] || continue
     printf '%s|%s\n' "$entry" "$label"
     emitted+="$entry"$'\n'
