@@ -748,16 +748,20 @@ _setup_models_for() {
   while IFS= read -r m; do [[ -n "$m" ]] && printf '%s\n' "$m"; done < <(_setup_pick_models "$provider")
 }
 
+# Join arguments with ", ".
+_join_comma() {
+  local joined
+  joined=$(printf '%s, ' "$@")
+  printf '%s' "${joined%, }"
+}
+
 _setup_print_summary() {
-  local conf="$1" p any=0 entries models
-  entries=$(parse_user_options)
+  local conf="$1" p any=0 models
   printf 'Configured providers:\n'
   while IFS= read -r p; do
     any=1
-    # Models pinned under this section (matching its base, ignoring @profile).
-    models=$(printf '%s\n' "$entries" | awk -F: -v p="$p" \
-      '{ split($1, a, "@"); if (a[1] == p && $2 != "" && !seen[$2]++) print $2 }' \
-      | paste -sd, - | sed 's/,/, /g')
+    # Models pinned under this section (deduped, @profiles folded to base).
+    models=$(_setup_existing_models "$p" | paste -sd, - | sed 's/,/, /g')
     if [[ -n "$models" ]]; then
       printf '  • %s — %s\n' "$(provider_display_name "$p")" "$models"
     else
@@ -825,8 +829,7 @@ _setup_choose_vertex_projects() {
   [[ ${#projs[@]} -gt 0 ]] || { printf 'Vertex projects unchanged.\n'; return 0; }
 
   local joined
-  joined=$(printf '%s, ' "${projs[@]}")
-  joined="${joined%, }"
+  joined=$(_join_comma "${projs[@]}")
   _conf_apply "$conf" conf_set_section_setting vertex projects "$joined" &&
     printf 'Set vertex projects: %s\n' "$joined"
 }
@@ -885,7 +888,7 @@ _setup_action_models() {
   fi
   _conf_apply "$conf" conf_set_section_models "$provider" "${models[@]}" &&
     printf 'Updated models for %s (now: %s).\n' \
-      "$(provider_display_name "$provider")" "$(printf '%s, ' "${models[@]}" | sed 's/, $//')"
+      "$(provider_display_name "$provider")" "$(_join_comma "${models[@]}")"
 }
 
 # Authenticate an existing provider.
