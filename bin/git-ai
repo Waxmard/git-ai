@@ -1409,7 +1409,7 @@ _setup_fast_path() {
   printf '\n'
   _setup_edit_existing "$conf"
 
-  printf '\nTry:  git add -A && git-ai commit\n'
+  printf '\nWhen you have changes to commit:  git add -A && git-ai commit\n'
   return 0
 }
 
@@ -1501,7 +1501,7 @@ _setup_manual() {
   # overview as the consent moment.)
   printf '\nDone. Config saved at %s\n' "$conf"
   printf 'Run "git-ai setup" again anytime to add providers or change models.\n'
-  printf '\nTry:  git add -A && git-ai commit\n'
+  printf '\nWhen you have changes to commit:  git add -A && git-ai commit\n'
 }
 
 # Detect a second git-ai install that may shadow this one and offer to remove
