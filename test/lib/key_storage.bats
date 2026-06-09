@@ -82,6 +82,21 @@ teardown() {
   assert_output "set -gx MY_KEY 'secret-val'"
 }
 
+@test "format_key_export: POSIX escapes embedded single quotes (round-trips)" {
+  run format_key_export MY_KEY "ab'c'd" bash
+  assert_success
+  assert_output "export MY_KEY='ab'\''c'\''d'"
+  # The emitted line must eval back to the original key.
+  eval "$output"
+  [ "$MY_KEY" = "ab'c'd" ]
+}
+
+@test "format_key_export: fish escapes embedded single quotes" {
+  run format_key_export MY_KEY "ab'cd" fish
+  assert_success
+  assert_output "set -gx MY_KEY 'ab\\'cd'"
+}
+
 # --- persist_key_to_rc -----------------------------------------------------
 
 @test "persist_key_to_rc: appends an export and prints the rc path" {

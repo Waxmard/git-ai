@@ -380,9 +380,13 @@ shell_rc_path() {
 # shell (fish uses `set -gx`; everything else POSIX `export`).
 format_key_export() {
   local envvar="$1" key="$2" sh="${3:-${SHELL##*/}}"
+  # Single-quote the key so it never re-interprets, escaping any embedded '
+  # for the target shell: fish escapes it as \', POSIX shells close-escape-reopen
+  # ('\''). q holds a literal single quote so the replacements stay readable.
+  local q="'"
   case "$sh" in
-    fish) printf "set -gx %s '%s'\n" "$envvar" "$key" ;;
-    *)    printf "export %s='%s'\n" "$envvar" "$key" ;;
+    fish) printf "set -gx %s '%s'\n" "$envvar" "${key//$q/\\$q}" ;;
+    *)    printf "export %s='%s'\n" "$envvar" "${key//$q/$q\\$q$q}" ;;
   esac
 }
 
@@ -720,7 +724,6 @@ _fetch_models_gemini_api() {
   local key cfg resp st
   key=$(resolve_gemini_api_key) && [[ -n "$key" ]] || return 1
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
-  trap 'rm -f "$cfg"' EXIT
   printf 'url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=%s"\n' "$key" >"$cfg"
   resp=$(curl -sf -K "$cfg")
   st=$?
@@ -741,7 +744,6 @@ _fetch_models_anthropic_api() {
   local key cfg resp st
   key=$(resolve_api_key anthropic-api-key ANTHROPIC_API_KEY) && [[ -n "$key" ]] || return 1
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
-  trap 'rm -f "$cfg"' EXIT
   printf 'header = "x-api-key: %s"\n' "$key" >"$cfg"
   resp=$(curl -sf -K "$cfg" -H "anthropic-version: 2023-06-01" \
     "https://api.anthropic.com/v1/models?limit=1000")
@@ -763,7 +765,6 @@ _fetch_models_openai_api() {
   local key cfg resp st
   key=$(resolve_api_key openai-api-key OPENAI_API_KEY) && [[ -n "$key" ]] || return 1
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
-  trap 'rm -f "$cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$key" >"$cfg"
   resp=$(curl -sf -K "$cfg" "https://api.openai.com/v1/models")
   st=$?
@@ -811,7 +812,6 @@ _fetch_models_vertex() {
   [[ "$region" == "global" ]] && host="aiplatform.googleapis.com" \
                               || host="${region}-aiplatform.googleapis.com"
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
-  trap 'rm -f "$cfg"' EXIT
   printf 'header = "Authorization: Bearer %s"\nheader = "X-Goog-User-Project: %s"\n' \
     "$token" "$project" >"$cfg"
 
@@ -1065,7 +1065,7 @@ conf_set_section_setting() {
     fi
     if [[ $in_target -eq 1 && "$line" == *=* ]]; then
       k="${line%%=*}"
-      k="${k//[[:space:]]/}"
+      k=$(_trim "$k")
       [[ "$k" == "$key" ]] && continue # drop the old KEY line
     fi
     printf '%s\n' "$line"
