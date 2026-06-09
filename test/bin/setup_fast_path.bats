@@ -16,23 +16,26 @@ teardown() {
   unset XDG_CONFIG_HOME
 }
 
-# _fast INPUT CONF PROVIDER...  -> sources the CLI and runs _setup_fast_path,
-# feeding INPUT on stdin (the [Y/n] confirm then the advanced-loop [y/N]).
+# _fast CONF PROVIDER...  -> sources the CLI and runs _setup_fast_path with
+# stdin closed: the landing overview's action prompt reads EOF, which selects
+# the default Done — the same as a user pressing Enter. GIT_AI_NO_FZF forces
+# the numbered fallback; without it fzf would open its UI on /dev/tty and hang
+# the test run.
 _fast() {
-  local input="$1" conf="$2"
-  shift 2
-  printf '%b' "$input" | bash -c '
+  local conf="$1"
+  shift
+  GIT_AI_NO_FZF=1 bash -c '
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
     conf="$1"; shift
     _setup_fast_path "$conf" "$@"
-  ' _ "$conf" "$@"
+  ' _ "$conf" "$@" </dev/null
 }
 
-@test "_setup_fast_path: accepting pins each provider's recommended model" {
-  run _fast 'Y\nN\n' "$CONF" claude-code gemini-api
+@test "_setup_fast_path: enables ready providers with recommended models, no questions" {
+  run _fast "$CONF" claude-code gemini-api
   assert_success
-  assert_output --partial "Detected providers you can use right now"
+  assert_output --partial "enabling them with recommended models"
   assert_output --partial "claude-sonnet-4-6"
   assert_output --partial "gemini-3.5-flash"
 
@@ -43,26 +46,40 @@ _fast() {
   assert_line "gemini-3.5-flash"
 }
 
-@test "_setup_fast_path: a bare Enter accepts (default yes)" {
-  run _fast '\nN\n' "$CONF" anthropic-api
+@test "_setup_fast_path: lands on the config overview" {
+  run _fast "$CONF" claude-code
   assert_success
-  [ -f "$CONF" ]
-  run cat "$CONF"
-  assert_line "[anthropic-api]"
-  assert_line "claude-sonnet-4-6"
+  assert_output --partial "Configured providers:"
+  assert_output --partial "Claude Code — claude-sonnet-4-6"
 }
 
-@test "_setup_fast_path: declining returns non-zero and writes nothing" {
-  run _fast 'n\n' "$CONF" claude-code
-  assert_failure 1
-  [ ! -f "$CONF" ]
+@test "_setup_fast_path: vertex expands to both internal sections, one user-facing row" {
+  run _fast "$CONF" vertex
+  assert_success
+  # One unified display row, never the internal split.
+  assert_output --partial "Vertex AI"
+  refute_output --partial "vertex-gemini"
+  refute_output --partial "vertex-anthropic"
+
+  run cat "$CONF"
+  assert_line "[vertex-anthropic]"
+  assert_line "claude-sonnet-4-6"
+  assert_line "[vertex-gemini]"
+  assert_line "gemini-3.5-flash"
 }
 
 @test "_setup_fast_path: seeds the per-repo default provider" {
-  run _fast 'Y\nN\n' "$CONF" gemini-api claude-code
+  run _fast "$CONF" gemini-api claude-code
   assert_success
-  # First ready provider becomes the saved default for commit + pr.
   source "${REPO_ROOT}/lib/ai-common.sh"
   run get_last_provider commit
   assert_output "gemini-api"
+}
+
+@test "_setup_fast_path: vertex-first seeds a concrete runnable token" {
+  run _fast "$CONF" vertex gemini-api
+  assert_success
+  source "${REPO_ROOT}/lib/ai-common.sh"
+  run get_last_provider commit
+  assert_output "vertex-anthropic"
 }

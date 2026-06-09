@@ -290,8 +290,8 @@ claude-sonnet-4-6
 EOF
   run list_options commit
   assert_success
-  assert_output --partial "vertex-anthropic@acme:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI (Anthropic) [acme]"
-  assert_output --partial "vertex-anthropic@sandbox:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI (Anthropic) [sandbox]"
+  assert_output --partial "vertex-anthropic@acme:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI [acme]"
+  assert_output --partial "vertex-anthropic@sandbox:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI [sandbox]"
 }
 
 # --- shared [vertex] projects expansion ---
@@ -348,8 +348,8 @@ gemini-3.5-flash
 EOF
   run list_options commit
   assert_success
-  assert_output --partial "vertex-gemini@sierra-data-den:gemini-3.5-flash|gemini-3.5-flash · Vertex AI (Gemini) [sierra-data-den]"
-  assert_output --partial "vertex-gemini@the-file-system:gemini-3.5-flash|gemini-3.5-flash · Vertex AI (Gemini) [the-file-system]"
+  assert_output --partial "vertex-gemini@sierra-data-den:gemini-3.5-flash|gemini-3.5-flash · Vertex AI [sierra-data-den]"
+  assert_output --partial "vertex-gemini@the-file-system:gemini-3.5-flash|gemini-3.5-flash · Vertex AI [the-file-system]"
 }
 
 # --- vertex_resolve layered lookup ---

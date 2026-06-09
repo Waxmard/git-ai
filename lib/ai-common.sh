@@ -415,7 +415,7 @@ provider_ready() {
     gemini-api)
       resolve_gemini_api_key >/dev/null 2>&1 && return 0
       printf 'Gemini auth not found (GEMINI_API_KEY or keychain)\n' >&2 ;;
-    vertex-gemini|vertex-anthropic)
+    vertex|vertex-gemini|vertex-anthropic)
       local account project
       account=$(vertex_resolve "$provider" account)
       if ! _vertex_has_auth "$account"; then
@@ -465,8 +465,9 @@ provider_display_name() {
   local base="${1%%@*}" profile="" name=""
   case $1 in *@*) profile="${1#*@}" ;; esac
   case $base in
-    vertex-gemini)    name="Vertex AI (Gemini)" ;;
-    vertex-anthropic) name="Vertex AI (Anthropic)" ;;
+    # One user-facing "Vertex AI": the gemini/anthropic split is an internal
+    # routing detail inferred from the model id, never shown to the user.
+    vertex | vertex-gemini | vertex-anthropic) name="Vertex AI" ;;
     gemini-api)    name="Gemini API" ;;
     claude-code)   name="Claude Code" ;;
     anthropic-api) name="Anthropic API" ;;
@@ -482,20 +483,42 @@ provider_display_name() {
   fi
 }
 
+# Curated recommended-model defaults live in a dedicated DATA file at the repo
+# root so model bumps read as data changes, not code changes (commits touching
+# only that file are routine "chore: bump recommended X model" updates).
+GIT_AI_RECOMMENDED_MODELS_FILE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../recommended-models.conf"
+
 # recommended_model PROVIDER
-# Print the hardcoded recommended model id for PROVIDER's family. Used by the
-# setup wizard's fast path so a new (often non-technical) user gets a sensible
-# pin without having to choose one. Empty output means "no recommendation"
-# (caller leaves the model unpinned). Suggestions only: discovery still feeds
-# the picker and any id remains overridable. Update these as better models ship
-# and cut a release — this is intentionally a small curated default, not the
-# (deliberately non-existent) full model catalog.
+# Print the recommended model id for PROVIDER's family, read from
+# recommended-models.conf (`family = model-id` lines). Used by the setup
+# wizard's fast path so a new (often non-technical) user gets a sensible pin
+# without having to choose one. Empty output means "no recommendation" (caller
+# leaves the model unpinned). Suggestions only: discovery still feeds the
+# picker and any id remains overridable — this is intentionally a single
+# curated default per family, not the (deliberately non-existent) full catalog.
 recommended_model() {
+  local family
   case "${1%%@*}" in
-    claude-code | anthropic-api | vertex-anthropic) printf 'claude-sonnet-4-6\n' ;;
-    gemini-api | vertex-gemini) printf 'gemini-3.5-flash\n' ;;
-    openai-api | codex) printf 'gpt-5.4-mini\n' ;;
+    claude-code | anthropic-api | vertex-anthropic) family=anthropic ;;
+    gemini-api | vertex-gemini) family=google ;;
+    openai-api | codex) family=openai ;;
+    *) return 0 ;;
   esac
+
+  [[ -r "$GIT_AI_RECOMMENDED_MODELS_FILE" ]] || return 0
+  local line key val
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *=* && "${line#"${line%%[![:space:]]*}"}" != \#* ]] || continue
+    key="${line%%=*}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    [[ "$key" == "$family" ]] || continue
+    val="${line#*=}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+    [[ -n "$val" ]] && printf '%s\n' "$val"
+    return 0
+  done <"$GIT_AI_RECOMMENDED_MODELS_FILE"
 }
 
 provider_is_valid() {

@@ -56,7 +56,7 @@ gemini-3.1-pro-preview
 EOF
   run _setup_print_summary "$CONF"
   assert_success
-  assert_output --partial "Vertex AI (Gemini) — gemini-3.5-flash, gemini-3.1-pro-preview"
+  assert_output --partial "Vertex AI — gemini-3.5-flash, gemini-3.1-pro-preview"
   assert_output --partial "Claude Code — no models pinned"
 }
 
@@ -139,4 +139,102 @@ EOF
   run _merge_vertex_projects "" "proj-a" "proj-b"
   assert_success
   assert_output "proj-a, proj-b"
+}
+
+# --- vertex unification (one user-facing "Vertex AI") ---
+
+@test "_setup_expand_provider: vertex expands to both internal providers" {
+  run _setup_expand_provider vertex
+  assert_success
+  assert_line --index 0 "vertex-anthropic"
+  assert_line --index 1 "vertex-gemini"
+}
+
+@test "_setup_expand_provider: concrete providers pass through" {
+  run _setup_expand_provider gemini-api
+  assert_success
+  assert_output "gemini-api"
+}
+
+@test "_setup_provider_for_model: claude models route to vertex-anthropic" {
+  run _setup_provider_for_model vertex "claude-sonnet-4-6"
+  assert_success
+  assert_output "vertex-anthropic"
+}
+
+@test "_setup_provider_for_model: non-claude models route to vertex-gemini" {
+  run _setup_provider_for_model vertex "gemini-3.5-flash"
+  assert_success
+  assert_output "vertex-gemini"
+}
+
+@test "_setup_provider_for_model: concrete provider passes through regardless of model" {
+  run _setup_provider_for_model anthropic-api "claude-sonnet-4-6"
+  assert_success
+  assert_output "anthropic-api"
+}
+
+@test "_setup_conf_wizard_providers: vertex sections fold into one entry" {
+  cat >"$CONF" <<'EOF'
+[gemini-api]
+gemini-3.5-flash
+
+[vertex-anthropic]
+claude-sonnet-4-6
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _setup_conf_wizard_providers "$CONF"
+  assert_success
+  assert_line --index 0 "gemini-api"
+  assert_line --index 1 "vertex"
+  [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "_setup_existing_models: vertex token folds both internal sections" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+claude-sonnet-4-6
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _setup_existing_models vertex
+  assert_success
+  assert_line "claude-sonnet-4-6"
+  assert_line "gemini-3.5-flash"
+}
+
+@test "_setup_write_vertex_models: splits picks per family into the right sections" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+claude-sonnet-4-6
+EOF
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_write_vertex_models "'"$CONF"'" claude-sonnet-4-6 claude-opus-4-6 gemini-3.5-flash
+    cat "'"$CONF"'"
+  '
+  assert_success
+  assert_line "[vertex-anthropic]"
+  assert_line "claude-opus-4-6"
+  assert_line "[vertex-gemini]"
+  assert_line "gemini-3.5-flash"
+}
+
+@test "_setup_print_summary: both vertex sections render as one Vertex AI row" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+claude-sonnet-4-6
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "Vertex AI — claude-sonnet-4-6, gemini-3.5-flash"
+  # Exactly one bullet row — the split must not leak.
+  [ "$(grep -c 'Vertex AI' <<<"$output")" -eq 1 ]
 }

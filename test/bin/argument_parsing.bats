@@ -44,7 +44,7 @@ setup() {
   rm -rf "$repo" "$xdg" "$stub"
   assert_success
   assert_output --partial "vertex-gemini:"
-  assert_output --partial " · Vertex AI (Gemini)"
+  assert_output --partial " · Vertex AI"
 }
 
 @test "git-ai: usage mentions setup" {

@@ -398,7 +398,49 @@ cmd_options() {
 }
 
 # Canonical provider order for the setup wizard (mirrors list_providers).
-SETUP_PROVIDERS=(gemini-api claude-code codex anthropic-api openai-api vertex-gemini vertex-anthropic)
+# `vertex` is the single user-facing Vertex AI entry: the wizard never shows
+# the vertex-gemini/vertex-anthropic split — it expands the token itself and
+# routes each model to the right internal provider by its id.
+SETUP_PROVIDERS=(gemini-api claude-code codex anthropic-api openai-api vertex)
+
+# Expand a wizard provider token into the concrete runnable provider(s) it
+# stands for: `vertex` covers both internal vertex providers; everything else
+# is already concrete.
+_setup_expand_provider() {
+  case "$1" in
+    vertex) printf 'vertex-anthropic\nvertex-gemini\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# Map a wizard provider token to the concrete provider that should run MODEL.
+# Only `vertex` needs inference (claude* models live under publishers/anthropic,
+# everything else under publishers/google); concrete tokens pass through.
+_setup_provider_for_model() {
+  local provider="$1" model="$2"
+  if [[ "$provider" == vertex ]]; then
+    case "$model" in
+      claude*) printf 'vertex-anthropic\n' ;;
+      *) printf 'vertex-gemini\n' ;;
+    esac
+  else
+    printf '%s\n' "$provider"
+  fi
+}
+
+# Collapse the config's provider sections into wizard tokens for choosers and
+# summaries: the two vertex sections fold into a single `vertex` entry (deduped,
+# first-seen order) so the user is never asked to tell them apart.
+_setup_conf_wizard_providers() {
+  local conf="$1" p
+  local seen=$'\n'
+  while IFS= read -r p; do
+    case "${p%%@*}" in vertex-gemini | vertex-anthropic) p=vertex ;; esac
+    case "$seen" in *$'\n'"$p"$'\n'*) continue ;; esac
+    seen+="$p"$'\n'
+    printf '%s\n' "$p"
+  done < <(conf_section_providers <"$conf")
+}
 
 # Print the readiness status table for every provider.
 _setup_status_table() {
@@ -452,7 +494,18 @@ _setup_pick_providers() {
 # deliberately choose.
 _setup_pick_models() {
   local provider="$1" listed selected="" line m
-  listed=$(discover_models "$provider" 2>/dev/null)
+  if [[ "$provider" == vertex ]]; then
+    # One merged suggestion list across both Vertex publishers; each pick is
+    # routed to the right internal provider later by _setup_provider_for_model.
+    listed=$(
+      discover_models vertex-anthropic 2>/dev/null
+      discover_models vertex-gemini 2>/dev/null
+    )
+    listed="${listed#$'\n'}"
+    listed="${listed%$'\n'}"
+  else
+    listed=$(discover_models "$provider" 2>/dev/null)
+  fi
 
   if [[ -n "$listed" ]] && command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
     # A leading "skip" sentinel is focused by default, so a bare Enter (no Tab
@@ -674,7 +727,9 @@ _setup_ensure_auth() {
       printf '  %s: install the CLI — https://claude.ai/code\n' "$label" ;;
     codex)
       printf '  %s: install the CLI — https://github.com/openai/codex\n' "$label" ;;
-    vertex-gemini|vertex-anthropic)
+    # The wizard's `vertex` token lands settings in the shared [vertex] block
+    # (one auth/project setup covers both internal vertex providers).
+    vertex|vertex-gemini|vertex-anthropic)
       _setup_vertex_assist "$provider" "$conf" ;;
   esac
   return 0
@@ -781,13 +836,23 @@ _merge_vertex_projects() {
 # pinned gcloud account when set) so the summary identifies the GCP project/
 # account pair a vertex provider runs against. Empty for non-vertex providers.
 _setup_vertex_summary_detail() {
-  local p="$1" raw account detail="" pr
-  case "$p" in vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
+  local p="$1" raw account detail="" pr s
+  case "$p" in vertex | vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
+
+  # The merged `vertex` row must surface settings wherever they live: the
+  # shared [vertex] block first, then either internal section.
+  local -a probe=("$p")
+  [[ "$p" == vertex ]] && probe=(vertex vertex-anthropic vertex-gemini)
 
   # Prefer the shared [vertex] projects list (one provider, many projects); fall
   # back to a per-section project=.
   raw=$(vertex_config_value "vertex" projects)
-  [[ -n "$raw" ]] || raw=$(vertex_resolve "$p" project)
+  if [[ -z "$raw" ]]; then
+    for s in "${probe[@]}"; do
+      raw=$(vertex_resolve "$s" project)
+      [[ -n "$raw" ]] && break
+    done
+  fi
   local -a projs=()
   while IFS= read -r pr || [[ -n "$pr" ]]; do [[ -n "$pr" ]] && projs+=("$pr"); done < <(printf '%s' "$raw" | tr ', ' '\n')
   if [[ ${#projs[@]} -gt 0 ]]; then
@@ -798,7 +863,10 @@ _setup_vertex_summary_detail() {
     fi
   fi
 
-  account=$(vertex_resolve "$p" account)
+  for s in "${probe[@]}"; do
+    account=$(vertex_resolve "$s" account)
+    [[ -n "$account" ]] && break
+  done
   [[ -n "$account" ]] && detail+=" [account: ${account}]"
   printf '%s' "$detail"
 }
@@ -808,7 +876,8 @@ _setup_print_summary() {
   printf 'Configured providers:\n'
   while IFS= read -r p; do
     any=1
-    # Models pinned under this section (deduped, @profiles folded to base).
+    # Models pinned under this entry (deduped, @profiles folded to base; the
+    # vertex entry folds both internal sections into one row).
     models=$(_setup_existing_models "$p" | paste -sd, - | sed 's/,/, /g')
     name="$(provider_display_name "$p")$(_setup_vertex_summary_detail "$p")"
     if [[ -n "$models" ]]; then
@@ -817,7 +886,7 @@ _setup_print_summary() {
       printf '  • %s — no models pinned (hidden from the picker until you add one)\n' \
         "$name"
     fi
-  done < <(conf_section_providers <"$conf")
+  done < <(_setup_conf_wizard_providers "$conf")
   [[ $any -eq 1 ]] || printf '  (none)\n'
 }
 
@@ -835,10 +904,10 @@ _setup_action_add() {
   local -a cands=()
   for p in "${SETUP_PROVIDERS[@]}"; do
     case "$p" in
-      # A vertex provider is a (project/account) pair, so it's always re-offered
-      # here even when already configured — adding it again lets the user attach
-      # another GCP project/account to the existing section.
-      vertex-gemini | vertex-anthropic) cands+=("$p") ;;
+      # Vertex is a (project/account) pair, so it's always re-offered here even
+      # when already configured — adding it again lets the user attach another
+      # GCP project/account to the existing sections.
+      vertex) cands+=("$p") ;;
       *) case "$with_models" in *$'\n'"$p"$'\n'*) ;; *) cands+=("$p") ;; esac ;;
     esac
   done
@@ -850,18 +919,30 @@ _setup_action_add() {
   provider=$(_setup_choose_provider 'Set up which provider? ' "${cands[@]}") || { printf 'Cancelled.\n'; return 0; }
 
   # Present section → merge models (never drop earlier picks; an empty pick
-  # leaves models untouched, which is the common case when re-adding a vertex
-  # provider just to attach another project). Truly absent → append a new
-  # section. Either way no duplicate [provider] header is created.
+  # leaves models untouched, which is the common case when re-adding vertex
+  # just to attach another project). Truly absent → append a new section.
+  # Either way no duplicate [provider] header is created.
   local present=$'\n'
-  while IFS= read -r p; do present+="$p"$'\n'; done < <(conf_section_providers <"$conf")
+  while IFS= read -r p; do present+="$p"$'\n'; done < <(_setup_conf_wizard_providers "$conf")
   if [[ "$present" == *$'\n'"$provider"$'\n'* ]]; then
     _setup_apply_merged_models "$conf" "$provider"
   else
     local -a models=()
     while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
-    _conf_apply "$conf" conf_add_section "$provider" ${models[@]+"${models[@]}"} &&
-      printf 'Added %s.\n' "$(provider_display_name "$provider")"
+    if [[ "$provider" == vertex ]]; then
+      if [[ ${#models[@]} -gt 0 ]]; then
+        _setup_write_vertex_models "$conf" "${models[@]}"
+      else
+        # Enabled with nothing pinned: both internal sections, empty (valid —
+        # hidden from the picker until a model is added).
+        _conf_apply "$conf" conf_add_section vertex-anthropic &&
+          _conf_apply "$conf" conf_add_section vertex-gemini
+      fi &&
+        printf 'Added %s.\n' "$(provider_display_name "$provider")"
+    else
+      _conf_apply "$conf" conf_add_section "$provider" ${models[@]+"${models[@]}"} &&
+        printf 'Added %s.\n' "$(provider_display_name "$provider")"
+    fi
   fi
   _setup_choose_vertex_projects "$provider" "$conf"
   _setup_ensure_auth "$provider" "$conf"
@@ -874,7 +955,7 @@ _setup_action_add() {
 # list. No-op for non-vertex providers.
 _setup_choose_vertex_projects() {
   local provider="$1" conf="$2"
-  case "${provider%%@*}" in vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
+  case "${provider%%@*}" in vertex | vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
 
   local current
   current=$(vertex_config_value "vertex" projects)
@@ -897,23 +978,71 @@ _setup_choose_vertex_projects() {
     printf 'Set vertex projects: %s\n' "$joined"
 }
 
-# Remove a provider section (preserving the rest of the file).
+# Remove a provider section (preserving the rest of the file). Removing the
+# wizard's `vertex` entry drops both internal sections plus the shared [vertex]
+# settings block — nothing vertex-related is left behind.
 _setup_action_remove() {
   local conf="$1" p
   local -a secs=()
-  while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
+  while IFS= read -r p; do secs+=("$p"); done < <(_setup_conf_wizard_providers "$conf")
   local provider
   provider=$(_setup_choose_provider 'Remove which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
-  _conf_apply "$conf" conf_remove_section "$provider" &&
+  if [[ "$provider" == vertex ]]; then
+    _conf_apply "$conf" conf_remove_section vertex-anthropic &&
+      _conf_apply "$conf" conf_remove_section vertex-gemini &&
+      _conf_apply "$conf" conf_remove_section vertex
+  else
+    _conf_apply "$conf" conf_remove_section "$provider"
+  fi &&
     printf 'Removed %s.\n' "$(provider_display_name "$provider")"
 }
 
 # Print the models currently pinned under PROVIDER's base section (deduped),
-# folding any @profile expansions back to the base. Used to merge rather than
-# overwrite when adding models.
+# folding any @profile expansions back to the base. For the wizard's `vertex`
+# token, both internal vertex sections fold together. Used to merge rather
+# than overwrite when adding models.
 _setup_existing_models() {
-  parse_user_options | awk -F: -v p="$1" \
-    '{ split($1, a, "@"); if (a[1] == p && $2 != "" && !seen[$2]++) print $2 }'
+  parse_user_options | awk -F: -v p="$1" '{
+    split($1, a, "@"); b = a[1]
+    if (p == "vertex" && (b == "vertex-gemini" || b == "vertex-anthropic")) b = "vertex"
+    if (b == p && $2 != "" && !seen[$2]++) print $2
+  }'
+}
+
+# _setup_upsert_section_models CONF PROVIDER [MODEL...]
+# Write MODELS as [PROVIDER]'s pinned set: replace the model lines of a present
+# section, append a new section when absent. No models → no-op (a present
+# section is never cleared, an absent one never created).
+_setup_upsert_section_models() {
+  local conf="$1" provider="$2"
+  shift 2
+  [[ $# -gt 0 ]] || return 0
+  local p present=0
+  while IFS= read -r p; do
+    [[ "$p" == "$provider" ]] && present=1
+  done < <(conf_section_providers <"$conf")
+  if [[ $present -eq 1 ]]; then
+    _conf_apply "$conf" conf_set_section_models "$provider" "$@"
+  else
+    _conf_apply "$conf" conf_add_section "$provider" "$@"
+  fi
+}
+
+# Split MODELS by family and write each subset into its internal vertex section
+# (creating sections only when they get models). This is how the wizard's
+# single "Vertex AI" hides the vertex-gemini/vertex-anthropic split.
+_setup_write_vertex_models() {
+  local conf="$1" m
+  shift
+  local -a anth=() gem=()
+  for m in "$@"; do
+    case "$(_setup_provider_for_model vertex "$m")" in
+      vertex-anthropic) anth+=("$m") ;;
+      *) gem+=("$m") ;;
+    esac
+  done
+  _setup_upsert_section_models "$conf" vertex-anthropic ${anth[@]+"${anth[@]}"} &&
+    _setup_upsert_section_models "$conf" vertex-gemini ${gem[@]+"${gem[@]}"}
 }
 
 # Pick models for PROVIDER and MERGE them with those already pinned (deduped,
@@ -944,7 +1073,11 @@ _setup_apply_merged_models() {
     printf 'No new models selected — %s left unchanged.\n' "$(provider_display_name "$provider")"
     return 0
   fi
-  _conf_apply "$conf" conf_set_section_models "$provider" "${models[@]}" &&
+  if [[ "$provider" == vertex ]]; then
+    _setup_write_vertex_models "$conf" "${models[@]}"
+  else
+    _conf_apply "$conf" conf_set_section_models "$provider" "${models[@]}"
+  fi &&
     printf 'Updated models for %s (now: %s).\n' \
       "$(provider_display_name "$provider")" "$(_join_comma "${models[@]}")"
 }
@@ -953,7 +1086,7 @@ _setup_apply_merged_models() {
 _setup_action_models() {
   local conf="$1" p
   local -a secs=()
-  while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
+  while IFS= read -r p; do secs+=("$p"); done < <(_setup_conf_wizard_providers "$conf")
   local provider
   provider=$(_setup_choose_provider 'Add models to which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
   _setup_apply_merged_models "$conf" "$provider"
@@ -963,7 +1096,7 @@ _setup_action_models() {
 _setup_action_auth() {
   local conf="$1" p
   local -a secs=()
-  while IFS= read -r p; do secs+=("$p"); done < <(conf_section_providers <"$conf")
+  while IFS= read -r p; do secs+=("$p"); done < <(_setup_conf_wizard_providers "$conf")
   local provider
   provider=$(_setup_choose_provider 'Auth for which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
   _setup_ensure_auth "$provider" "$conf"
@@ -977,13 +1110,15 @@ _setup_edit_existing() {
   while true; do
     _setup_print_summary "$conf"
     printf '\n'
+    # Done leads so the focused default — a bare Enter — finishes; everything
+    # below it is the advanced setup.
     local act menu
-    menu=$'add\tAdd a provider\n'
+    menu=$'done\tDone — looks good\n'
+    menu+=$'add\tAdd a provider\n'
     menu+=$'remove\tRemove a provider\n'
     menu+="models"$'\t'"Change a provider's models"$'\n'
-    menu+=$'auth\tSet up auth for a provider\n'
-    menu+=$'done\tDone'
-    act=$(_setup_select 'Action (Esc to finish)> ' "$menu") || act="done"
+    menu+=$'auth\tSet up auth for a provider'
+    act=$(_setup_select 'Action (Enter to finish)> ' "$menu") || act="done"
     printf '\n'
     case "$act" in
       add) _setup_action_add "$conf" ;;
@@ -997,36 +1132,26 @@ _setup_edit_existing() {
   printf 'Done. Config saved at %s\n' "$conf"
 }
 
-# Fast path for the fresh flow: when one or more providers already authenticate,
-# offer to enable them all (with their recommended models pinned) in a single
-# confirmation, so a non-technical user is done in one keystroke. Returns 0 when
-# accepted (config written), 1 when declined so the caller falls back to manual.
+# Fast path for the fresh flow: every provider that already authenticates is
+# enabled immediately with its family's recommended model pinned — no questions
+# asked. The user then lands on the config overview (the additive edit loop),
+# where a bare Enter finishes and the other actions are the advanced setup.
 _setup_fast_path() {
   local conf="$1"
   shift
   local -a ready=("$@")
-  local p model
+  local p c model recs
 
-  printf 'Detected providers you can use right now:\n'
-  for p in "${ready[@]}"; do
-    model=$(recommended_model "$p")
-    if [[ -n "$model" ]]; then
-      printf '  ✓ %-22s → %s\n' "$(provider_display_name "$p")" "$model"
-    else
-      printf '  ✓ %-22s → (pick a model later)\n' "$(provider_display_name "$p")"
-    fi
-  done
-  printf '\n'
-
-  local ans
-  read -rp 'Enable these and finish? [Y/n]: ' ans || ans=""
-  case "$ans" in
-    n | N | no | No) printf '\n'; return 1 ;;
-  esac
-
+  printf 'Detected providers you can use right now — enabling them with recommended models:\n\n'
   local combos=""
   for p in "${ready[@]}"; do
-    combos+="${p}:$(recommended_model "$p")"$'\n'
+    recs=""
+    while IFS= read -r c; do
+      model=$(recommended_model "$c")
+      combos+="${c}:${model}"$'\n'
+      [[ -n "$model" ]] && recs="${recs:+${recs}, }${model}"
+    done < <(_setup_expand_provider "$p")
+    printf '  ✓ %-14s → %s\n' "$(provider_display_name "$p")" "${recs:-(pick a model later)}"
   done
 
   local conf_dir
@@ -1034,23 +1159,22 @@ _setup_fast_path() {
   mkdir -p "$conf_dir" || die "Cannot create config dir: $conf_dir"
   printf '%s' "$combos" | render_options_conf >"$conf" ||
     die "Failed to write $conf"
-  printf 'Wrote %s\n' "$conf"
+  printf '\nWrote %s\n' "$conf"
 
   # Best-effort: seed the per-repo default so the next commit/pr has a pick
   # ready without prompting.
+  local first
+  first=$(_setup_expand_provider "${ready[0]}" | head -n1)
   if git rev-parse --git-dir >/dev/null 2>&1; then
-    save_last_provider commit "${ready[0]}"
-    save_last_provider pr "${ready[0]}"
+    save_last_provider commit "$first"
+    save_last_provider pr "$first"
     printf 'Default provider for this repo set to %s.\n' "$(provider_display_name "${ready[0]}")"
   fi
 
-  # Offer — but don't force — the advanced edit loop, so casual users stop here
-  # while power users can add providers or pin different models.
-  local more
-  read -rp $'\nAdd more providers or pin different models? [y/N]: ' more || more=""
-  case "$more" in
-    y | Y | yes | Yes) printf '\n'; _setup_edit_existing "$conf" ;;
-  esac
+  # Land on the overview: the edit loop shows the resulting config and offers
+  # the advanced actions; its default action is Done, so a bare Enter finishes.
+  printf '\n'
+  _setup_edit_existing "$conf"
 
   printf '\nTry:  git add -A && git-ai commit\n'
   return 0
@@ -1097,17 +1221,23 @@ _setup_manual() {
     die "No providers selected — nothing to configure."
   fi
 
-  # Build provider:model lines for the chosen providers.
-  local combos="" provider model
+  # Build provider:model lines for the chosen providers. Wizard tokens are
+  # expanded to concrete providers here: each vertex model is routed to its
+  # internal provider by id.
+  local combos="" provider model c
   for provider in "${chosen[@]}"; do
     local got_model=""
     while IFS= read -r model; do
       [[ -n "$model" ]] || continue
-      combos+="${provider}:${model}"$'\n'
+      combos+="$(_setup_provider_for_model "$provider" "$model"):${model}"$'\n'
       got_model=1
     done < <(_setup_pick_models "$provider")
     # A provider with no model picked still gets enabled (empty header is valid).
-    [[ -n "$got_model" ]] || combos+="${provider}:"$'\n'
+    if [[ -z "$got_model" ]]; then
+      while IFS= read -r c; do
+        combos+="${c}:"$'\n'
+      done < <(_setup_expand_provider "$provider")
+    fi
   done
 
   local conf_dir
@@ -1126,8 +1256,10 @@ _setup_manual() {
   # Best-effort: seed the per-repo default so the next commit/pr has a pick
   # ready without prompting. Only meaningful inside a git repo.
   if git rev-parse --git-dir >/dev/null 2>&1; then
-    save_last_provider commit "${chosen[0]}"
-    save_last_provider pr "${chosen[0]}"
+    local first
+    first=$(_setup_expand_provider "${chosen[0]}" | head -n1)
+    save_last_provider commit "$first"
+    save_last_provider pr "$first"
     printf 'Default provider for this repo set to %s.\n' "$(provider_display_name "${chosen[0]}")"
   fi
 

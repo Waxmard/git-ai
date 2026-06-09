@@ -41,3 +41,28 @@ setup() {
   assert_success
   assert_output ""
 }
+
+@test "recommended_model: reads from the data file, not code" {
+  GIT_AI_RECOMMENDED_MODELS_FILE="$(mktemp)"
+  printf '# comment\nanthropic = claude-test-9\n' >"$GIT_AI_RECOMMENDED_MODELS_FILE"
+  run recommended_model "claude-code"
+  rm -f "$GIT_AI_RECOMMENDED_MODELS_FILE"
+  assert_success
+  assert_output "claude-test-9"
+}
+
+@test "recommended_model: missing data file yields no recommendation" {
+  GIT_AI_RECOMMENDED_MODELS_FILE="/nonexistent/recommended-models.conf"
+  run recommended_model "claude-code"
+  assert_success
+  assert_output ""
+}
+
+@test "recommended_model: family absent from the data file yields no recommendation" {
+  GIT_AI_RECOMMENDED_MODELS_FILE="$(mktemp)"
+  printf 'anthropic = claude-test-9\n' >"$GIT_AI_RECOMMENDED_MODELS_FILE"
+  run recommended_model "openai-api"
+  rm -f "$GIT_AI_RECOMMENDED_MODELS_FILE"
+  assert_success
+  assert_output ""
+}
