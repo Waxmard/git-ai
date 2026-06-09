@@ -1092,6 +1092,24 @@ _setup_action_models() {
   _setup_apply_merged_models "$conf" "$provider"
 }
 
+# Replace the whole config by re-running the fresh flow (fast path first, so
+# detected providers are enabled with recommended models in one stroke).
+# Destructive — providers, models, and vertex settings are all rebuilt — so it
+# confirms first. Returns 0 when the reset ran, 1 when declined.
+_setup_action_reset() {
+  local conf="$1" ans
+  read -rp 'Replace your whole config (providers, models, vertex settings)? [y/N]: ' ans || ans=""
+  case "$ans" in
+    y | Y | yes | Yes) ;;
+    *)
+      printf 'Kept as-is.\n'
+      return 1
+      ;;
+  esac
+  printf '\n'
+  _setup_fresh "$conf"
+}
+
 # Authenticate an existing provider.
 _setup_action_auth() {
   local conf="$1" p
@@ -1117,7 +1135,8 @@ _setup_edit_existing() {
     menu+=$'add\tAdd a provider\n'
     menu+=$'remove\tRemove a provider\n'
     menu+="models"$'\t'"Change a provider's models"$'\n'
-    menu+=$'auth\tSet up auth for a provider'
+    menu+=$'auth\tSet up auth for a provider\n'
+    menu+=$'reset\tReset — re-detect providers and start over'
     act=$(_setup_select 'Action (Enter to finish)> ' "$menu") || act="done"
     printf '\n'
     case "$act" in
@@ -1125,6 +1144,9 @@ _setup_edit_existing() {
       remove) _setup_action_remove "$conf" ;;
       models) _setup_action_models "$conf" ;;
       auth) _setup_action_auth "$conf" ;;
+      # A confirmed reset re-runs the fresh flow, which lands in its own edit
+      # loop — return instead of break so this one doesn't re-print on top.
+      reset) if _setup_action_reset "$conf"; then return 0; fi ;;
       done | *) break ;;
     esac
     printf '\n'

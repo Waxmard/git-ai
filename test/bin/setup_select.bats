@@ -224,6 +224,34 @@ EOF
   assert_line "gemini-3.5-flash"
 }
 
+# --- _setup_action_reset (re-run fresh flow over an existing config) ---
+
+@test "_setup_action_reset: declining keeps the config untouched" {
+  printf '[gemini-api]\ngemini-3.5-flash\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "n\n" | _setup_action_reset "'"$CONF"'"
+  '
+  assert_failure
+  assert_output --partial "Kept as-is."
+  run cat "$CONF"
+  assert_line "[gemini-api]"
+  assert_line "gemini-3.5-flash"
+}
+
+@test "_setup_action_reset: confirming re-runs the fresh flow" {
+  printf '[gemini-api]\ngemini-3.5-flash\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_fresh() { printf "FRESH %s\n" "$1"; }
+    printf "y\n" | _setup_action_reset "'"$CONF"'"
+  '
+  assert_success
+  assert_output --partial "FRESH $CONF"
+}
+
 @test "_setup_print_summary: both vertex sections render as one Vertex AI row" {
   cat >"$CONF" <<'EOF'
 [vertex-anthropic]

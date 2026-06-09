@@ -27,7 +27,7 @@ Run the setup wizard once — it detects your installed provider CLIs and keys, 
 git-ai setup
 ```
 
-If you already have a provider CLI installed or a key in your environment, the wizard offers a one-keystroke fast path: it lists the providers you can use right now, pins a sensible recommended model for each, and finishes on a single `Enter` — no provider/model picking required. Decline it (or set `GIT_AI_NO_SETUP_FAST=1`) to fall back to the full manual picker.
+If you already have a provider CLI installed or a key in your environment, the wizard does the work for you: it enables every provider you can use right now, pins a sensible recommended model for each, and drops you on a summary of the resulting config — a single `Enter` finishes, or pick an action there to tweak it (add/remove providers, change models, reset and re-detect). No provider/model picking required. Set `GIT_AI_NO_SETUP_FAST=1` to skip straight to the full manual picker.
 
 The first time you run `git-ai commit` or `git-ai pr` with nothing configured, the wizard launches automatically (skip with `GIT_AI_NO_SETUP=1`). Then generate:
 
@@ -73,10 +73,11 @@ Interactive wizard to configure providers and authentication.
 git-ai setup
 ```
 
-- **First run** (no config yet): shows a readiness table for every provider, lets you pick the providers and models to enable, and writes `options.conf`
-- **Later runs** (config exists): opens an additive edit menu — add a provider, remove one, or change a provider's models — applied **in place**, one change at a time, preserving everything else in the file (comments, vertex `account=`/`projects=` settings). Nothing is ever overwritten wholesale
+- **First run** (no config yet): enables every provider that already authenticates, pins each one's recommended model, and drops you on the config overview — a bare `Enter` finishes. When nothing is ready (or `GIT_AI_NO_SETUP_FAST=1` is set), falls back to a readiness table and a manual provider/model picker
+- **Later runs** (config exists): opens the overview with an additive edit menu — add a provider, remove one, change a provider's models, or **reset** (re-detect and start over) — applied **in place**, one change at a time, preserving everything else in the file (comments, vertex `account=`/`projects=` settings). Only a confirmed reset rewrites the file wholesale
+- Shows a single **Vertex AI** entry; whether a model runs via `vertex-gemini` or `vertex-anthropic` is inferred from the model id, never asked
 - For API-key providers, prompts for the key and offers to store it in your OS keychain or shell rc
-- For Vertex providers, offers to run `gcloud auth application-default login` and prompts for `project` (required) / `region` / `account`, writing them into that provider's section. The shared `[vertex]` block, profiles, and `credentials=` stay manual — see [Pinning a GCP account (Vertex)](#pinning-a-gcp-account-vertex)
+- For Vertex AI, offers to run `gcloud auth application-default login` and prompts for `project` (required) / `region` / `account`, written to the shared `[vertex]` block. Profiles and `credentials=` stay manual — see [Pinning a GCP account (Vertex)](#pinning-a-gcp-account-vertex)
 - Seeds the per-repo default so the next `commit`/`pr` runs without prompting
 - Runs automatically on first use when nothing is configured; set `GIT_AI_NO_SETUP=1` to disable that
 
@@ -320,7 +321,7 @@ claude-sonnet-4-6
 - Config values override the corresponding environment variables.
 - Before each call, git-ai prints the account/project it used to stderr (e.g. `git-ai: Vertex account me@acme.com · project acme-prod (us-east5)`).
 
-To choose between **multiple projects/accounts from the picker**, give each a profile suffix — `[vertex-anthropic@<profile>]`. Every profile becomes its own picker entry (labelled `Vertex AI (Anthropic) [<profile>]`), so the same account across two projects is fully supported:
+To choose between **multiple projects/accounts from the picker**, give each a profile suffix — `[vertex-anthropic@<profile>]`. Every profile becomes its own picker entry (labelled `Vertex AI [<profile>]`), so the same account across two projects is fully supported:
 
 ```ini
 [vertex-anthropic@acme]
