@@ -10,13 +10,9 @@ from ._generate import (
 from ._git import (
     check_git_repo,
     derive_diff_stat,
-    format_branch_context,
     format_commit_log,
-    get_branch_churn_subjects,
-    get_branch_commit_subjects,
     get_commit_log,
     get_current_branch,
-    get_default_branch,
     get_diff,
     get_diff_stat,
     get_git_dir,
@@ -24,6 +20,12 @@ from ._git import (
     get_mr_release_context,
     get_release_context,
     get_staged_diff,
+)
+from ._git_branch import (
+    format_branch_context,
+    get_branch_churn_subjects,
+    get_branch_commit_subjects,
+    get_default_branch,
     resolve_commit_base,
 )
 from ._pr_incremental import (

@@ -1,0 +1,17 @@
+name: Line limit
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  line-limit:
+    name: Enforce per-file line cap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check source files are under the line limit
+        run: bash scripts/check-line-limit.sh
