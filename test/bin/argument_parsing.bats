@@ -67,7 +67,9 @@ setup() {
   mkdir -p "${xdg}/git-ai/models-cache"
   printf 'gemini-3.1-flash\n' >"${xdg}/git-ai/models-cache/gemini-api.list"
   # Numbered fallback: pick provider 1, default model. Isolated config + repo.
-  run bash -c "export PATH=\"$stub:\$PATH\"; cd '$repo' && XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 printf '1\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 '$GIT_AI' setup"
+  # GIT_AI_NO_SETUP_FAST forces the manual picker (the readiness fast path would
+  # otherwise intercept whenever a real provider CLI is present on this machine).
+  run bash -c "export PATH=\"$stub:\$PATH\"; cd '$repo' && XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 GIT_AI_NO_SETUP_FAST=1 printf '1\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 GIT_AI_NO_SETUP_FAST=1 '$GIT_AI' setup"
   local conf="$xdg/git-ai/options.conf"
   local written=""; [[ -f "$conf" ]] && written=$(cat "$conf")
   rm -rf "$repo" "$xdg" "$stub"
@@ -85,7 +87,7 @@ setup() {
     printf '#!/bin/sh\nexit 1\n' >"${stub}/${c}"
     chmod +x "${stub}/${c}"
   done
-  run bash -c "export PATH=\"$stub:\$PATH\"; XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 printf '\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 '$GIT_AI' setup"
+  run bash -c "export PATH=\"$stub:\$PATH\"; XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 GIT_AI_NO_SETUP_FAST=1 printf '\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 GIT_AI_NO_SETUP_FAST=1 '$GIT_AI' setup"
   rm -rf "$xdg" "$stub"
   assert_failure 1
   assert_output --partial "No providers selected"

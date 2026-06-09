@@ -25,6 +25,8 @@ Run the setup wizard once — it detects your installed provider CLIs and keys, 
 git-ai setup
 ```
 
+If you already have a provider CLI installed or a key in your environment, the wizard offers a one-keystroke fast path: it lists the providers you can use right now, pins a sensible recommended model for each, and finishes on a single `Enter` — no provider/model picking required. Decline it (or set `GIT_AI_NO_SETUP_FAST=1`) to fall back to the full manual picker.
+
 The first time you run `git-ai commit` or `git-ai pr` with nothing configured, the wizard launches automatically (skip with `GIT_AI_NO_SETUP=1`). Then generate:
 
 ```bash

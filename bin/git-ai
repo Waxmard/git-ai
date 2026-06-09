@@ -997,10 +997,94 @@ _setup_edit_existing() {
   printf 'Done. Config saved at %s\n' "$conf"
 }
 
-# Fresh, from-scratch configuration when no options.conf exists yet.
+# Fast path for the fresh flow: when one or more providers already authenticate,
+# offer to enable them all (with their recommended models pinned) in a single
+# confirmation, so a non-technical user is done in one keystroke. Returns 0 when
+# accepted (config written), 1 when declined so the caller falls back to manual.
+_setup_fast_path() {
+  local conf="$1"
+  shift
+  local -a ready=("$@")
+  local p model
+
+  printf 'Detected providers you can use right now:\n'
+  for p in "${ready[@]}"; do
+    model=$(recommended_model "$p")
+    if [[ -n "$model" ]]; then
+      printf '  ✓ %-22s → %s\n' "$(provider_display_name "$p")" "$model"
+    else
+      printf '  ✓ %-22s → (pick a model later)\n' "$(provider_display_name "$p")"
+    fi
+  done
+  printf '\n'
+
+  local ans
+  read -rp 'Enable these and finish? [Y/n]: ' ans || ans=""
+  case "$ans" in
+    n | N | no | No) printf '\n'; return 1 ;;
+  esac
+
+  local combos=""
+  for p in "${ready[@]}"; do
+    combos+="${p}:$(recommended_model "$p")"$'\n'
+  done
+
+  local conf_dir
+  conf_dir=$(dirname "$conf")
+  mkdir -p "$conf_dir" || die "Cannot create config dir: $conf_dir"
+  printf '%s' "$combos" | render_options_conf >"$conf" ||
+    die "Failed to write $conf"
+  printf 'Wrote %s\n' "$conf"
+
+  # Best-effort: seed the per-repo default so the next commit/pr has a pick
+  # ready without prompting.
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    save_last_provider commit "${ready[0]}"
+    save_last_provider pr "${ready[0]}"
+    printf 'Default provider for this repo set to %s.\n' "$(provider_display_name "${ready[0]}")"
+  fi
+
+  # Offer — but don't force — the advanced edit loop, so casual users stop here
+  # while power users can add providers or pin different models.
+  local more
+  read -rp $'\nAdd more providers or pin different models? [y/N]: ' more || more=""
+  case "$more" in
+    y | Y | yes | Yes) printf '\n'; _setup_edit_existing "$conf" ;;
+  esac
+
+  printf '\nTry:  git add -A && git-ai commit\n'
+  return 0
+}
+
+# Fresh, from-scratch configuration when no options.conf exists yet. Tries the
+# one-keystroke fast path first (enable everything already usable); only when
+# nothing is ready, or the user declines it, falls back to manual selection.
 _setup_fresh() {
   local conf="$1"
   printf 'Configure which LLM providers and models git-ai offers in its picker.\n\n'
+
+  # GIT_AI_NO_SETUP_FAST forces the full manual picker (used by tests and by
+  # power users who want every provider offered regardless of readiness).
+  if [[ -z "${GIT_AI_NO_SETUP_FAST:-}" ]]; then
+    local -a ready=()
+    local p
+    for p in "${SETUP_PROVIDERS[@]}"; do
+      provider_ready "$p" 2>/dev/null && ready+=("$p")
+    done
+
+    if [[ ${#ready[@]} -gt 0 ]] && _setup_fast_path "$conf" "${ready[@]}"; then
+      return 0
+    fi
+  fi
+
+  _setup_manual "$conf"
+}
+
+# Manual selection flow: the full status table, multi-provider pick, and
+# per-provider model picking. Reached when no provider is ready yet, or the
+# user declined the fast path.
+_setup_manual() {
+  local conf="$1"
 
   _setup_status_table
 

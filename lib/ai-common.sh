@@ -482,6 +482,22 @@ provider_display_name() {
   fi
 }
 
+# recommended_model PROVIDER
+# Print the hardcoded recommended model id for PROVIDER's family. Used by the
+# setup wizard's fast path so a new (often non-technical) user gets a sensible
+# pin without having to choose one. Empty output means "no recommendation"
+# (caller leaves the model unpinned). Suggestions only: discovery still feeds
+# the picker and any id remains overridable. Update these as better models ship
+# and cut a release — this is intentionally a small curated default, not the
+# (deliberately non-existent) full model catalog.
+recommended_model() {
+  case "${1%%@*}" in
+    claude-code | anthropic-api | vertex-anthropic) printf 'claude-sonnet-4-6\n' ;;
+    gemini-api | vertex-gemini) printf 'gemini-3.5-flash\n' ;;
+    openai-api | codex) printf 'gpt-5.4-mini\n' ;;
+  esac
+}
+
 provider_is_valid() {
   # Profile-qualified tokens (base@profile) are only valid for vertex providers,
   # which are the only ones that read per-profile account/project config.
