@@ -95,7 +95,7 @@ EOF
   '
   assert_success
   run cat "$CONF"
-  assert_line "project = detected-proj"
+  assert_line "projects = detected-proj"
 }
 
 @test "_setup_fast_path: env-derived vertex project is written to the config" {
@@ -106,7 +106,7 @@ EOF
   '
   assert_success
   run cat "$CONF"
-  assert_line "project = env-proj"
+  assert_line "projects = env-proj"
 }
 
 @test "_setup_fast_path: seeds the per-repo default provider" {

@@ -94,6 +94,14 @@ EOF
   assert_failure
 }
 
+@test "provider_ready: vertex succeeds with ADC and only a shared projects list" {
+  write_adc_gcloud_stub
+  mkdir -p "${TEST_DIR}/git-ai"
+  printf '[vertex]\nprojects = proj-a, proj-b\n' >"${TEST_DIR}/git-ai/options.conf"
+  PATH="${STUB_BIN}:$PATH" run provider_ready vertex
+  assert_success
+}
+
 # --- unknown ---------------------------------------------------------------
 
 @test "provider_ready: unknown provider fails" {

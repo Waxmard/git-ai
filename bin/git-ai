@@ -557,26 +557,31 @@ _setup_pick_models() {
     # marks) selects *nothing* — fzf otherwise returns the focused row, which
     # silently pins a model the user never chose. FZF_DEFAULT_OPTS is cleared so
     # a user's custom keybindings (e.g. select-all-on-enter) can't auto-select.
-    local skip='— skip / no model —'
-    selected=$(printf '%s\n%s\n' "$skip" "$listed" \
+    # The fzf choice is final: skipping here does NOT fall through to the
+    # free-text prompt — unlisted ids have their own explicit sentinel row.
+    local skip='— skip / no model —' custom='— type a custom model id… —'
+    selected=$(printf '%s\n%s\n%s\n' "$skip" "$custom" "$listed" \
       | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
         --no-sort --tiebreak=index --height=40% --reverse \
       --header='Tab marks a model; Enter confirms marked rows; Esc selects none' \
       --prompt="models for ${provider}> ") || selected=""
-    # Drop the sentinel if it came back (the bare-Enter / nothing-marked case).
-    selected=$(printf '%s\n' "$selected" | grep -vxF "$skip")
-    if [[ -n "$selected" ]]; then
+    if ! printf '%s\n' "$selected" | grep -qxF "$custom"; then
+      selected=$(printf '%s\n' "$selected" | grep -vxF "$skip")
       while IFS= read -r m; do [[ -n "$m" ]] && printf '%s\n' "$m"; done <<<"$selected"
       return 0
     fi
+    # Custom row chosen: emit any models marked alongside it, then fall through
+    # to the free-text prompt for the unlisted id(s).
+    printf '%s\n' "$selected" | grep -vxF "$skip" | grep -vxF "$custom" |
+      while IFS= read -r m; do [[ -n "$m" ]] && printf '%s\n' "$m"; done
   elif [[ -n "$listed" ]]; then
     printf 'Suggested models for %s:\n' "$provider" >&2
     printf '%s\n' "$listed" | sed 's/^/  /' >&2
   fi
 
-  # Reached when nothing was marked, fzf is unavailable, or the provider has no
-  # discoverable models (e.g. claude-code/codex without a key). Offer explicit
-  # free-text entry. Blank = leave the provider with no pinned model.
+  # Reached via the explicit custom-id row, when fzf is unavailable, or when
+  # the provider has no discoverable models (e.g. claude-code/codex without a
+  # key). Blank = leave the provider with no pinned model.
   read -rp "Model id(s) for ${provider}, comma-separated (blank for none): " line || line=""
   [[ -n "$line" ]] || return 0
   while IFS= read -r m; do
@@ -997,6 +1002,22 @@ _setup_action_add() {
   _setup_ensure_auth "$provider" "$conf"
 }
 
+# The projects the config currently names, as a comma list: the shared
+# [vertex] `projects =` list, falling back to a stray singular `project =`
+# (shared block or either internal section — hand-written configs may use it).
+# Every wizard projects edit seeds from this so no key is ever overlooked.
+_setup_current_vertex_projects() {
+  local cur s
+  cur=$(vertex_config_value vertex projects)
+  if [[ -z "$cur" ]]; then
+    for s in vertex vertex-anthropic vertex-gemini; do
+      cur=$(vertex_resolve "$s" project)
+      [[ -n "$cur" ]] && break
+    done
+  fi
+  printf '%s' "$cur"
+}
+
 # For a vertex provider, let the user pick which GCP project(s) it runs against,
 # merged into the shared [vertex] `projects =` list (expanded into per-project
 # picker profiles at commit time) — picks never drop projects already listed.
@@ -1007,7 +1028,7 @@ _setup_choose_vertex_projects() {
   case "${provider%%@*}" in vertex | vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
 
   local current
-  current=$(vertex_config_value "vertex" projects)
+  current=$(_setup_current_vertex_projects)
   [[ -n "$current" ]] && printf 'Current vertex projects: %s\n' "$current"
 
   local -a projs=()
@@ -1019,6 +1040,73 @@ _setup_choose_vertex_projects() {
   # alongside the ones already configured; removal stays a manual config edit.
   local joined
   joined=$(_merge_vertex_projects "$current" "${projs[@]}")
+  if [[ "$joined" == "$current" ]]; then
+    printf 'Vertex projects unchanged: %s\n' "$joined"
+    return 0
+  fi
+  _conf_apply "$conf" conf_set_section_setting vertex projects "$joined" &&
+    printf 'Set vertex projects: %s\n' "$joined"
+}
+
+# Replace-style editor behind the menu's "Change Vertex AI projects": one
+# multi-select over the union of the current list (labelled, listed first) and
+# the account's gcloud projects — the marked set REPLACES the list, so a single
+# gesture both adds and removes. Esc / nothing marked keeps the current list;
+# the no-fzf fallback is a comma-list re-entry (blank keeps current).
+_setup_change_vertex_projects() {
+  local conf="$1" current p
+  current=$(_setup_current_vertex_projects)
+  [[ -n "$current" ]] && printf 'Current vertex projects: %s\n' "$current"
+
+  # Union: current entries first (labelled "(current)"), then gcloud's list.
+  local -a opts=()
+  local rows="" seen=$'\n'
+  while IFS= read -r p; do
+    p="${p#"${p%%[![:space:]]*}"}"
+    p="${p%"${p##*[![:space:]]}"}"
+    [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
+    opts+=("$p")
+    seen+="$p"$'\n'
+    rows+="${p}|${p} (current)"$'\n'
+  done < <(printf '%s\n' "${current//,/$'\n'}")
+  if command -v gcloud >/dev/null 2>&1; then
+    while IFS= read -r p; do
+      [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
+      opts+=("$p")
+      seen+="$p"$'\n'
+      rows+="${p}|${p}"$'\n'
+    done < <(gcloud projects list --format="value(projectId)" 2>/dev/null)
+  fi
+
+  local -a picked=()
+  if [[ ${#opts[@]} -gt 0 ]] && command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
+    local skip='—|— keep current list —' selected
+    selected=$(printf '%s\n%s' "$skip" "$rows" \
+      | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
+        --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
+        --height=40% --reverse \
+        --header='Tab-mark ALL projects to keep — the marked set replaces the list; Esc keeps current' \
+        --prompt='vertex projects> ') || selected=""
+    while IFS='|' read -r p _; do
+      [[ -n "$p" && "$p" != "—" ]] && picked+=("$p")
+    done <<<"$selected"
+  else
+    local line
+    read -rp 'Projects to keep, comma-separated (blank to keep current): ' line || line=""
+    while IFS= read -r p; do
+      p="${p#"${p%%[![:space:]]*}"}"
+      p="${p%"${p##*[![:space:]]}"}"
+      [[ -n "$p" ]] && picked+=("$p")
+    done < <(printf '%s\n' "${line//,/$'\n'}")
+  fi
+
+  if [[ ${#picked[@]} -eq 0 ]]; then
+    printf 'Vertex projects unchanged%s.\n' "${current:+: $current}"
+    return 0
+  fi
+
+  local joined
+  joined=$(_join_comma "${picked[@]}")
   if [[ "$joined" == "$current" ]]; then
     printf 'Vertex projects unchanged: %s\n' "$joined"
     return 0
@@ -1189,7 +1277,7 @@ _setup_edit_existing() {
       add) _setup_action_add "$conf" ;;
       remove) _setup_action_remove "$conf" ;;
       models) _setup_action_models "$conf" ;;
-      projects) _setup_choose_vertex_projects vertex "$conf" ;;
+      projects) _setup_change_vertex_projects "$conf" ;;
       # A confirmed reset re-runs the fresh flow, which lands in its own edit
       # loop — return instead of break so this one doesn't re-print on top.
       reset) if _setup_action_reset "$conf"; then return 0; fi ;;
@@ -1247,12 +1335,13 @@ _setup_fast_path() {
   printf '%s' "$combos" | render_options_conf >"$conf" ||
     die "Failed to write $conf"
 
-  # Restore the captured vertex settings into the shared [vertex] block (a
-  # multi-project list wins over a single project=).
+  # Restore the captured vertex settings into the shared [vertex] block. The
+  # wizard always writes the plural `projects =` key — even for one project —
+  # so every later edit (additive attach, replace action) seeds from one place.
   if [[ -n "$carry_projects" ]]; then
     _conf_apply "$conf" conf_set_section_setting vertex projects "$carry_projects"
   elif [[ -n "$carry_project" ]]; then
-    _conf_apply "$conf" conf_set_section_setting vertex project "$carry_project"
+    _conf_apply "$conf" conf_set_section_setting vertex projects "$carry_project"
   fi
   [[ -n "$carry_account" ]] && _conf_apply "$conf" conf_set_section_setting vertex account "$carry_account"
   [[ -n "$carry_region" ]] && _conf_apply "$conf" conf_set_section_setting vertex region "$carry_region"

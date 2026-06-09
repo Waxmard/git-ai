@@ -330,6 +330,74 @@ EOF
   assert_output ""
 }
 
+# --- vertex projects editing (seeding + replace semantics) ---
+
+@test "_setup_current_vertex_projects: prefers the shared projects list" {
+  printf '[vertex]\nprojects = a, b\nproject = stray\n' >"$CONF"
+  run _setup_current_vertex_projects
+  assert_success
+  assert_output "a, b"
+}
+
+@test "_setup_current_vertex_projects: falls back to a singular project=" {
+  printf '[vertex]\nproject = solo\n' >"$CONF"
+  run _setup_current_vertex_projects
+  assert_success
+  assert_output "solo"
+}
+
+@test "_setup_choose_vertex_projects: additive merge seeds from a singular project=" {
+  printf '[vertex]\nproject = old-proj\n\n[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"  # free-text fallback path
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "new-proj\n" | GIT_AI_NO_FZF=1 _setup_choose_vertex_projects vertex "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Set vertex projects: old-proj, new-proj"
+}
+
+@test "_setup_change_vertex_projects: typed list replaces the current one" {
+  printf '[vertex]\nprojects = a, b\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "c\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Set vertex projects: c"
+  run cat "$CONF"
+  assert_line "projects = c"
+}
+
+@test "_setup_change_vertex_projects: blank entry keeps the current list" {
+  printf '[vertex]\nprojects = a, b\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Vertex projects unchanged: a, b"
+  run cat "$CONF"
+  assert_line "projects = a, b"
+}
+
 # --- _setup_action_reset (re-run fresh flow over an existing config) ---
 
 @test "_setup_action_reset: declining keeps the config untouched" {

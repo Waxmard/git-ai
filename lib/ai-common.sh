@@ -424,8 +424,11 @@ provider_ready() {
       fi
       project=$(vertex_resolve "$provider" project)
       project="${project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
+      # A shared projects list counts too — each entry becomes a runnable
+      # @project profile, so the provider is configured even without project=.
+      project="${project:-$(vertex_config_value vertex projects)}"
       [[ -n "$project" ]] && return 0
-      printf 'Vertex project not set (project= or GOOGLE_CLOUD_PROJECT)\n' >&2 ;;
+      printf 'Vertex project not set (project=, projects=, or GOOGLE_CLOUD_PROJECT)\n' >&2 ;;
     *)
       printf 'unknown provider: %s\n' "$provider" >&2 ;;
   esac
