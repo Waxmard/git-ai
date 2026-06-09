@@ -121,6 +121,13 @@ strip_fences() {
   '
 }
 
+# Print $1 with leading/trailing whitespace stripped.
+_trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  printf '%s' "${s%"${s##*[![:space:]]}"}"
+}
+
 get_last_choice() {
   local key="$1"
   local fallback="$2"
@@ -464,6 +471,16 @@ _vertex_access_token() {
   fi
 }
 
+# The gcloud-active project ("gcloud config get-value project"), empty when
+# unset or when gcloud is absent.
+_gcloud_active_project() {
+  command -v gcloud >/dev/null 2>&1 || return 0
+  local p
+  p=$(gcloud config get-value project 2>/dev/null)
+  [[ "$p" == "(unset)" ]] && p=""
+  printf '%s' "$p"
+}
+
 provider_display_name() {
   local base="${1%%@*}" profile="" name=""
   case $1 in *@*) profile="${1#*@}" ;; esac
@@ -512,13 +529,9 @@ recommended_model() {
   local line key val
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == *=* && "${line#"${line%%[![:space:]]*}"}" != \#* ]] || continue
-    key="${line%%=*}"
-    key="${key#"${key%%[![:space:]]*}"}"
-    key="${key%"${key##*[![:space:]]}"}"
+    key=$(_trim "${line%%=*}")
     [[ "$key" == "$family" ]] || continue
-    val="${line#*=}"
-    val="${val#"${val%%[![:space:]]*}"}"
-    val="${val%"${val##*[![:space:]]}"}"
+    val=$(_trim "${line#*=}")
     [[ -n "$val" ]] && printf '%s\n' "$val"
     return 0
   done <"$GIT_AI_RECOMMENDED_MODELS_FILE"
@@ -780,10 +793,7 @@ _fetch_models_vertex() {
   # gcloud default, else the first shared [vertex] projects entry. Any project
   # the caller can bill works — it does not affect the (global) catalog.
   project=$(vertex_resolve "$provider" project)
-  if [[ -z "$project" ]] && command -v gcloud >/dev/null 2>&1; then
-    project=$(gcloud config get-value project 2>/dev/null)
-    [[ "$project" == "(unset)" ]] && project=""
-  fi
+  [[ -n "$project" ]] || project=$(_gcloud_active_project)
   if [[ -z "$project" ]]; then
     local projlist
     projlist=$(vertex_config_value "vertex" projects)

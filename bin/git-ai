@@ -441,8 +441,7 @@ _setup_detect_vertex_project() {
   command -v gcloud >/dev/null 2>&1 || return 0
 
   local active
-  active=$(gcloud config get-value project 2>/dev/null)
-  [[ "$active" == "(unset)" ]] && active=""
+  active=$(_gcloud_active_project)
   if [[ -n "$active" ]] && _setup_vertex_api_enabled "$active"; then
     printf '%s\n' "$active"
     return 0
@@ -585,44 +584,60 @@ _setup_pick_models() {
   read -rp "Model id(s) for ${provider}, comma-separated (blank for none): " line || line=""
   [[ -n "$line" ]] || return 0
   while IFS= read -r m; do
-    m="${m#"${m%%[![:space:]]*}"}"
-    m="${m%"${m##*[![:space:]]}"}"
+    m=$(_trim "$m")
     [[ -n "$m" ]] && printf '%s\n' "$m"
-  done < <(printf '%s\n' "$line" | tr ',' '\n')
+  done < <(printf '%s\n' "${line//,/$'\n'}")
+}
+
+# _setup_multiselect PROMPT HEADER SKIP_LABEL ROWS
+# fzf multi-select over "value|label" ROWS, led by a skip sentinel so a bare
+# Enter (nothing marked) selects nothing — fzf otherwise returns the focused
+# row. Prints the marked values one per line (possibly none); returns non-zero
+# when fzf is unavailable so callers fall back to their free-text prompt.
+# FZF_DEFAULT_OPTS is cleared so a user's keybindings can't auto-select.
+_setup_multiselect() {
+  local prompt="$1" header="$2" skip_label="$3" rows="$4"
+  command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]] || return 1
+  local selected v
+  selected=$(printf '—|%s\n%s' "$skip_label" "$rows" \
+    | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
+      --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
+      --height=40% --reverse --header="$header" --prompt="$prompt") || selected=""
+  while IFS='|' read -r v _; do
+    [[ -n "$v" && "$v" != "—" ]] && printf '%s\n' "$v"
+  done <<<"$selected"
+  return 0
 }
 
 # Multi-select GCP projects for vertex providers, sourced from `gcloud projects
 # list` (fzf multi-select with a free-text fallback). Prints chosen project ids,
 # one per line; empty output means "leave the current projects unchanged".
 _setup_pick_projects() {
-  local listed="" line p
+  local listed="" line p rows="" selected
   command -v gcloud >/dev/null 2>&1 &&
     listed=$(gcloud projects list --format="value(projectId)" 2>/dev/null)
 
-  if [[ -n "$listed" ]] && command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
-    local skip='— skip / keep current —' selected
-    selected=$(printf '%s\n%s\n' "$skip" "$listed" \
-      | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
-        --no-sort --tiebreak=index --height=40% --reverse \
-        --header='Tab marks GCP project(s); Enter confirms; Esc keeps current' \
-        --prompt='vertex projects> ')
-    selected=$(printf '%s\n' "$selected" | grep -vxF "$skip")
-    if [[ -n "$selected" ]]; then
-      while IFS= read -r p; do [[ -n "$p" ]] && printf '%s\n' "$p"; done <<<"$selected"
-      return 0
+  if [[ -n "$listed" ]]; then
+    while IFS= read -r p; do [[ -n "$p" ]] && rows+="${p}|${p}"$'\n'; done <<<"$listed"
+    if selected=$(_setup_multiselect 'vertex projects> ' \
+        'Tab marks GCP project(s); Enter confirms; Esc keeps current' \
+        '— skip / keep current —' "$rows"); then
+      if [[ -n "$selected" ]]; then
+        printf '%s\n' "$selected"
+        return 0
+      fi
+    else
+      printf 'Your GCP projects:\n' >&2
+      printf '%s\n' "$listed" | sed 's/^/  /' >&2
     fi
-  elif [[ -n "$listed" ]]; then
-    printf 'Your GCP projects:\n' >&2
-    printf '%s\n' "$listed" | sed 's/^/  /' >&2
   fi
 
   read -rp "GCP project id(s), comma-separated (blank to keep current): " line || line=""
   [[ -n "$line" ]] || return 0
   while IFS= read -r p; do
-    p="${p#"${p%%[![:space:]]*}"}"
-    p="${p%"${p##*[![:space:]]}"}"
+    p=$(_trim "$p")
     [[ -n "$p" ]] && printf '%s\n' "$p"
-  done < <(printf '%s\n' "$line" | tr ',' '\n')
+  done < <(printf '%s\n' "${line//,/$'\n'}")
 }
 
 # maybe_first_run_setup TOOL
@@ -680,11 +695,8 @@ _setup_vertex_assist() {
   project=$(vertex_resolve "$provider" project)
   project="${project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
   if [[ -z "$project" ]]; then
-    local default_project=""
-    if command -v gcloud >/dev/null 2>&1; then
-      default_project=$(gcloud config get-value project 2>/dev/null)
-      [[ "$default_project" == "(unset)" ]] && default_project=""
-    fi
+    local default_project
+    default_project=$(_gcloud_active_project)
     read -rp "  GCP project${default_project:+ [$default_project]}: " input
     input="${input:-$default_project}"
     if [[ -n "$input" ]]; then
@@ -851,13 +863,6 @@ _conf_apply() {
   fi
 }
 
-# Pick models for PROVIDER and print them space-joined into an array via stdout
-# (one per line). Shared by add / change-models actions.
-_setup_models_for() {
-  local provider="$1" m
-  while IFS= read -r m; do [[ -n "$m" ]] && printf '%s\n' "$m"; done < <(_setup_pick_models "$provider")
-}
-
 # Join arguments with ", ".
 _join_comma() {
   local joined
@@ -874,8 +879,7 @@ _merge_vertex_projects() {
   local -a merged=()
   local seen=$'\n'
   while IFS= read -r p; do
-    p="${p#"${p%%[![:space:]]*}"}"
-    p="${p%"${p##*[![:space:]]}"}"
+    p=$(_trim "$p")
     [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
     merged+=("$p")
     seen+="$p"$'\n'
@@ -886,38 +890,26 @@ _merge_vertex_projects() {
   _join_comma ${merged[@]+"${merged[@]}"}
 }
 
-# For a vertex base section, format a trailing " (project: …)" suffix (plus the
-# pinned gcloud account when set) so the summary identifies the GCP project/
-# account pair a vertex provider runs against. Empty for non-vertex providers.
+# For the merged `vertex` summary row, format a trailing " (project: …)" suffix
+# (plus the pinned gcloud account when set) so the summary identifies the GCP
+# project/account pair a vertex provider runs against. Empty for everything
+# else — _setup_conf_wizard_providers always folds the internal sections to the
+# `vertex` token, so that's the only vertex spelling that arrives here.
 _setup_vertex_summary_detail() {
-  local p="$1" raw account detail="" pr s
-  case "$p" in vertex | vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
+  [[ "$1" == vertex ]] || return 0
+  local raw account detail="" pr s
 
-  # The merged `vertex` row must surface settings wherever they live: the
-  # shared [vertex] block first, then either internal section.
-  local -a probe=("$p")
-  [[ "$p" == vertex ]] && probe=(vertex vertex-anthropic vertex-gemini)
-
-  # Prefer the shared [vertex] projects list (one provider, many projects); fall
-  # back to a per-section project=.
-  raw=$(vertex_config_value "vertex" projects)
-  if [[ -z "$raw" ]]; then
-    for s in "${probe[@]}"; do
-      raw=$(vertex_resolve "$s" project)
-      [[ -n "$raw" ]] && break
-    done
-  fi
+  raw=$(_setup_current_vertex_projects)
   local -a projs=()
   while IFS= read -r pr || [[ -n "$pr" ]]; do [[ -n "$pr" ]] && projs+=("$pr"); done < <(printf '%s' "$raw" | tr ', ' '\n')
-  if [[ ${#projs[@]} -gt 0 ]]; then
-    if [[ ${#projs[@]} -gt 1 ]]; then
-      detail+=" (projects: $(_join_comma "${projs[@]}"))"
-    else
-      detail+=" (project: ${projs[0]})"
-    fi
+  if [[ ${#projs[@]} -gt 1 ]]; then
+    detail+=" (projects: $(_join_comma "${projs[@]}"))"
+  elif [[ ${#projs[@]} -eq 1 ]]; then
+    detail+=" (project: ${projs[0]})"
   fi
 
-  for s in "${probe[@]}"; do
+  # The account can live in the shared [vertex] block or either internal section.
+  for s in vertex vertex-anthropic vertex-gemini; do
     account=$(vertex_resolve "$s" account)
     [[ -n "$account" ]] && break
   done
@@ -982,7 +974,7 @@ _setup_action_add() {
     _setup_apply_merged_models "$conf" "$provider"
   else
     local -a models=()
-    while IFS= read -r m; do models+=("$m"); done < <(_setup_models_for "$provider")
+    while IFS= read -r m; do [[ -n "$m" ]] && models+=("$m"); done < <(_setup_pick_models "$provider")
     if [[ "$provider" == vertex ]]; then
       if [[ ${#models[@]} -gt 0 ]]; then
         _setup_write_vertex_models "$conf" "${models[@]}"
@@ -1059,43 +1051,32 @@ _setup_change_vertex_projects() {
   [[ -n "$current" ]] && printf 'Current vertex projects: %s\n' "$current"
 
   # Union: current entries first (labelled "(current)"), then gcloud's list.
-  local -a opts=()
   local rows="" seen=$'\n'
   while IFS= read -r p; do
-    p="${p#"${p%%[![:space:]]*}"}"
-    p="${p%"${p##*[![:space:]]}"}"
+    p=$(_trim "$p")
     [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
-    opts+=("$p")
     seen+="$p"$'\n'
     rows+="${p}|${p} (current)"$'\n'
   done < <(printf '%s\n' "${current//,/$'\n'}")
   if command -v gcloud >/dev/null 2>&1; then
     while IFS= read -r p; do
       [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
-      opts+=("$p")
       seen+="$p"$'\n'
       rows+="${p}|${p}"$'\n'
     done < <(gcloud projects list --format="value(projectId)" 2>/dev/null)
   fi
 
   local -a picked=()
-  if [[ ${#opts[@]} -gt 0 ]] && command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
-    local skip='—|— keep current list —' selected
-    selected=$(printf '%s\n%s' "$skip" "$rows" \
-      | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
-        --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
-        --height=40% --reverse \
-        --header='Tab-mark ALL projects to keep — the marked set replaces the list; Esc keeps current' \
-        --prompt='vertex projects> ') || selected=""
-    while IFS='|' read -r p _; do
-      [[ -n "$p" && "$p" != "—" ]] && picked+=("$p")
-    done <<<"$selected"
+  local selected
+  if [[ -n "$rows" ]] && selected=$(_setup_multiselect 'vertex projects> ' \
+      'Tab-mark ALL projects to keep — the marked set replaces the list; Esc keeps current' \
+      '— keep current list —' "$rows"); then
+    while IFS= read -r p; do [[ -n "$p" ]] && picked+=("$p"); done <<<"$selected"
   else
     local line
     read -rp 'Projects to keep, comma-separated (blank to keep current): ' line || line=""
     while IFS= read -r p; do
-      p="${p#"${p%%[![:space:]]*}"}"
-      p="${p%"${p##*[![:space:]]}"}"
+      p=$(_trim "$p")
       [[ -n "$p" ]] && picked+=("$p")
     done < <(printf '%s\n' "${line//,/$'\n'}")
   fi
@@ -1204,7 +1185,7 @@ _setup_apply_merged_models() {
     models+=("$m")
     seen+="$m"$'\n'
     added=$((added + 1))
-  done < <(_setup_models_for "$provider")
+  done < <(_setup_pick_models "$provider")
 
   if [[ $added -eq 0 ]]; then
     printf 'No new models selected — %s left unchanged.\n' "$(provider_display_name "$provider")"
@@ -1288,6 +1269,18 @@ _setup_edit_existing() {
   printf 'Done. Config saved at %s\n' "$conf"
 }
 
+# Best-effort: seed the per-repo default so the next commit/pr has a pick ready
+# without prompting. Only meaningful inside a git repo. TOKEN is a wizard
+# provider token; the saved pick is its first concrete runnable provider.
+_setup_seed_default_provider() {
+  local token="$1" first
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  first=$(_setup_expand_provider "$token" | head -n1)
+  save_last_provider commit "$first"
+  save_last_provider pr "$first"
+  printf 'Default provider for this repo set to %s.\n' "$(provider_display_name "$token")"
+}
+
 # Fast path for the fresh flow: every provider that already authenticates is
 # enabled immediately with its family's recommended model pinned — no questions
 # asked. The user then lands on the config overview (the additive edit loop),
@@ -1314,18 +1307,19 @@ _setup_fast_path() {
   # the environment. Capture those settings BEFORE the overwrite so the fresh
   # config stays self-sufficient; without this a reset would silently strand a
   # "ready" vertex provider with no project to run against.
-  local carry_projects="" carry_project="" carry_account="" carry_region="" s
+  local carry_projects="" carry_account="" carry_region="" s
   case " ${ready[*]} " in *" vertex "*)
-    carry_projects=$(vertex_config_value vertex projects)
+    # Project priority: the config's own projects/project keys, then the
+    # environment, then — last resort — the project detected during the
+    # readiness probe (set when vertex entered the ready set on ADC +
+    # detection alone).
+    carry_projects=$(_setup_current_vertex_projects)
+    carry_projects="${carry_projects:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
+    carry_projects="${carry_projects:-${SETUP_VERTEX_DETECTED:-}}"
     for s in vertex vertex-anthropic vertex-gemini; do
-      [[ -z "$carry_project" ]] && carry_project=$(vertex_resolve "$s" project)
       [[ -z "$carry_account" ]] && carry_account=$(vertex_resolve "$s" account)
       [[ -z "$carry_region" ]] && carry_region=$(vertex_resolve "$s" region)
     done
-    carry_project="${carry_project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
-    # Last resort: the project detected during the readiness probe (set when
-    # vertex entered the ready set on ADC + detection alone).
-    carry_project="${carry_project:-${SETUP_VERTEX_DETECTED:-}}"
     ;;
   esac
 
@@ -1340,23 +1334,13 @@ _setup_fast_path() {
   # so every later edit (additive attach, replace action) seeds from one place.
   if [[ -n "$carry_projects" ]]; then
     _conf_apply "$conf" conf_set_section_setting vertex projects "$carry_projects"
-  elif [[ -n "$carry_project" ]]; then
-    _conf_apply "$conf" conf_set_section_setting vertex projects "$carry_project"
   fi
   [[ -n "$carry_account" ]] && _conf_apply "$conf" conf_set_section_setting vertex account "$carry_account"
   [[ -n "$carry_region" ]] && _conf_apply "$conf" conf_set_section_setting vertex region "$carry_region"
 
   printf '\nWrote %s\n' "$conf"
 
-  # Best-effort: seed the per-repo default so the next commit/pr has a pick
-  # ready without prompting.
-  local first
-  first=$(_setup_expand_provider "${ready[0]}" | head -n1)
-  if git rev-parse --git-dir >/dev/null 2>&1; then
-    save_last_provider commit "$first"
-    save_last_provider pr "$first"
-    printf 'Default provider for this repo set to %s.\n' "$(provider_display_name "${ready[0]}")"
-  fi
+  _setup_seed_default_provider "${ready[0]}"
 
   # Land on the overview: the edit loop shows the resulting config and offers
   # the advanced actions; its default action is Done, so a bare Enter finishes.
@@ -1448,15 +1432,7 @@ _setup_manual() {
     _setup_ensure_auth "$provider" "$conf"
   done
 
-  # Best-effort: seed the per-repo default so the next commit/pr has a pick
-  # ready without prompting. Only meaningful inside a git repo.
-  if git rev-parse --git-dir >/dev/null 2>&1; then
-    local first
-    first=$(_setup_expand_provider "${chosen[0]}" | head -n1)
-    save_last_provider commit "$first"
-    save_last_provider pr "$first"
-    printf 'Default provider for this repo set to %s.\n' "$(provider_display_name "${chosen[0]}")"
-  fi
+  _setup_seed_default_provider "${chosen[0]}"
 
   # Config now exists — hand off to the additive edit loop so the user can add
   # more providers, change models, or set up auth without re-running setup.
