@@ -698,8 +698,9 @@ maybe_first_run_setup() {
 
 # Interactive vertex auth assist: offer ADC login, then prompt for the common
 # per-section settings (project required, region/account optional) and write
-# them into [PROVIDER] via conf_set_section_setting. The shared [vertex] block,
-# profiles, and service-account credentials stay manual (see the README).
+# them into [PROVIDER] via conf_set_section_setting — for the wizard's `vertex`
+# token that is the shared [vertex] block. [vertex-x@profile] profiles and
+# service-account credentials= stay manual (see the README).
 _setup_vertex_assist() {
   local provider="$1" conf="$2"
   local label account project region input ans

@@ -73,10 +73,22 @@ EOF
   assert_success
 }
 
-@test "provider_ready: gemini-api succeeds with an env key" {
+@test "provider_ready: gemini-api succeeds with an env key and a CLI" {
   export GEMINI_API_KEY="g-key"
+  write_cli_stub gemini
+  export GEMINI_BIN="${STUB_BIN}/gemini"
   run provider_ready gemini-api
   assert_success
+}
+
+@test "provider_ready: gemini-api fails with a key but no CLI" {
+  export GEMINI_API_KEY="g-key"
+  # resolve_gemini_bin probes fixed absolute paths (/opt/homebrew, ~/.local),
+  # so a PATH stub can't make "not installed" hermetic — override the resolver.
+  resolve_gemini_bin() { return 1; }
+  run provider_ready gemini-api
+  assert_failure
+  assert_output --partial "Gemini CLI not found"
 }
 
 # --- vertex providers ------------------------------------------------------

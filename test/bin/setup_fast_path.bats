@@ -8,12 +8,17 @@ setup() {
   export XDG_CONFIG_HOME="$(mktemp -d)"
   mkdir -p "${XDG_CONFIG_HOME}/git-ai"
   CONF="${XDG_CONFIG_HOME}/git-ai/options.conf"
+  # Pin a fixture data file so routine model bumps in recommended-models.conf
+  # can't break these tests (ai-common.sh respects a pre-set env value).
+  export GIT_AI_RECOMMENDED_MODELS_FILE="${XDG_CONFIG_HOME}/recommended-models.conf"
+  printf 'anthropic = claude-rec-test\ngoogle = gemini-rec-test\nopenai = gpt-rec-test\n' \
+    >"$GIT_AI_RECOMMENDED_MODELS_FILE"
 }
 
 teardown() {
   cd /tmp
   rm -rf "$TEST_REPO" "$XDG_CONFIG_HOME"
-  unset XDG_CONFIG_HOME
+  unset XDG_CONFIG_HOME GIT_AI_RECOMMENDED_MODELS_FILE
 }
 
 # _fast CONF PROVIDER...  -> sources the CLI and runs _setup_fast_path with
@@ -36,21 +41,21 @@ _fast() {
   run _fast "$CONF" claude-code gemini-api
   assert_success
   assert_output --partial "enabling them with recommended models"
-  assert_output --partial "claude-sonnet-4-6"
-  assert_output --partial "gemini-3.5-flash"
+  assert_output --partial "claude-rec-test"
+  assert_output --partial "gemini-rec-test"
 
   run cat "$CONF"
   assert_line "[claude-code]"
-  assert_line "claude-sonnet-4-6"
+  assert_line "claude-rec-test"
   assert_line "[gemini-api]"
-  assert_line "gemini-3.5-flash"
+  assert_line "gemini-rec-test"
 }
 
 @test "_setup_fast_path: lands on the config overview" {
   run _fast "$CONF" claude-code
   assert_success
   assert_output --partial "Configured providers:"
-  assert_output --partial "Claude Code — claude-sonnet-4-6"
+  assert_output --partial "Claude Code — claude-rec-test"
 }
 
 @test "_setup_fast_path: vertex expands to both internal sections, one user-facing row" {
@@ -63,9 +68,9 @@ _fast() {
 
   run cat "$CONF"
   assert_line "[vertex-anthropic]"
-  assert_line "claude-sonnet-4-6"
+  assert_line "claude-rec-test"
   assert_line "[vertex-gemini]"
-  assert_line "gemini-3.5-flash"
+  assert_line "gemini-rec-test"
 }
 
 @test "_setup_fast_path: reset carries prior vertex settings into the new config" {

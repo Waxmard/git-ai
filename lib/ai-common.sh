@@ -420,6 +420,12 @@ provider_ready() {
       resolve_api_key openai-api-key OPENAI_API_KEY >/dev/null 2>&1 && return 0
       printf 'OPENAI_API_KEY not set (env or keychain)\n' >&2 ;;
     gemini-api)
+      # run_provider's gemini-api path shells out to the Gemini CLI, so a key
+      # alone isn't enough — the binary must resolve too.
+      if ! resolve_gemini_bin >/dev/null 2>&1; then
+        printf 'Gemini CLI not found (set GEMINI_BIN or add gemini to PATH)\n' >&2
+        return 1
+      fi
       resolve_gemini_api_key >/dev/null 2>&1 && return 0
       printf 'Gemini auth not found (GEMINI_API_KEY or keychain)\n' >&2 ;;
     vertex|vertex-gemini|vertex-anthropic)
@@ -506,7 +512,8 @@ provider_display_name() {
 # Curated recommended-model defaults live in a dedicated DATA file at the repo
 # root so model bumps read as data changes, not code changes (commits touching
 # only that file are routine "chore: bump recommended X model" updates).
-GIT_AI_RECOMMENDED_MODELS_FILE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../recommended-models.conf"
+# Pre-set env wins so tests can pin a fixture instead of the live data file.
+GIT_AI_RECOMMENDED_MODELS_FILE="${GIT_AI_RECOMMENDED_MODELS_FILE:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../recommended-models.conf}"
 
 # recommended_model PROVIDER
 # Print the recommended model id for PROVIDER's family, read from
