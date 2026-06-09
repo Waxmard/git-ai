@@ -1176,11 +1176,38 @@ _setup_fast_path() {
     printf '  ✓ %-14s → %s\n' "$(provider_display_name "$p")" "${recs:-(pick a model later)}"
   done
 
+  # Vertex readiness came from somewhere — a prior config (the reset case) or
+  # the environment. Capture those settings BEFORE the overwrite so the fresh
+  # config stays self-sufficient; without this a reset would silently strand a
+  # "ready" vertex provider with no project to run against.
+  local carry_projects="" carry_project="" carry_account="" carry_region="" s
+  case " ${ready[*]} " in *" vertex "*)
+    carry_projects=$(vertex_config_value vertex projects)
+    for s in vertex vertex-anthropic vertex-gemini; do
+      [[ -z "$carry_project" ]] && carry_project=$(vertex_resolve "$s" project)
+      [[ -z "$carry_account" ]] && carry_account=$(vertex_resolve "$s" account)
+      [[ -z "$carry_region" ]] && carry_region=$(vertex_resolve "$s" region)
+    done
+    carry_project="${carry_project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
+    ;;
+  esac
+
   local conf_dir
   conf_dir=$(dirname "$conf")
   mkdir -p "$conf_dir" || die "Cannot create config dir: $conf_dir"
   printf '%s' "$combos" | render_options_conf >"$conf" ||
     die "Failed to write $conf"
+
+  # Restore the captured vertex settings into the shared [vertex] block (a
+  # multi-project list wins over a single project=).
+  if [[ -n "$carry_projects" ]]; then
+    _conf_apply "$conf" conf_set_section_setting vertex projects "$carry_projects"
+  elif [[ -n "$carry_project" ]]; then
+    _conf_apply "$conf" conf_set_section_setting vertex project "$carry_project"
+  fi
+  [[ -n "$carry_account" ]] && _conf_apply "$conf" conf_set_section_setting vertex account "$carry_account"
+  [[ -n "$carry_region" ]] && _conf_apply "$conf" conf_set_section_setting vertex region "$carry_region"
+
   printf '\nWrote %s\n' "$conf"
 
   # Best-effort: seed the per-repo default so the next commit/pr has a pick

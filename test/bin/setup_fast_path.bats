@@ -68,6 +68,33 @@ _fast() {
   assert_line "gemini-3.5-flash"
 }
 
+@test "_setup_fast_path: reset carries prior vertex settings into the new config" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+account = me@example.com
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _fast "$CONF" vertex
+  assert_success
+  run cat "$CONF"
+  assert_line "projects = proj-a, proj-b"
+  assert_line "account = me@example.com"
+}
+
+@test "_setup_fast_path: env-derived vertex project is written to the config" {
+  run env GOOGLE_CLOUD_PROJECT=env-proj bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    GIT_AI_NO_FZF=1 _setup_fast_path "'"$CONF"'" vertex </dev/null
+  '
+  assert_success
+  run cat "$CONF"
+  assert_line "project = env-proj"
+}
+
 @test "_setup_fast_path: seeds the per-repo default provider" {
   run _fast "$CONF" gemini-api claude-code
   assert_success
