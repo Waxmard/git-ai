@@ -38,6 +38,7 @@ install: hooks
 	@ln -sf $(CURDIR)/bin/git-ai $(PREFIX)/bin/git-ai
 	@ln -sf $(CURDIR)/bin/aigit $(PREFIX)/bin/aigit
 	@ln -sf $(CURDIR)/lib/ai-common.sh $(PREFIX)/lib/ai-common.sh
+	@ln -sf $(CURDIR)/lib/setup.sh $(PREFIX)/lib/setup.sh
 	@echo "Installed git-ai to $(PREFIX)"
 	@resolved=$$(command -v git-ai 2>/dev/null); \
 	npmdupe=""; \
@@ -68,6 +69,7 @@ uninstall:
 	@rm -f $(PREFIX)/bin/git-ai
 	@rm -f $(PREFIX)/bin/aigit
 	@rm -f $(PREFIX)/lib/ai-common.sh
+	@rm -f $(PREFIX)/lib/setup.sh
 	@echo "Uninstalled git-ai from $(PREFIX)"
 
 # Python targets
