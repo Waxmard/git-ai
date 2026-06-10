@@ -27,6 +27,7 @@ TEMPLATES: dict[str, list[str]] = {
     "README.md": ["README.md"],
     "CLAUDE.md": ["CLAUDE.md"],
     "AGENTS.md": ["AGENTS.md"],
+    "CONTRIBUTING.md": ["CONTRIBUTING.md"],
 }
 
 INCLUDE_RE = re.compile(r"\{\{\s*include:([^\s}]+)\s*\}\}")

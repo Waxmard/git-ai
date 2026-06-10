@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ._git import (
         check_git_repo,
-        get_branch_churn_subjects,
         get_commit_log,
         get_current_branch,
         get_diff,
@@ -27,12 +26,14 @@ if TYPE_CHECKING:
         git_is_ancestor,
         git_ref_exists,
     )
+    from ._git_branch import get_branch_churn_subjects
     from ._ignore import load_ignore_patterns
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _git = importlib.import_module("_git")
+    _git_branch = importlib.import_module("_git_branch")
     check_git_repo = _git.check_git_repo
-    get_branch_churn_subjects = _git.get_branch_churn_subjects
+    get_branch_churn_subjects = _git_branch.get_branch_churn_subjects
     get_commit_log = _git.get_commit_log
     get_current_branch = _git.get_current_branch
     get_diff = _git.get_diff
@@ -48,7 +49,6 @@ elif __package__ in (None, ""):
 else:
     from ._git import (
         check_git_repo,
-        get_branch_churn_subjects,
         get_commit_log,
         get_current_branch,
         get_diff,
@@ -60,6 +60,7 @@ else:
         git_is_ancestor,
         git_ref_exists,
     )
+    from ._git_branch import get_branch_churn_subjects
     from ._ignore import load_ignore_patterns
 
 

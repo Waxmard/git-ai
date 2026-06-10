@@ -144,52 +144,61 @@ EOF
   assert_output --partial "claude-code:claude-sonnet-5-0-preview|claude-sonnet-5-0-preview · Claude Code"
 }
 
-@test "list_options: missing config falls back to full catalog" {
+@test "list_options: missing config lists live-discovered models" {
   rm -f "$CONF"
-  run list_options commit
+  # No static catalog anymore: with no config, list_options draws from model
+  # discovery. Block the network and seed two providers' caches so only those
+  # appear; providers with nothing discoverable contribute no rows.
+  local stub
+  stub="$(mktemp -d)"
+  local c
+  for c in curl security secret-tool pass kwallet-query gcloud; do
+    printf '#!/bin/sh\nexit 1\n' >"${stub}/${c}"
+    chmod +x "${stub}/${c}"
+  done
+  PATH="${stub}:${PATH}" \
+    mkdir -p "${TEST_XDG}/git-ai/models-cache"
+  printf 'claude-sonnet-4-6\n' >"${TEST_XDG}/git-ai/models-cache/claude-code.list"
+  printf 'gpt-5.4-mini\n' >"${TEST_XDG}/git-ai/models-cache/codex.list"
+
+  PATH="${stub}:${PATH}" run list_options commit
   assert_success
-  assert_output --partial "vertex-gemini:"
-  assert_output --partial "vertex-anthropic:"
-  assert_output --partial "claude-code:"
-  assert_output --partial "codex:"
+  assert_output --partial "claude-code:claude-sonnet-4-6|"
+  assert_output --partial "codex:gpt-5.4-mini|"
+  refute_output --partial "vertex-gemini:"
+  rm -rf "$stub"
 }
 
-# --- resolve_model accepts custom IDs from config ---
-
-@test "resolve_model: accepts custom model ID declared in config" {
+@test "list_options: present config is authoritative — empty sections hide, no discovery flood" {
+  # Regression: a present options.conf whose sections pin no models must NOT fall
+  # back to live discovery (which flooded the picker with every model). An empty
+  # [vertex-gemini] hides that provider even though discovery could list it.
   cat >"$CONF" <<'EOF'
+[vertex-gemini]
+
 [claude-code]
-claude-sonnet-5-0-preview
+claude-sonnet-4-6
 EOF
+  mkdir -p "${TEST_XDG}/git-ai/models-cache"
+  printf 'gemini-3.5-flash\ngemini-3.1-pro-preview\n' >"${TEST_XDG}/git-ai/models-cache/vertex-gemini.list"
+
+  run list_options commit
+  assert_success
+  assert_output --partial "claude-code:claude-sonnet-4-6|"
+  refute_output --partial "vertex-gemini:"      # empty section hidden
+  refute_output --partial "gemini-3.5-flash"    # discovery NOT consulted
+}
+
+# --- resolve_model passes any model id through (no catalog gate) ---
+
+@test "resolve_model: accepts an arbitrary model id" {
   run resolve_model commit claude-code "claude-sonnet-5-0-preview"
   assert_success
   assert_output "claude-sonnet-5-0-preview"
 }
 
-@test "resolve_model: still rejects a model absent from catalog and config" {
-  cat >"$CONF" <<'EOF'
-[claude-code]
-claude-sonnet-4-6
-EOF
-  run resolve_model commit claude-code "claude-sonnet-999-0-fake"
-  assert_failure
-}
-
-@test "resolve_model: matches an early entry under pipefail (no SIGPIPE)" {
-  # Regression: `parse_user_options | grep -q` returned 141 (SIGPIPE) under
-  # `set -o pipefail` when grep matched early and the producer kept writing,
-  # making a real match look like a failure. Many projects → long parse output;
-  # the target is the first one, so grep matches well before the producer ends.
-  {
-    echo "[vertex]"
-    echo -n "projects ="
-    for n in $(seq 1 30); do printf ' proj-%02d,' "$n"; done
-    echo
-    echo "[vertex-gemini]"
-    echo "gemini-3.5-flash"
-  } >"$CONF"
-
-  run bash -c "set -o pipefail; source '${REPO_ROOT}/lib/ai-common.sh'; resolve_model commit 'vertex-gemini@proj-01' 'gemini-3.5-flash'"
+@test "resolve_model: profile-qualified provider passes the model through" {
+  run resolve_model commit "vertex-gemini@proj-01" "gemini-3.5-flash"
   assert_success
   assert_output "gemini-3.5-flash"
 }
@@ -281,8 +290,8 @@ claude-sonnet-4-6
 EOF
   run list_options commit
   assert_success
-  assert_output --partial "vertex-anthropic@acme:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI (Anthropic) [acme]"
-  assert_output --partial "vertex-anthropic@sandbox:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI (Anthropic) [sandbox]"
+  assert_output --partial "vertex-anthropic@acme:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI [acme]"
+  assert_output --partial "vertex-anthropic@sandbox:claude-sonnet-4-6|claude-sonnet-4-6 · Vertex AI [sandbox]"
 }
 
 # --- shared [vertex] projects expansion ---
@@ -339,8 +348,8 @@ gemini-3.5-flash
 EOF
   run list_options commit
   assert_success
-  assert_output --partial "vertex-gemini@sierra-data-den:gemini-3.5-flash|gemini-3.5-flash · Vertex AI (Gemini) [sierra-data-den]"
-  assert_output --partial "vertex-gemini@the-file-system:gemini-3.5-flash|gemini-3.5-flash · Vertex AI (Gemini) [the-file-system]"
+  assert_output --partial "vertex-gemini@sierra-data-den:gemini-3.5-flash|gemini-3.5-flash · Vertex AI [sierra-data-den]"
+  assert_output --partial "vertex-gemini@the-file-system:gemini-3.5-flash|gemini-3.5-flash · Vertex AI [the-file-system]"
 }
 
 # --- vertex_resolve layered lookup ---

@@ -1,0 +1,489 @@
+#!/usr/bin/env bats
+load '../helpers/common'
+
+setup() {
+  load_bats_libs
+  TEST_REPO="$(make_test_repo)"
+  cd "$TEST_REPO"
+  source "${REPO_ROOT}/lib/ai-common.sh"
+  source "${REPO_ROOT}/bin/git-ai"
+  export XDG_CONFIG_HOME="$(mktemp -d)"
+  mkdir -p "${XDG_CONFIG_HOME}/git-ai"
+  CONF="${XDG_CONFIG_HOME}/git-ai/options.conf"
+}
+
+teardown() {
+  cd /tmp
+  rm -rf "$TEST_REPO" "$XDG_CONFIG_HOME"
+  unset XDG_CONFIG_HOME
+}
+
+# --- _setup_select (numbered fallback) ---
+
+_select() { # CHOICE DATA  -> runs _setup_select with numbered fallback, feeding CHOICE
+  GIT_AI_NO_FZF=1 bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "%s\n" "$1" | _setup_select "pick> " "$2"
+  ' _ "$1" "$2"
+}
+
+@test "_setup_select: numbered fallback returns the chosen value" {
+  run _select 2 $'add\tAdd\nremove\tRemove\ndone\tDone'
+  assert_success
+  assert_line "remove"
+}
+
+@test "_setup_select: out-of-range choice returns non-zero" {
+  run _select 9 $'add\tAdd\ndone\tDone'
+  assert_failure
+}
+
+@test "_setup_select: empty data returns non-zero" {
+  run _select 1 ""
+  assert_failure
+}
+
+# --- _setup_print_summary (models shown / empty flagged) ---
+
+@test "_setup_print_summary: pinned models are listed, empty sections flagged" {
+  cat >"$CONF" <<'EOF'
+[claude-code]
+
+[vertex-gemini]
+gemini-3.5-flash
+gemini-3.1-pro-preview
+EOF
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "Vertex AI — gemini-3.5-flash, gemini-3.1-pro-preview"
+  assert_output --partial "Claude Code — no models pinned"
+}
+
+@test "_setup_print_summary: vertex project + account shown in the header" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+
+[vertex-gemini]
+account = me@example.com
+gemini-3.5-flash
+EOF
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "(projects: proj-a, proj-b)"
+  assert_output --partial "[account: me@example.com]"
+}
+
+@test "_setup_print_summary: single per-section vertex project shown" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+project = solo-proj
+claude-sonnet-4
+EOF
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "(project: solo-proj)"
+}
+
+# --- _setup_existing_models (additive change-models support) ---
+
+@test "_setup_existing_models: lists pinned models, folding @profiles to base" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = a, b
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _setup_existing_models vertex-gemini
+  assert_success
+  assert_line "gemini-3.5-flash"
+  # The two project profiles must collapse to a single base entry.
+  [ "$(grep -c '^gemini-3.5-flash$' <<<"$output")" -eq 1 ]
+}
+
+# --- _setup_pick_projects (vertex project selection, free-text fallback) ---
+
+@test "_setup_pick_projects: free-text fallback splits a comma list" {
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"  # no project list → free-text path
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "proj-a, proj-b\n" | GIT_AI_NO_FZF=1 _setup_pick_projects
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_line "proj-a"
+  assert_line "proj-b"
+}
+
+# --- _merge_vertex_projects (additive project attach) ---
+
+@test "_merge_vertex_projects: new project appended to current list" {
+  run _merge_vertex_projects "the-file-system" "sierra-data-den"
+  assert_success
+  assert_output "the-file-system, sierra-data-den"
+}
+
+@test "_merge_vertex_projects: re-picking an existing project dedupes" {
+  run _merge_vertex_projects "proj-a, proj-b" "proj-b" "proj-c"
+  assert_success
+  assert_output "proj-a, proj-b, proj-c"
+}
+
+@test "_merge_vertex_projects: empty current list yields just the picks" {
+  run _merge_vertex_projects "" "proj-a" "proj-b"
+  assert_success
+  assert_output "proj-a, proj-b"
+}
+
+# --- vertex unification (one user-facing "Vertex AI") ---
+
+@test "_setup_expand_provider: vertex expands to both internal providers" {
+  run _setup_expand_provider vertex
+  assert_success
+  assert_line --index 0 "vertex-anthropic"
+  assert_line --index 1 "vertex-gemini"
+}
+
+@test "_setup_expand_provider: concrete providers pass through" {
+  run _setup_expand_provider gemini-api
+  assert_success
+  assert_output "gemini-api"
+}
+
+@test "_setup_provider_for_model: claude models route to vertex-anthropic" {
+  run _setup_provider_for_model vertex "claude-sonnet-4-6"
+  assert_success
+  assert_output "vertex-anthropic"
+}
+
+@test "_setup_provider_for_model: non-claude models route to vertex-gemini" {
+  run _setup_provider_for_model vertex "gemini-3.5-flash"
+  assert_success
+  assert_output "vertex-gemini"
+}
+
+@test "_setup_provider_for_model: concrete provider passes through regardless of model" {
+  run _setup_provider_for_model anthropic-api "claude-sonnet-4-6"
+  assert_success
+  assert_output "anthropic-api"
+}
+
+@test "_setup_conf_wizard_providers: vertex sections fold into one entry" {
+  cat >"$CONF" <<'EOF'
+[gemini-api]
+gemini-3.5-flash
+
+[vertex-anthropic]
+claude-sonnet-4-6
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _setup_conf_wizard_providers "$CONF"
+  assert_success
+  assert_line --index 0 "gemini-api"
+  assert_line --index 1 "vertex"
+  [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "_setup_existing_models: vertex token folds both internal sections" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+claude-sonnet-4-6
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _setup_existing_models vertex
+  assert_success
+  assert_line "claude-sonnet-4-6"
+  assert_line "gemini-3.5-flash"
+}
+
+@test "_setup_write_vertex_models: splits picks per family into the right sections" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+claude-sonnet-4-6
+EOF
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_write_vertex_models "'"$CONF"'" claude-sonnet-4-6 claude-opus-4-6 gemini-3.5-flash
+    cat "'"$CONF"'"
+  '
+  assert_success
+  assert_line "[vertex-anthropic]"
+  assert_line "claude-opus-4-6"
+  assert_line "[vertex-gemini]"
+  assert_line "gemini-3.5-flash"
+}
+
+# --- _setup_edit_existing menu (vertex-conditional projects action) ---
+
+# Drive the edit loop with the numbered fallback and EOF stdin: the menu prints
+# its options, then the action read hits EOF and exits via the Done default.
+_edit_menu() {
+  GIT_AI_NO_FZF=1 bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_edit_existing "$1"
+  ' _ "$1" </dev/null 2>&1
+}
+
+@test "_setup_edit_existing: vertex configured offers the projects action" {
+  printf '[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
+  run _edit_menu "$CONF"
+  assert_success
+  assert_output --partial "Change Vertex AI projects (GCP)"
+}
+
+@test "_setup_edit_existing: no vertex, no projects action" {
+  printf '[gemini-api]\ngemini-3.5-flash\n' >"$CONF"
+  run _edit_menu "$CONF"
+  assert_success
+  refute_output --partial "Change Vertex AI projects"
+}
+
+@test "_setup_edit_existing: no standalone auth action (add-provider covers it)" {
+  printf '[gemini-api]\ngemini-3.5-flash\n' >"$CONF"
+  run _edit_menu "$CONF"
+  assert_success
+  refute_output --partial "Set up auth"
+}
+
+# --- _setup_detect_vertex_project (gcloud-backed project auto-pick) ---
+
+# _detect ACTIVE ENABLED_CSV -> runs _setup_detect_vertex_project against a
+# stubbed gcloud: ACTIVE is `config get-value project` output, ENABLED_CSV the
+# comma-list of projects where the Vertex API is "enabled". Project list is
+# fixed at proj-a/proj-b/proj-c.
+_detect() {
+  local stub
+  stub="$(mktemp -d)"
+  cat >"${stub}/gcloud" <<'EOF'
+#!/bin/bash
+case "$1 $2" in
+  "config get-value") printf '%s\n' "${STUB_ACTIVE}" ;;
+  "projects list") printf 'proj-a\nproj-b\nproj-c\n' ;;
+  "services list")
+    p=""
+    for a in "$@"; do case "$a" in --project=*) p="${a#--project=}" ;; esac; done
+    case ",${STUB_ENABLED}," in
+      *",${p},"*) printf 'aiplatform.googleapis.com\n' ;;
+    esac
+    ;;
+esac
+EOF
+  chmod +x "${stub}/gcloud"
+  STUB_ACTIVE="$1" STUB_ENABLED="$2" PATH="${stub}:$PATH" bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_detect_vertex_project
+  '
+  local rc=$?
+  rm -rf "$stub"
+  return $rc
+}
+
+@test "_setup_detect_vertex_project: enabled active project wins immediately" {
+  run _detect "proj-b" "proj-a,proj-b"
+  assert_success
+  assert_output "proj-b"
+}
+
+@test "_setup_detect_vertex_project: no active, single enabled project found" {
+  run _detect "" "proj-b"
+  assert_success
+  assert_output "proj-b"
+}
+
+@test "_setup_detect_vertex_project: active without the API falls to an enabled project" {
+  run _detect "proj-c" "proj-a"
+  assert_success
+  assert_output "proj-a"
+}
+
+@test "_setup_detect_vertex_project: nothing enabled falls back to the active project" {
+  run _detect "proj-c" ""
+  assert_success
+  assert_output "proj-c"
+}
+
+@test "_setup_detect_vertex_project: gcloud erroring yields empty" {
+  local stub
+  stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run env PATH="${stub}:$PATH" bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_detect_vertex_project
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output ""
+}
+
+# --- vertex projects editing (seeding + replace semantics) ---
+
+@test "_setup_current_vertex_projects: prefers the shared projects list" {
+  printf '[vertex]\nprojects = a, b\nproject = stray\n' >"$CONF"
+  run _setup_current_vertex_projects
+  assert_success
+  assert_output "a, b"
+}
+
+@test "_setup_current_vertex_projects: falls back to a singular project=" {
+  printf '[vertex]\nproject = solo\n' >"$CONF"
+  run _setup_current_vertex_projects
+  assert_success
+  assert_output "solo"
+}
+
+@test "_setup_choose_vertex_projects: additive merge seeds from a singular project=" {
+  printf '[vertex]\nproject = old-proj\n\n[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"  # free-text fallback path
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "new-proj\n" | GIT_AI_NO_FZF=1 _setup_choose_vertex_projects vertex "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Set vertex projects: old-proj, new-proj"
+}
+
+@test "_setup_change_vertex_projects: typed list replaces the current one" {
+  printf '[vertex]\nprojects = a, b\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "c\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Set vertex projects: c"
+  run cat "$CONF"
+  assert_line "projects = c"
+}
+
+@test "_setup_change_vertex_projects: blank entry keeps the current list" {
+  printf '[vertex]\nprojects = a, b\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Vertex projects unchanged: a, b"
+  run cat "$CONF"
+  assert_line "projects = a, b"
+}
+
+# --- _setup_change_models (replace-style model editing) ---
+
+@test "_setup_change_models: typed list replaces the pinned models" {
+  printf '[gemini-api]\ngemini-old\ngemini-keep\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "gemini-new\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
+  '
+  assert_success
+  assert_output --partial "Set models for Gemini API: gemini-new"
+  run cat "$CONF"
+  assert_line "gemini-new"
+  refute_line "gemini-old"
+  refute_line "gemini-keep"
+}
+
+@test "_setup_change_models: blank entry keeps the current pins" {
+  printf '[gemini-api]\ngemini-old\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
+  '
+  assert_success
+  assert_output --partial "Models unchanged: gemini-old"
+  run cat "$CONF"
+  assert_line "gemini-old"
+}
+
+@test "_setup_change_models: vertex replace clears a family whose models were all dropped" {
+  printf '[vertex-anthropic]\nclaude-x\n\n[vertex-gemini]\ngemini-y\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "gemini-z\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" vertex
+  '
+  assert_success
+  assert_output --partial "Set models for Vertex AI: gemini-z"
+  run cat "$CONF"
+  # The emptied anthropic section stays (hidden from the picker) but loses its pin.
+  assert_line "[vertex-anthropic]"
+  refute_line "claude-x"
+  assert_line "gemini-z"
+  refute_line "gemini-y"
+}
+
+# --- _setup_action_reset (re-run fresh flow over an existing config) ---
+
+@test "_setup_action_reset: declining keeps the config untouched" {
+  printf '[gemini-api]\ngemini-3.5-flash\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "n\n" | _setup_action_reset "'"$CONF"'"
+  '
+  assert_failure
+  assert_output --partial "Kept as-is."
+  run cat "$CONF"
+  assert_line "[gemini-api]"
+  assert_line "gemini-3.5-flash"
+}
+
+@test "_setup_action_reset: confirming re-runs the fresh flow" {
+  printf '[gemini-api]\ngemini-3.5-flash\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_fresh() { printf "FRESH %s\n" "$1"; }
+    printf "y\n" | _setup_action_reset "'"$CONF"'"
+  '
+  assert_success
+  assert_output --partial "FRESH $CONF"
+}
+
+@test "_setup_print_summary: both vertex sections render as one Vertex AI row" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+claude-sonnet-4-6
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "Vertex AI — claude-sonnet-4-6, gemini-3.5-flash"
+  # Exactly one bullet row — the split must not leak.
+  [ "$(grep -c 'Vertex AI' <<<"$output")" -eq 1 ]
+}

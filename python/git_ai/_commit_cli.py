@@ -18,30 +18,27 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._git import (
+    from ._git import get_current_branch, get_diff_stat, get_git_dir
+    from ._git_branch import (
         format_branch_context,
         get_branch_commit_subjects,
-        get_current_branch,
-        get_diff_stat,
-        get_git_dir,
         resolve_commit_base,
     )
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _git = importlib.import_module("_git")
-    format_branch_context = _git.format_branch_context
-    get_branch_commit_subjects = _git.get_branch_commit_subjects
+    _git_branch = importlib.import_module("_git_branch")
+    format_branch_context = _git_branch.format_branch_context
+    get_branch_commit_subjects = _git_branch.get_branch_commit_subjects
     get_current_branch = _git.get_current_branch
     get_diff_stat = _git.get_diff_stat
     get_git_dir = _git.get_git_dir
-    resolve_commit_base = _git.resolve_commit_base
+    resolve_commit_base = _git_branch.resolve_commit_base
 else:
-    from ._git import (
+    from ._git import get_current_branch, get_diff_stat, get_git_dir
+    from ._git_branch import (
         format_branch_context,
         get_branch_commit_subjects,
-        get_current_branch,
-        get_diff_stat,
-        get_git_dir,
         resolve_commit_base,
     )
 

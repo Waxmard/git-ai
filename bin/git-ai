@@ -1,11 +1,13 @@
 #!/bin/bash
 set -o pipefail
 # git-ai - LLM-powered git workflow tools
-# Usage: git-ai <commit|pr|providers|models> [...]
+# Usage: git-ai <commit|pr|setup|providers|models|options> [...]
 
 SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 # shellcheck source=lib/ai-common.sh
 source "${SCRIPT_DIR}/../lib/ai-common.sh"
+# shellcheck source=lib/setup.sh
+source "${SCRIPT_DIR}/../lib/setup.sh"
 
 # ---------------------------------------------------------------------------
 # PR cache helpers
@@ -127,6 +129,8 @@ cmd_commit() {
   PROMPT=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/commit.txt") || die "failed to read commit prompt"
 
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
+
+  [[ -z "$PROVIDER" ]] && maybe_first_run_setup commit
 
   if [[ -z "$PROVIDER" ]]; then
     local IS_TTY=false PICKED
@@ -261,6 +265,8 @@ cmd_pr() {
     esac
   done
 
+  [[ -z "$PROVIDER" ]] && maybe_first_run_setup pr
+
   if [[ -z "$PROVIDER" ]]; then
     local IS_TTY=false PICKED
     [[ -t 1 ]] && IS_TTY=true
@@ -393,6 +399,22 @@ cmd_options() {
   list_options "${1:-commit}"
 }
 
+
+cmd_setup() {
+  printf '\ngit-ai setup\n'
+  printf '============\n\n'
+
+  _setup_check_shadow
+
+  local conf
+  conf=$(user_options_path)
+  if [[ -e "$conf" ]]; then
+    _setup_edit_existing "$conf"
+  else
+    _setup_fresh "$conf"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -404,11 +426,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   case "$CMD" in
     commit)    cmd_commit "$@" ;;
     pr|mr)     cmd_pr "$@" ;;
+    setup)     cmd_setup "$@" ;;
     providers) cmd_providers "$@" ;;
     models)    cmd_models "$@" ;;
     options)   cmd_options "$@" ;;
     tiers)     die "'tiers' has been removed; use 'models' instead" ;;
-    "")        die "usage: git-ai <commit|pr|providers|models|options> [...]" ;;
+    "")        die "usage: git-ai <commit|pr|setup|providers|models|options> [...]" ;;
     *)         die "unknown command: $CMD" ;;
   esac
 fi

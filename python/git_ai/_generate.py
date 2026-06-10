@@ -15,9 +15,9 @@ from pathlib import Path
 from ._git import (
     DEFAULT_RELEASE_CONTEXT,
     derive_diff_stat,
-    format_branch_context,
     largest_diff_files,
 )
+from ._git_branch import format_branch_context
 from ._pr_prompt_build import build_mr_prompt_input
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"

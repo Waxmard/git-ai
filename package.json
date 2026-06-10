@@ -27,6 +27,7 @@
     "lib/",
     "python/git_ai/default-excludes.txt",
     "python/git_ai/prompts/",
+    "recommended-models.conf",
     "README.md",
     "CHANGELOG.md"
   ],
