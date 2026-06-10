@@ -1,6 +1,11 @@
 #!/bin/bash
 # provider.sh - provider/model selection and run_provider dispatch (sourced via lib/ai-common.sh).
 
+# pick_or_recall_provider TOOL [IS_TTY]
+# On an interactive stdout, offers the fzf picker; otherwise (or on cancel)
+# falls back to the tool's saved provider. Prints "provider" or
+# "provider:model". Non-zero if neither a pick nor a saved provider exists.
+# IS_TTY must be evaluated by the caller (this runs in $(...) with fd 1 piped).
 pick_or_recall_provider() {
   local tool_name="$1"
   local is_tty="${2:-false}"
@@ -14,6 +19,11 @@ pick_or_recall_provider() {
   printf '%s\n' "$picked"
 }
 
+# pick_via_fzf TOOL
+# Launch fzf over list_options output, echo the selected value (text before
+# the '|' delimiter). Returns non-zero if fzf is missing, GIT_AI_NO_FZF is
+# set, or the user cancels. Caller is responsible for the tty check — this
+# function is invoked inside $(...) so its own stdout is never a tty.
 pick_via_fzf() {
   local tool_name="${1:-commit}"
   command -v fzf >/dev/null 2>&1 || return 127

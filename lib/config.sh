@@ -200,30 +200,45 @@ conf_set_section_models() {
 # conf_set_section_setting PROVIDER KEY VALUE
 # Upsert a `KEY = VALUE` setting line inside [PROVIDER] (used for vertex
 # `project`/`region`/`account`), preserving the section's models and other
-# settings. Replaces an existing KEY line wherever it sits; otherwise inserts it
-# right after the header. Appends a new section if PROVIDER isn't present.
+# settings. Replaces an existing KEY line wherever it sits; otherwise appends it
+# at the section's end (after its models, not above them). Appends a new section
+# if PROVIDER isn't present.
 conf_set_section_setting() {
   local target="$1" key="$2" value="$3"
   local newline="${key} = ${value}"
-  local line in_target=0 found=0 k
+  local line in_target=0 found=0 emitted=0 k
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+      # Leaving the target without having emitted: the key was new, so append
+      # it at the section's end (before this next header) to keep models on top.
+      if [[ $in_target -eq 1 && $emitted -eq 0 ]]; then
+        printf '%s\n' "$newline"
+        emitted=1
+      fi
       in_target=0
       printf '%s\n' "$line"
       if [[ "${BASH_REMATCH[1]}" == "$target" ]]; then
         in_target=1
         found=1
-        printf '%s\n' "$newline"
       fi
       continue
     fi
     if [[ $in_target -eq 1 && "$line" == *=* ]]; then
       k="${line%%=*}"
       k=$(_trim "$k")
-      [[ "$k" == "$key" ]] && continue # drop the old KEY line
+      if [[ "$k" == "$key" ]]; then
+        printf '%s\n' "$newline" # update the existing KEY line in place
+        emitted=1
+        continue
+      fi
     fi
     printf '%s\n' "$line"
   done
+  # Target was the file's last section and the key was new: append at EOF.
+  if [[ $in_target -eq 1 && $emitted -eq 0 ]]; then
+    printf '%s\n' "$newline"
+    emitted=1
+  fi
   if [[ $found -eq 0 ]]; then
     printf '\n[%s]\n%s\n' "$target" "$newline"
   fi
@@ -408,7 +423,10 @@ list_options() {
   # options.conf exists at all — otherwise enabling a provider with no pinned
   # model would flood the picker with every discovered model.
   local provider model display short
-  if [[ -e "$(user_options_path)" ]]; then
+  # Guard on -r (not -e): parse_user_options also requires readability, so an
+  # existing-but-unreadable file must fall through to discovery rather than
+  # enter this branch with an empty entry list and show zero options.
+  if [[ -r "$(user_options_path)" ]]; then
     while IFS=':' read -r provider model; do
       [[ -n "$provider" && -n "$model" ]] || continue
       display=$(provider_display_name "$provider")
@@ -459,14 +477,3 @@ list_options() {
     emitted+="$entry"$'\n'
   done <<< "$table"
 }
-
-# pick_via_fzf TOOL
-# Launch fzf over list_options output, echo the selected value (text before
-# the '|' delimiter). Returns non-zero if fzf is missing, GIT_AI_NO_FZF is
-# set, or the user cancels. Caller is responsible for the tty check — this
-# function is invoked inside $(...) so its own stdout is never a tty.
-# pick_or_recall_provider TOOL [IS_TTY]
-# On an interactive stdout, offers the fzf picker; otherwise (or on cancel)
-# falls back to the tool's saved provider. Prints "provider" or
-# "provider:model". Non-zero if neither a pick nor a saved provider exists.
-# IS_TTY must be evaluated by the caller (this runs in $(...) with fd 1 piped).
