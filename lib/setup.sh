@@ -613,7 +613,7 @@ _setup_fast_path() {
   local conf_dir
   conf_dir=$(dirname "$conf")
   mkdir -p "$conf_dir" || die "Cannot create config dir: $conf_dir"
-  printf '%s' "$combos" | render_options_conf >"$conf" ||
+  printf '%s' "$combos" | render_options_conf | _conf_write_fresh "$conf" ||
     die "Failed to write $conf"
 
   # Restore the captured vertex settings into the shared [vertex] block. The
@@ -709,7 +709,7 @@ _setup_manual() {
   local conf_dir
   conf_dir=$(dirname "$conf")
   mkdir -p "$conf_dir" || die "Cannot create config dir: $conf_dir"
-  printf '%s' "$combos" | render_options_conf >"$conf" ||
+  printf '%s' "$combos" | render_options_conf | _conf_write_fresh "$conf" ||
     die "Failed to write $conf"
   printf 'Wrote %s\n' "$conf"
 

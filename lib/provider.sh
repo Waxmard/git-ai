@@ -164,6 +164,7 @@ _run_anthropic_api() {
   local model="$1"
   local prompt="$2"
   local input="$3"
+  local key="$4"
   local body response curl_cfg
   body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
     python3 -c '
@@ -177,7 +178,7 @@ print(json.dumps({
 ') || die "Failed to build Anthropic API request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
   trap 'rm -f "$curl_cfg"' EXIT
-  printf 'header = "x-api-key: %s"\n' "$ANTHROPIC_API_KEY" > "$curl_cfg"
+  printf 'header = "x-api-key: %s"\n' "$key" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
     -H "anthropic-version: 2023-06-01" \
@@ -198,6 +199,7 @@ _run_openai_api() {
   local model="$1"
   local prompt="$2"
   local input="$3"
+  local key="$4"
   local body response curl_cfg
   body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
     python3 -c '
@@ -212,7 +214,7 @@ print(json.dumps({
 ') || die "Failed to build OpenAI API request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
   trap 'rm -f "$curl_cfg"' EXIT
-  printf 'header = "Authorization: Bearer %s"\n' "$OPENAI_API_KEY" > "$curl_cfg"
+  printf 'header = "Authorization: Bearer %s"\n' "$key" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
     -H "content-type: application/json" \
@@ -254,8 +256,7 @@ run_provider() {
       local anthropic_key
       anthropic_key=$(resolve_api_key anthropic-api-key ANTHROPIC_API_KEY) ||
         die "Anthropic API auth not found. Set ANTHROPIC_API_KEY or store 'anthropic-api-key' in your keychain."
-      export ANTHROPIC_API_KEY="$anthropic_key"
-      _run_anthropic_api "$model" "$prompt" "$input" | strip_fences ||
+      _run_anthropic_api "$model" "$prompt" "$input" "$anthropic_key" | strip_fences ||
         die "Anthropic API generation failed"
       ;;
     vertex-gemini|vertex-anthropic)
@@ -331,8 +332,7 @@ run_provider() {
       local openai_key
       openai_key=$(resolve_api_key openai-api-key OPENAI_API_KEY) ||
         die "OpenAI API auth not found. Set OPENAI_API_KEY or store 'openai-api-key' in your keychain."
-      export OPENAI_API_KEY="$openai_key"
-      _run_openai_api "$model" "$prompt" "$input" | strip_fences ||
+      _run_openai_api "$model" "$prompt" "$input" "$openai_key" | strip_fences ||
         die "OpenAI API generation failed"
       ;;
     *)
