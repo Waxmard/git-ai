@@ -125,6 +125,10 @@ store_api_key() {
   account="${USER:-${LOGNAME:-$(id -un 2>/dev/null)}}"
 
   if command -v security >/dev/null 2>&1; then
+    # macOS `security` has no stdin/file input for the password, so the key is
+    # passed via `-w` argv and is briefly visible in `ps` while this runs — an
+    # unavoidable limitation of this backend (the secret-tool/pass paths below
+    # pipe the key via stdin and avoid the exposure).
     security add-generic-password -U -a "$account" -s "$service" -w "$key" 2>/dev/null && return 0
   fi
   if command -v secret-tool >/dev/null 2>&1; then
