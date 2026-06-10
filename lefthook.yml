@@ -5,6 +5,10 @@ pre-commit:
       glob: "{bin/*,lib/*.sh}"
       run: make lint
 
+    line-limit:
+      glob: "{bin/git-ai,bin/aigit,lib/*.sh,python/git_ai/*.py,scripts/*.sh,scripts/*.py}"
+      run: bash scripts/check-line-limit.sh {staged_files}
+
     bats:
       glob: "{bin/*,lib/*.sh,test/bin/**,test/lib/**,Makefile}"
       run: make test

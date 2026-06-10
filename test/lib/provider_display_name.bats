@@ -6,16 +6,22 @@ setup() {
   source "${REPO_ROOT}/lib/ai-common.sh"
 }
 
-@test "provider_display_name: vertex-gemini" {
+@test "provider_display_name: vertex-gemini collapses to the unified label" {
   run provider_display_name "vertex-gemini"
   assert_success
-  assert_output "Vertex AI (Gemini)"
+  assert_output "Vertex AI"
 }
 
-@test "provider_display_name: vertex-anthropic" {
+@test "provider_display_name: vertex-anthropic collapses to the unified label" {
   run provider_display_name "vertex-anthropic"
   assert_success
-  assert_output "Vertex AI (Anthropic)"
+  assert_output "Vertex AI"
+}
+
+@test "provider_display_name: wizard vertex token" {
+  run provider_display_name "vertex"
+  assert_success
+  assert_output "Vertex AI"
 }
 
 @test "provider_display_name: gemini-api" {
@@ -63,5 +69,5 @@ setup() {
 @test "provider_display_name: profile-qualified token is labelled with [profile]" {
   run provider_display_name "vertex-anthropic@acme"
   assert_success
-  assert_output "Vertex AI (Anthropic) [acme]"
+  assert_output "Vertex AI [acme]"
 }
