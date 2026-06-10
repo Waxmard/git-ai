@@ -17,6 +17,20 @@ _conf_apply() {
   fi
 }
 
+# Atomically write stdin to CONF via a temp file + mv, so an interrupted write
+# never leaves a truncated or empty config. Used by the fresh-setup paths, where
+# `>"$conf"` would truncate before the new content lands.
+_conf_write_fresh() {
+  local conf="$1" tmp
+  tmp=$(mktemp) || { printf 'write failed (mktemp)\n' >&2; return 1; }
+  if cat >"$tmp"; then
+    mv "$tmp" "$conf"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 # Join arguments with ", ".
 _join_comma() {
   local joined
