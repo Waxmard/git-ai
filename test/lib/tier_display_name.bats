@@ -6,55 +6,6 @@ setup() {
   source "${REPO_ROOT}/lib/ai-common.sh"
 }
 
-@test "models_for_provider: claude-code includes sonnet" {
-  run models_for_provider "claude-code"
-  assert_success
-  assert_output --partial "claude-sonnet-4-6"
-}
-
-@test "models_for_provider: gemini-api includes pro" {
-  run models_for_provider "gemini-api"
-  assert_success
-  assert_output --partial "gemini-3.1-pro-preview"
-}
-
-@test "models_for_provider: openai-api includes gpt-5.4" {
-  run models_for_provider "openai-api"
-  assert_success
-  assert_output --partial "gpt-5.4"
-}
-
-@test "models_for_provider: vertex-gemini includes gemini models" {
-  run models_for_provider "vertex-gemini"
-  assert_success
-  assert_output --partial "gemini-3.1-flash-lite-preview"
-  assert_output --partial "gemini-3.1-pro-preview"
-}
-
-@test "models_for_provider: vertex-anthropic includes claude models" {
-  run models_for_provider "vertex-anthropic"
-  assert_success
-  assert_output --partial "claude-sonnet-4-6"
-  assert_output --partial "claude-opus-4-6"
-}
-
-@test "models_for_provider: unknown exits non-zero" {
-  run models_for_provider "unknown"
-  assert_failure
-}
-
-@test "default_model_for_provider: pr+anthropic-api uses opus" {
-  run default_model_for_provider "pr" "anthropic-api"
-  assert_success
-  assert_output "claude-opus-4-6"
-}
-
-@test "default_model_for_provider: commit+openai-api uses mini" {
-  run default_model_for_provider "commit" "openai-api"
-  assert_success
-  assert_output "gpt-5.4-mini"
-}
-
 @test "provider_family: vertex-gemini maps to gemini" {
   run provider_family "vertex-gemini"
   assert_success

@@ -15,27 +15,33 @@ make install   # symlinks to ~/.local/bin and ~/.local/lib
 make uninstall
 ```
 
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full dev setup, test commands, and PR/release process.
+
 ## Quickstart
 
-Most users authenticate through the [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini-api`). Set a key once, then generate:
+Run the setup wizard once — it detects your installed provider CLIs and keys, helps you authenticate, and writes your config:
 
 ```bash
-export GEMINI_API_KEY=your-key        # or store it in your keychain — see Auth methods
+git-ai setup
+```
 
+If you already have a provider CLI installed or a key in your environment, the wizard does the work for you: it enables every provider you can use right now, pins a sensible recommended model for each, and drops you on a summary of the resulting config — a single `Enter` finishes, or pick an action there to tweak it (add/remove providers, change models, reset and re-detect). No provider/model picking required. Set `GIT_AI_NO_SETUP_FAST=1` to skip straight to the full manual picker.
+
+The first time you run `git-ai commit` or `git-ai pr` with nothing configured, the wizard launches automatically (skip with `GIT_AI_NO_SETUP=1`). Then generate:
+
+```bash
 git add -A
-git-ai commit gemini-api              # prints a Conventional Commits message to stdout
-git commit -m "$(git-ai commit gemini-api)"   # …or commit with it in one line
+git-ai commit                         # prints a Conventional Commits message to stdout
+git commit -m "$(git-ai commit)"      # …or commit with it in one line
+
+git-ai pr --base main                 # PR title + body for the current branch
 ```
 
-Generate a PR title + body for the current branch:
-
-```bash
-git-ai pr gemini-api --base main
-```
-
-Run `git-ai commit` or `git-ai pr` with no auth method to pick one from an interactive [fzf](https://github.com/junegunn/fzf) picker. Both `git-ai` and `aigit` are interchangeable.
+With no auth method on the command line, git-ai uses your configured default or pops an interactive [fzf](https://github.com/junegunn/fzf) picker. You can still pass one explicitly — `git-ai commit gemini-api`. Both `git-ai` and `aigit` are interchangeable.
 
 ## Auth methods
+
+`git-ai setup` is the way in — it shows which of these are ready, authenticates you, and writes the config. The table is a reference for what exists; you don't configure any of it by hand unless you want to (see [Manual configuration](#manual-configuration-advanced)).
 
 git-ai needs at least one of these. `gemini-api` (Gemini CLI) and the two Vertex methods are the common choices; the rest are available if you already use that provider's CLI or API.
 
@@ -53,20 +59,25 @@ git-ai needs at least one of these. `gemini-api` (Gemini CLI) and the two Vertex
 
 > **Vertex AI support covers only the Gemini (`vertex-gemini`) and Anthropic (`vertex-anthropic`) model families.** Other Vertex publishers (Meta Llama, Mistral, etc.) are not yet supported. To pin a GCP account or run multiple projects, see [Pinning a GCP account (Vertex)](#pinning-a-gcp-account-vertex).
 
-### Gemini API auth
-
-For `gemini-api`, git-ai resolves the key in this order until one succeeds:
-
-1. `GEMINI_API_KEY` environment variable
-2. System keychain — store the key as `gemini-api-key`:
-   - **macOS:** `security add-generic-password -s gemini-api-key -a "$USER" -w YOUR_KEY`
-   - **GNOME / libsecret:** `secret-tool store --label="Gemini API Key" service gemini-api-key`
-   - **pass:** `pass insert gemini-api-key`
-   - **KDE Wallet:** `kwallet-query kdewallet -w gemini-api-key`
-
-For Google ADC / service-account credentials (`gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`), use a `vertex-gemini` or `vertex-anthropic` auth method instead.
+For API-key providers (`gemini-api`, `anthropic-api`, `openai-api`), `git-ai setup` prompts for the key and stores it in your OS keychain or shell rc. For Google ADC / service-account credentials, use a `vertex-gemini` or `vertex-anthropic` method and let setup run `gcloud auth application-default login`. To wire any of this up by hand instead, see [Manual configuration](#manual-configuration-advanced).
 
 ## Commands
+
+### setup
+
+Interactive wizard to configure providers and authentication.
+
+```bash
+git-ai setup
+```
+
+- **First run** (no config yet): enables every provider that already authenticates, pins each one's recommended model, and drops you on the config overview — a bare `Enter` finishes. For Vertex AI it also picks your GCP project automatically (your active gcloud project if it has the Vertex API enabled, else the first of your projects that does). When nothing is ready (or `GIT_AI_NO_SETUP_FAST=1` is set), falls back to a readiness table and a manual provider/model picker (each family's recommended model leads the list) that exits when done — re-run `git-ai setup` anytime to make changes
+- **Later runs** (config exists): opens the overview with an edit menu — add a provider, remove one, change a provider's models, change Vertex AI projects, or **reset** (re-detect and start over) — applied **in place**, one change at a time, preserving everything else in the file (comments, vertex `account=`/`projects=` settings). Only a confirmed reset rewrites the file wholesale. The models and projects edits are both replace-style multi-selects: current entries are pre-listed, and the set you mark replaces the old one, so a single pass adds *and* removes (`Esc` or a blank entry keeps things as they are)
+- Shows a single **Vertex AI** entry; whether a model runs via `vertex-gemini` or `vertex-anthropic` is inferred from the model id, never asked
+- For API-key providers, prompts for the key and offers to store it in your OS keychain or shell rc
+- For Vertex AI, offers to run `gcloud auth application-default login` and prompts for `project` (required) / `region` / `account`, written to the shared `[vertex]` block. Profiles and `credentials=` stay manual — see [Pinning a GCP account (Vertex)](#pinning-a-gcp-account-vertex)
+- Seeds the per-repo default so the next `commit`/`pr` runs without prompting
+- Runs automatically on first use when nothing is configured; set `GIT_AI_NO_SETUP=1` to disable that
 
 ### commit
 
@@ -78,7 +89,7 @@ git-ai commit [auth-method] [model-id]
 
 - Reads `git diff --staged` and produces a Conventional Commits message
 - Includes a description body for non-trivial changes
-- No default auth method on a fresh repo; choose one explicitly
+- Uses your configured default (from `git-ai setup`) or the interactive picker; pass an auth method to override
 - All auth methods default to a lightweight model when `model-id` is omitted
 - Pass `last` as the provider to reuse the previously generated message
 
@@ -98,7 +109,7 @@ git-ai mr [...]   # alias for pr
 - Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
 - Use `--fresh` to ignore the saved output and regenerate from scratch
 - Use `--from-sha` to override the saved HEAD and regenerate only from commits after a specific prior generated commit
-- No default auth method on a fresh repo; choose one explicitly
+- Uses your configured default (from `git-ai setup`) or the interactive picker; pass an auth method to override
 - All auth methods default to a stronger model when `model-id` is omitted
 
 ### options
@@ -249,7 +260,24 @@ If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`
 
 In the Python library, `get_staged_diff`, `get_diff`, and `get_diff_stat` auto-load `.git-ai-ignore` and apply built-in lockfile defaults when `exclude_patterns` is omitted. Pass `exclude_patterns=[]` to opt out of all filtering.
 
-## Narrowing the picker list
+## Manual configuration (advanced)
+
+Everything below is handled for you by `git-ai setup`. Reach for it only when you want to script config, edit it by hand, or set up an advanced case the wizard leaves alone (service accounts, multi-project Vertex profiles).
+
+### API keys by hand
+
+For `gemini-api`, `anthropic-api`, and `openai-api`, git-ai resolves each key in this order until one succeeds:
+
+1. The environment variable — `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`.
+2. System keychain, under the service name `<provider>-api-key` (e.g. `gemini-api-key`, `anthropic-api-key`, `openai-api-key`):
+   - **macOS:** `security add-generic-password -s gemini-api-key -a "$USER" -w YOUR_KEY`
+   - **GNOME / libsecret:** `secret-tool store --label="Gemini API Key" service gemini-api-key`
+   - **pass:** `pass insert gemini-api-key`
+   - **KDE Wallet:** `kwallet-query kdewallet -w gemini-api-key`
+
+For Google ADC / service-account credentials, use a `vertex-gemini` or `vertex-anthropic` method (`gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`).
+
+### Narrowing the picker list
 
 By default `git-ai options` enumerates every supported provider/model combo. Most users only have access to a couple. To restrict the picker to just the providers and models you actually use, drop a config file at `$XDG_CONFIG_HOME/git-ai/options.conf` (usually `~/.config/git-ai/options.conf`):
 
@@ -274,7 +302,9 @@ gpt-5.4-mini
 
 ### Pinning a GCP account (Vertex)
 
-If you have multiple GCP accounts, a `[vertex-*]` section accepts optional `key = value` lines alongside its model IDs to pin which account and project that provider uses (these keys are not models and never appear in the picker):
+`git-ai setup` writes `project` / `region` / `account` for a single Vertex provider for you. This section is the manual reference for that, plus the advanced cases the wizard leaves alone: service-account `credentials=`, the shared `[vertex]` block, and multi-project profiles.
+
+A `[vertex-*]` section accepts optional `key = value` lines alongside its model IDs to pin which account and project that provider uses (these keys are not models and never appear in the picker):
 
 ```ini
 [vertex-anthropic]
@@ -289,7 +319,7 @@ claude-sonnet-4-6
 - Config values override the corresponding environment variables.
 - Before each call, git-ai prints the account/project it used to stderr (e.g. `git-ai: Vertex account me@acme.com · project acme-prod (us-east5)`).
 
-To choose between **multiple projects/accounts from the picker**, give each a profile suffix — `[vertex-anthropic@<profile>]`. Every profile becomes its own picker entry (labelled `Vertex AI (Anthropic) [<profile>]`), so the same account across two projects is fully supported:
+To choose between **multiple projects/accounts from the picker**, give each a profile suffix — `[vertex-anthropic@<profile>]`. Every profile becomes its own picker entry (labelled `Vertex AI [<profile>]`), so the same account across two projects is fully supported:
 
 ```ini
 [vertex-anthropic@acme]
