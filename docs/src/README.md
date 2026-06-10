@@ -145,7 +145,7 @@ pip install waxmard-git-ai
 # or: uv add waxmard-git-ai
 ```
 
-{{ include:partials/python-library.md }} Bring your own Claude / Gemini / OpenAI / ADK / anything — sync or async.
+Bring your own Claude / Gemini / OpenAI / ADK / anything — sync or async.
 
 **Commit message** (data-mode):
 
