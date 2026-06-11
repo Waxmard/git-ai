@@ -97,6 +97,34 @@ def build_mr_prompt_input(
     return prompt_name, user_input
 
 
+def verbatim_pr_text(
+    commit_log: str | None, existing_pr: str | None = None
+) -> str | None:
+    """Return a ready-made PR body when the branch is one conventional commit.
+
+    A branch with exactly one commit that already follows Conventional Commits
+    IS its own best PR summary, so the CLI can emit the commit subject/body
+    verbatim and skip the LLM. Returns ``None`` (caller falls back to the normal
+    prompt flow) when there are zero/multiple commits, the lone commit is not
+    conventional, or an ``existing_pr`` is being refined.
+    """
+    if existing_pr:
+        return None
+    log = commit_log or ""
+    conventional_count, total_count = count_conventional_commits(log)
+    if total_count != 1 or conventional_count != 1:
+        return None
+    subject = ""
+    body_lines: list[str] = []
+    for line in log.splitlines():
+        if line.startswith("GITAI_COMMIT "):
+            subject = line[len("GITAI_COMMIT ") :]
+        else:
+            body_lines.append(line)
+    body = "\n".join(body_lines).strip()
+    return f"{subject}\n\n{body}" if body else subject
+
+
 def _to_rs_delimited_log(log: str) -> str:
     if not log.strip():
         return ""

@@ -9,16 +9,30 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from ._git import _DIFF_FILE_HEADER, _git, git_ref_exists
+    from ._git import (
+        _DIFF_FILE_HEADER,
+        _git,
+        get_current_branch,
+        git_is_ancestor,
+        git_ref_exists,
+    )
 elif __package__ in (None, ""):
     import importlib as _importlib
 
     _git_mod = _importlib.import_module("_git")
     _git = _git_mod._git
     _DIFF_FILE_HEADER = _git_mod._DIFF_FILE_HEADER
+    get_current_branch = _git_mod.get_current_branch
+    git_is_ancestor = _git_mod.git_is_ancestor
     git_ref_exists = _git_mod.git_ref_exists
 else:
-    from ._git import _DIFF_FILE_HEADER, _git, git_ref_exists
+    from ._git import (
+        _DIFF_FILE_HEADER,
+        _git,
+        get_current_branch,
+        git_is_ancestor,
+        git_ref_exists,
+    )
 
 _BASE_CANDIDATE_NAMES = ("main", "master", "dev")
 
@@ -90,10 +104,10 @@ def _candidate_base_names(repo_path: str | Path) -> list[str]:
     return names
 
 
-def _commits_ahead(repo_path: str | Path, base_ref: str) -> int | None:
-    """Count commits on HEAD not reachable from base_ref. None on git failure."""
+def _count_range(repo_path: str | Path, rng: str) -> int | None:
+    """Count commits in a ``A..B`` range. None on git failure."""
     result = subprocess.run(
-        ["git", "rev-list", "--count", f"{base_ref}..HEAD"],
+        ["git", "rev-list", "--count", rng],
         cwd=str(repo_path),
         capture_output=True,
         text=True,
@@ -105,6 +119,69 @@ def _commits_ahead(repo_path: str | Path, base_ref: str) -> int | None:
         return int(result.stdout.strip())
     except ValueError:
         return None
+
+
+def _commits_ahead(repo_path: str | Path, base_ref: str) -> int | None:
+    """Count commits on HEAD not reachable from base_ref. None on git failure."""
+    return _count_range(repo_path, f"{base_ref}..HEAD")
+
+
+def base_warnings(
+    repo_path: str | Path,
+    base_branch: str,
+    current_branch: str | None = None,
+) -> list[str]:
+    """Advisory warnings about a weird base/HEAD relationship for ``git-ai pr``.
+
+    All are best-effort and non-fatal — each is suppressed on any git failure.
+    Detects the cases that make a PR summary describe work not on this branch:
+
+    1. A local base that lags its ``origin/`` copy (the compared ref), so the
+       reader knows the remote — not the stale local branch — is the baseline.
+    2. No ``origin/<base>`` at all, so the local base may be stale.
+    3. HEAD forked from another branch that sits between the base and HEAD, so
+       the PR diff folds in that branch's commits unless ``--base`` is narrowed.
+
+    ``current_branch`` is the caller's already-resolved branch name; when given
+    it is used as-is to avoid a redundant ``git rev-parse`` (and the race of a
+    second lookup disagreeing with the caller's value).
+    """
+    warnings: list[str] = []
+    origin_ref = f"origin/{base_branch}"
+    has_origin = git_ref_exists(repo_path, origin_ref)
+    has_local = git_ref_exists(repo_path, base_branch)
+
+    if has_origin and has_local:
+        behind = _count_range(repo_path, f"{base_branch}..{origin_ref}")
+        if behind:
+            warnings.append(
+                f"local '{base_branch}' is {behind} commit(s) behind "
+                f"'{origin_ref}'; comparing against '{origin_ref}'."
+            )
+    elif has_local and not has_origin:
+        warnings.append(
+            f"no remote-tracking '{origin_ref}'; comparing against local "
+            f"'{base_branch}', which may be stale. run 'git fetch' if the PR "
+            f"shows already-merged work."
+        )
+
+    base_ref = origin_ref if has_origin else (base_branch if has_local else None)
+    if base_ref:
+        fork = _nearest_fork_parent(
+            repo_path, current_branch or get_current_branch(repo_path)
+        )
+        if (
+            fork
+            and fork.removeprefix("origin/") != base_branch
+            and git_is_ancestor(repo_path, base_ref, fork)
+            and not git_is_ancestor(repo_path, fork, base_ref)
+        ):
+            warnings.append(
+                f"branch looks forked from '{fork}', not '{base_branch}'; the "
+                f"PR may include commits from '{fork}'. re-run with "
+                f"--base {fork.removeprefix('origin/')} to scope it."
+            )
+    return warnings
 
 
 def _base_name_from_pr_cache(
