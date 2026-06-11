@@ -7,7 +7,9 @@ _conf_apply() {
   local conf="$1"
   shift
   local tmp
-  tmp=$(mktemp) || { printf 'edit failed (mktemp)\n' >&2; return 1; }
+  # Temp file in the target's own dir so `mv` is a same-filesystem atomic rename
+  # (a bare mktemp lands in $TMPDIR and degrades to a cross-device copy+delete).
+  tmp=$(mktemp "$(dirname "$conf")/git-ai-conf.XXXXXX") || { printf 'edit failed (mktemp)\n' >&2; return 1; }
   if "$@" <"$conf" >"$tmp"; then
     mv "$tmp" "$conf"
   else
@@ -22,7 +24,8 @@ _conf_apply() {
 # `>"$conf"` would truncate before the new content lands.
 _conf_write_fresh() {
   local conf="$1" tmp
-  tmp=$(mktemp) || { printf 'write failed (mktemp)\n' >&2; return 1; }
+  # Same-filesystem temp (see _conf_apply) so the mv below is an atomic rename.
+  tmp=$(mktemp "$(dirname "$conf")/git-ai-conf.XXXXXX") || { printf 'write failed (mktemp)\n' >&2; return 1; }
   if cat >"$tmp"; then
     mv "$tmp" "$conf"
   else

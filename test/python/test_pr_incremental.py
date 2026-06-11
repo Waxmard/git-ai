@@ -338,13 +338,105 @@ def test_prepare_repo_pr_context_raises_on_missing_base_branch(
         prepare_repo_pr_context(repo, base_branch="dev")
 
 
-def test_prepare_repo_pr_context_missing_base_hints_remote_fallback(
+def test_prepare_repo_pr_context_uses_origin_base_when_local_missing(
     tmp_path: Path,
 ) -> None:
     repo = _make_repo(tmp_path)
-    head_sha = _commit(repo, "one.txt", "one\n", "feat: add first")
-    # Simulate a fetched-but-not-checked-out default branch: only origin/dev exists.
-    _git(repo, "update-ref", "refs/remotes/origin/dev", head_sha)
+    base_sha = _git(repo, "rev-parse", "HEAD")
+    # A fetched-but-not-checked-out base: only origin/dev exists. It should be
+    # used directly rather than erroring — PRs target the remote base anyway.
+    _git(repo, "update-ref", "refs/remotes/origin/dev", base_sha)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
 
-    with pytest.raises(RuntimeError, match="origin/dev"):
-        prepare_repo_pr_context(repo, base_branch="dev")
+    ctx = prepare_repo_pr_context(repo, base_branch="dev")
+    assert ctx.no_changes is False
+    assert "feat: add first" in ctx.commit_log
+
+
+def test_prepare_repo_pr_context_prefers_origin_over_stale_local_base(
+    tmp_path: Path,
+) -> None:
+    # Repro: local `main` lags behind `origin/main`. Comparing against the stale
+    # local base leaks the already-merged upstream commit into the PR diff/log.
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", repo], check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    sha_a = _commit(repo, "a.txt", "a\n", "chore: init")
+    sha_b = _commit(repo, "b.txt", "b\n", "feat: upstream work already merged")
+    subprocess.run(["git", "checkout", "-b", "feature/x"], cwd=repo, check=True)
+    _commit(repo, "c.txt", "c\n", "refactor: branch-only work")
+    # origin/main is at B (the real base); local main lags at A.
+    _git(repo, "update-ref", "refs/remotes/origin/main", sha_b)
+    _git(repo, "branch", "-f", "main", sha_a)
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert "refactor: branch-only work" in ctx.commit_log
+    assert "upstream work already merged" not in ctx.commit_log
+    assert "c.txt" in ctx.diff
+    assert "b.txt" not in ctx.diff
+    assert any("behind 'origin/main'" in w for w in ctx.warnings)
+
+
+def test_prepare_warns_when_no_origin_base(tmp_path: Path) -> None:
+    # Local base only, no origin/<base>: the base may be stale and we can't know.
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert any("no remote-tracking 'origin/main'" in w for w in ctx.warnings)
+
+
+def test_prepare_warns_when_forked_from_other_branch(tmp_path: Path) -> None:
+    # HEAD forks from feat-x, which itself forks from main. A PR against main
+    # folds in feat-x's commit, so warn and suggest --base feat-x.
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", repo], check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    _commit(repo, "a.txt", "a\n", "chore: init")
+    subprocess.run(["git", "checkout", "-b", "feat-x"], cwd=repo, check=True)
+    _commit(repo, "x.txt", "x\n", "feat: x work")
+    subprocess.run(["git", "checkout", "-b", "feature/test"], cwd=repo, check=True)
+    _commit(repo, "y.txt", "y\n", "feat: build on x")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert any(
+        "forked from 'feat-x'" in w and "--base feat-x" in w for w in ctx.warnings
+    )
+
+
+def test_prepare_raises_on_no_common_ancestor(tmp_path: Path) -> None:
+    # HEAD and the base have unrelated histories (orphan branch): the three-dot
+    # diff would error cryptically, so prepare should fail with a clear message.
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", repo], check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    _commit(repo, "a.txt", "a\n", "chore: init main")
+    subprocess.run(["git", "checkout", "--orphan", "unrelated"], cwd=repo, check=True)
+    _commit(repo, "u.txt", "u\n", "feat: unrelated root")
+
+    with pytest.raises(RuntimeError, match="no common ancestor"):
+        prepare_repo_pr_context(repo, base_branch="main")
+
+
+def test_prepare_warns_on_detached_head(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    feature_sha = _commit(repo, "one.txt", "one\n", "feat: add first")
+    subprocess.run(["git", "checkout", feature_sha], cwd=repo, check=True)
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert ctx.current_branch is None
+    assert any("detached HEAD" in w for w in ctx.warnings)
+
+
+def test_prepare_no_warnings_on_clean_tree(tmp_path: Path) -> None:
+    # HEAD forks directly from main, local main matches origin/main → no warnings.
+    repo = _make_repo(tmp_path)
+    base_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/main", base_sha)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert ctx.warnings == []
