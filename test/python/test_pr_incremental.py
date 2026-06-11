@@ -406,6 +406,31 @@ def test_prepare_warns_when_forked_from_other_branch(tmp_path: Path) -> None:
     )
 
 
+def test_prepare_raises_on_no_common_ancestor(tmp_path: Path) -> None:
+    # HEAD and the base have unrelated histories (orphan branch): the three-dot
+    # diff would error cryptically, so prepare should fail with a clear message.
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", repo], check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    _commit(repo, "a.txt", "a\n", "chore: init main")
+    subprocess.run(["git", "checkout", "--orphan", "unrelated"], cwd=repo, check=True)
+    _commit(repo, "u.txt", "u\n", "feat: unrelated root")
+
+    with pytest.raises(RuntimeError, match="no common ancestor"):
+        prepare_repo_pr_context(repo, base_branch="main")
+
+
+def test_prepare_warns_on_detached_head(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    feature_sha = _commit(repo, "one.txt", "one\n", "feat: add first")
+    subprocess.run(["git", "checkout", feature_sha], cwd=repo, check=True)
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert ctx.current_branch is None
+    assert any("detached HEAD" in w for w in ctx.warnings)
+
+
 def test_prepare_no_warnings_on_clean_tree(tmp_path: Path) -> None:
     # HEAD forks directly from main, local main matches origin/main → no warnings.
     repo = _make_repo(tmp_path)

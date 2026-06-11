@@ -91,6 +91,20 @@ def git_is_ancestor(
     return result.returncode == 0
 
 
+def git_merge_base(repo_path: str | Path, ref_a: str, ref_b: str) -> str | None:
+    """Return the merge-base SHA of two refs, or None when they share no history."""
+    result = subprocess.run(
+        ["git", "merge-base", ref_a, ref_b],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def check_git_repo(repo_path: str | Path) -> None:
     """Raise RuntimeError if not inside a git repository."""
     result = subprocess.run(

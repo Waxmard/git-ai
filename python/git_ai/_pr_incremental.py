@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         get_mr_release_context,
         get_repo_root,
         git_is_ancestor,
+        git_merge_base,
         git_ref_exists,
     )
     from ._git_branch import (
@@ -49,6 +50,7 @@ elif __package__ in (None, ""):
     get_mr_release_context = _git.get_mr_release_context
     get_repo_root = _git.get_repo_root
     git_is_ancestor = _git.git_is_ancestor
+    git_merge_base = _git.git_merge_base
     git_ref_exists = _git.git_ref_exists
     _ignore = importlib.import_module("_ignore")
     load_ignore_patterns = _ignore.load_ignore_patterns
@@ -64,6 +66,7 @@ else:
         get_mr_release_context,
         get_repo_root,
         git_is_ancestor,
+        git_merge_base,
         git_ref_exists,
     )
     from ._git_branch import (
@@ -193,6 +196,14 @@ def prepare_repo_pr_context(
                 f"(looked for {base_branch!r} and 'origin/{base_branch}')."
             )
         diff_ref = base_ref
+        # A three-dot base..HEAD diff requires a common ancestor; without one
+        # git errors cryptically. Fail early with an actionable message instead.
+        if git_merge_base(repo_path, diff_ref, "HEAD") is None:
+            raise RuntimeError(
+                f"{base_branch!r} and HEAD share no common ancestor, so they "
+                f"cannot be compared. Is the base branch correct? It may have "
+                f"been force-pushed or replaced with unrelated history."
+            )
     else:
         diff_ref = input_base
 
@@ -229,9 +240,13 @@ def prepare_repo_pr_context(
     churn_subjects = get_branch_churn_subjects(
         repo_path, churn_base, classify_base=diff_ref
     )
-    # Advisory weird-tree warnings only make sense for a full base..HEAD PR;
-    # an incremental update (input_base = a HEAD SHA) has no base relationship.
-    warnings = base_warnings(repo_path, base_branch) if three_dot else []
+    warnings: list[str] = []
+    if current_branch is None:
+        warnings.append("detached HEAD: PR caching is disabled for this run.")
+    # Base-relationship warnings only make sense for a full base..HEAD PR; an
+    # incremental update (input_base = a HEAD SHA) has no base relationship.
+    if three_dot:
+        warnings.extend(base_warnings(repo_path, base_branch))
     return RepoPrContext(
         base_branch=base_branch,
         current_branch=current_branch,
