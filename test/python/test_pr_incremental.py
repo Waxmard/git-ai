@@ -375,3 +375,43 @@ def test_prepare_repo_pr_context_prefers_origin_over_stale_local_base(
     assert "upstream work already merged" not in ctx.commit_log
     assert "c.txt" in ctx.diff
     assert "b.txt" not in ctx.diff
+    assert any("behind 'origin/main'" in w for w in ctx.warnings)
+
+
+def test_prepare_warns_when_no_origin_base(tmp_path: Path) -> None:
+    # Local base only, no origin/<base>: the base may be stale and we can't know.
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert any("no remote-tracking 'origin/main'" in w for w in ctx.warnings)
+
+
+def test_prepare_warns_when_forked_from_other_branch(tmp_path: Path) -> None:
+    # HEAD forks from feat-x, which itself forks from main. A PR against main
+    # folds in feat-x's commit, so warn and suggest --base feat-x.
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", repo], check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    _commit(repo, "a.txt", "a\n", "chore: init")
+    subprocess.run(["git", "checkout", "-b", "feat-x"], cwd=repo, check=True)
+    _commit(repo, "x.txt", "x\n", "feat: x work")
+    subprocess.run(["git", "checkout", "-b", "feature/test"], cwd=repo, check=True)
+    _commit(repo, "y.txt", "y\n", "feat: build on x")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert any(
+        "forked from 'feat-x'" in w and "--base feat-x" in w for w in ctx.warnings
+    )
+
+
+def test_prepare_no_warnings_on_clean_tree(tmp_path: Path) -> None:
+    # HEAD forks directly from main, local main matches origin/main → no warnings.
+    repo = _make_repo(tmp_path)
+    base_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/main", base_sha)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert ctx.warnings == []

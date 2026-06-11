@@ -26,7 +26,11 @@ if TYPE_CHECKING:
         git_is_ancestor,
         git_ref_exists,
     )
-    from ._git_branch import _best_base_ref, get_branch_churn_subjects
+    from ._git_branch import (
+        _best_base_ref,
+        base_warnings,
+        get_branch_churn_subjects,
+    )
     from ._ignore import load_ignore_patterns
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -34,6 +38,7 @@ elif __package__ in (None, ""):
     _git_branch = importlib.import_module("_git_branch")
     check_git_repo = _git.check_git_repo
     _best_base_ref = _git_branch._best_base_ref
+    base_warnings = _git_branch.base_warnings
     get_branch_churn_subjects = _git_branch.get_branch_churn_subjects
     get_commit_log = _git.get_commit_log
     get_current_branch = _git.get_current_branch
@@ -61,7 +66,11 @@ else:
         git_is_ancestor,
         git_ref_exists,
     )
-    from ._git_branch import _best_base_ref, get_branch_churn_subjects
+    from ._git_branch import (
+        _best_base_ref,
+        base_warnings,
+        get_branch_churn_subjects,
+    )
     from ._ignore import load_ignore_patterns
 
 
@@ -78,6 +87,7 @@ class RepoPrContext:
     release_context: str
     no_changes: bool = False
     churn_subjects: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=True)
@@ -219,6 +229,9 @@ def prepare_repo_pr_context(
     churn_subjects = get_branch_churn_subjects(
         repo_path, churn_base, classify_base=diff_ref
     )
+    # Advisory weird-tree warnings only make sense for a full base..HEAD PR;
+    # an incremental update (input_base = a HEAD SHA) has no base relationship.
+    warnings = base_warnings(repo_path, base_branch) if three_dot else []
     return RepoPrContext(
         base_branch=base_branch,
         current_branch=current_branch,
@@ -234,6 +247,7 @@ def prepare_repo_pr_context(
         ),
         release_context=get_mr_release_context(repo_path),
         churn_subjects=churn_subjects,
+        warnings=warnings,
     )
 
 
