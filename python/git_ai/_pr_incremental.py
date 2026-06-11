@@ -246,7 +246,7 @@ def prepare_repo_pr_context(
     # Base-relationship warnings only make sense for a full base..HEAD PR; an
     # incremental update (input_base = a HEAD SHA) has no base relationship.
     if three_dot:
-        warnings.extend(base_warnings(repo_path, base_branch))
+        warnings.extend(base_warnings(repo_path, base_branch, current_branch))
     return RepoPrContext(
         base_branch=base_branch,
         current_branch=current_branch,

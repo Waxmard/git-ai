@@ -126,7 +126,11 @@ def _commits_ahead(repo_path: str | Path, base_ref: str) -> int | None:
     return _count_range(repo_path, f"{base_ref}..HEAD")
 
 
-def base_warnings(repo_path: str | Path, base_branch: str) -> list[str]:
+def base_warnings(
+    repo_path: str | Path,
+    base_branch: str,
+    current_branch: str | None = None,
+) -> list[str]:
     """Advisory warnings about a weird base/HEAD relationship for ``git-ai pr``.
 
     All are best-effort and non-fatal — each is suppressed on any git failure.
@@ -137,6 +141,10 @@ def base_warnings(repo_path: str | Path, base_branch: str) -> list[str]:
     2. No ``origin/<base>`` at all, so the local base may be stale.
     3. HEAD forked from another branch that sits between the base and HEAD, so
        the PR diff folds in that branch's commits unless ``--base`` is narrowed.
+
+    ``current_branch`` is the caller's already-resolved branch name; when given
+    it is used as-is to avoid a redundant ``git rev-parse`` (and the race of a
+    second lookup disagreeing with the caller's value).
     """
     warnings: list[str] = []
     origin_ref = f"origin/{base_branch}"
@@ -159,7 +167,9 @@ def base_warnings(repo_path: str | Path, base_branch: str) -> list[str]:
 
     base_ref = origin_ref if has_origin else (base_branch if has_local else None)
     if base_ref:
-        fork = _nearest_fork_parent(repo_path, get_current_branch(repo_path))
+        fork = _nearest_fork_parent(
+            repo_path, current_branch or get_current_branch(repo_path)
+        )
         if (
             fork
             and fork.removeprefix("origin/") != base_branch
