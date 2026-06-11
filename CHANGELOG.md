@@ -1,5 +1,32 @@
 # Changelog
 
+## [6.3.0](https://github.com/Waxmard/git-ai/compare/v6.2.2...v6.3.0) (2026-06-11)
+
+
+### Features
+
+* add interactive setup wizard with live model discovery and provider auth ([#73](https://github.com/Waxmard/git-ai/issues/73)) ([32d42b6](https://github.com/Waxmard/git-ai/commit/32d42b63c1b9530dbee909bfa1703e6f9cf0b0fd))
+* smarter PR base detection and single-commit fast path ([#79](https://github.com/Waxmard/git-ai/issues/79)) ([cc6311f](https://github.com/Waxmard/git-ai/commit/cc6311f3663b20668c7ea932aca6fa4dd784a99c))
+
+
+### Bug Fixes
+
+* avoid exporting API keys to env and write config atomically ([04370fb](https://github.com/Waxmard/git-ai/commit/04370fbce9d08a07f1fc8bc13b96fc4a0fe773dd))
+* harden key-file cleanup and config edge-case handling ([157bbb9](https://github.com/Waxmard/git-ai/commit/157bbb992b2325ffe3eae6619e4d589c039560a7))
+* improve commit and PR output to be reader-focused and concise ([e86626d](https://github.com/Waxmard/git-ai/commit/e86626d725a78db47e8e7822893fec409fe4fc91))
+* suppress fork warning on detached HEAD in base_warnings ([9a3dd8a](https://github.com/Waxmard/git-ai/commit/9a3dd8afa03301dd147c0714554d522dfbb84372))
+* tighten feat/style/branch-context classification rules in commit prompt ([1159a68](https://github.com/Waxmard/git-ai/commit/1159a68b9de13937cf94e31b4b68d912ea1a243f))
+
+
+### Documentation
+
+* condense setup wizard and discovery sections in agent/user guides ([5a5e9ec](https://github.com/Waxmard/git-ai/commit/5a5e9ecd2b16e9614d18b50879cab1eb34a02095))
+
+
+### Build System
+
+* add changelog-sections to release-please config ([9bee42f](https://github.com/Waxmard/git-ai/commit/9bee42ff4ee016ada72036297ae1d927dacf3e49))
+
 ## [6.2.2](https://github.com/Waxmard/git-ai/compare/v6.2.1...v6.2.2) (2026-06-04)
 
 
