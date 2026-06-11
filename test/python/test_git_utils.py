@@ -17,6 +17,7 @@ from git_ai import (
 )
 from git_ai._commit_cli import _emit_branch_context
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
+from git_ai._git_branch import base_warnings
 from git_ai._pr_incremental import branch_cache_dir
 
 # ---------------------------------------------------------------------------
@@ -609,3 +610,43 @@ def test_churn_bad_base_returns_empty(tmp_path: Path) -> None:
 
     # An unresolvable base must not raise — churn detection is best-effort.
     assert get_branch_churn_subjects(repo, "no-such-branch") == []
+
+
+def _forked_repo(repo: Path) -> None:
+    """main → dev (1 ahead) → feature (forks from dev)."""
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "dev")
+    _commit_files(repo, {"d.py": "d\n"}, "feat: dev work")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.py": "f\n"}, "feat: feature work")
+
+
+def test_base_warnings_flags_fork_on_named_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _forked_repo(repo)
+
+    # feature forked from dev, not main — the fork warning should fire.
+    warnings = base_warnings(repo, "main", "feature")
+    assert any("forked from 'dev'" in w for w in warnings)
+
+
+def test_base_warnings_no_fork_warning_when_detached(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _forked_repo(repo)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _checkout(repo, head)  # detach HEAD
+
+    # Detached HEAD has no branch — "branch looks forked from X" is nonsensical
+    # and must not fire when current_branch is None.
+    warnings = base_warnings(repo, "main", None)
+    assert not any("forked from" in w for w in warnings)

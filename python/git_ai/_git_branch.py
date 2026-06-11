@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from ._git import (
         _DIFF_FILE_HEADER,
         _git,
-        get_current_branch,
         git_is_ancestor,
         git_ref_exists,
     )
@@ -22,14 +21,12 @@ elif __package__ in (None, ""):
     _git_mod = _importlib.import_module("_git")
     _git = _git_mod._git
     _DIFF_FILE_HEADER = _git_mod._DIFF_FILE_HEADER
-    get_current_branch = _git_mod.get_current_branch
     git_is_ancestor = _git_mod.git_is_ancestor
     git_ref_exists = _git_mod.git_ref_exists
 else:
     from ._git import (
         _DIFF_FILE_HEADER,
         _git,
-        get_current_branch,
         git_is_ancestor,
         git_ref_exists,
     )
@@ -165,11 +162,13 @@ def base_warnings(
             f"shows already-merged work."
         )
 
+    # Fork detection only makes sense on a named branch: detached HEAD has no
+    # branch, so "branch looks forked from 'X'" would be nonsensical (and would
+    # contradict the caller's detached-HEAD warning). The stale-base warnings
+    # above still apply — they describe the diff baseline, not the branch.
     base_ref = origin_ref if has_origin else (base_branch if has_local else None)
-    if base_ref:
-        fork = _nearest_fork_parent(
-            repo_path, current_branch or get_current_branch(repo_path)
-        )
+    if base_ref and current_branch is not None:
+        fork = _nearest_fork_parent(repo_path, current_branch)
         if (
             fork
             and fork.removeprefix("origin/") != base_branch
