@@ -26,13 +26,14 @@ if TYPE_CHECKING:
         git_is_ancestor,
         git_ref_exists,
     )
-    from ._git_branch import get_branch_churn_subjects
+    from ._git_branch import _best_base_ref, get_branch_churn_subjects
     from ._ignore import load_ignore_patterns
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _git = importlib.import_module("_git")
     _git_branch = importlib.import_module("_git_branch")
     check_git_repo = _git.check_git_repo
+    _best_base_ref = _git_branch._best_base_ref
     get_branch_churn_subjects = _git_branch.get_branch_churn_subjects
     get_commit_log = _git.get_commit_log
     get_current_branch = _git.get_current_branch
@@ -60,7 +61,7 @@ else:
         git_is_ancestor,
         git_ref_exists,
     )
-    from ._git_branch import get_branch_churn_subjects
+    from ._git_branch import _best_base_ref, get_branch_churn_subjects
     from ._ignore import load_ignore_patterns
 
 
@@ -169,21 +170,23 @@ def prepare_repo_pr_context(
     ):
         input_base = cached_sha
 
-    if input_base == base_branch and not git_ref_exists(repo_path, base_branch):
-        remote_ref = f"origin/{base_branch}"
-        if git_ref_exists(repo_path, remote_ref):
-            hint = (
-                f" It exists as {remote_ref!r} but is not checked out locally —"
-                f" run `git fetch origin {base_branch}:{base_branch}` or pass"
-                f" `--base {remote_ref}`."
+    # Resolve the base branch to a usable ref, preferring the remote-tracking
+    # copy (origin/<base>) over a local branch that may lag behind the remote.
+    # A stale local base leaks commits already merged upstream into the diff and
+    # commit log, so the PR ends up describing work that is not on this branch.
+    # This mirrors the commit flow, which also resolves bases via _best_base_ref.
+    base_ref = _best_base_ref(repo_path, base_branch)
+    if input_base == base_branch:
+        if base_ref is None:
+            raise RuntimeError(
+                f"base branch {base_branch!r} not found in this repository "
+                f"(looked for {base_branch!r} and 'origin/{base_branch}')."
             )
-        else:
-            hint = ""
-        raise RuntimeError(
-            f"base branch {base_branch!r} not found in this repository.{hint}"
-        )
+        diff_ref = base_ref
+    else:
+        diff_ref = input_base
 
-    commit_log = get_commit_log(repo_path, input_base)
+    commit_log = get_commit_log(repo_path, diff_ref)
     if input_base != base_branch and effective_existing and not commit_log.strip():
         return RepoPrContext(
             base_branch=base_branch,
@@ -210,14 +213,11 @@ def prepare_repo_pr_context(
     patterns = load_ignore_patterns(get_repo_root(repo_path))
     # Detect intra-branch refinements so the draft can fold follow-up
     # fix/refactor/perf/docs commits into the feature they refine. Membership
-    # uses the whole branch (base_branch when resolvable, else the diff base);
-    # classification covers only the commits the draft will list (input_base).
-    churn_base = base_branch
-    if not git_ref_exists(repo_path, churn_base):
-        remote_ref = f"origin/{base_branch}"
-        churn_base = remote_ref if git_ref_exists(repo_path, remote_ref) else input_base
+    # uses the whole branch (the resolved base ref); classification covers only
+    # the commits the draft will list (diff_ref).
+    churn_base = base_ref if base_ref is not None else diff_ref
     churn_subjects = get_branch_churn_subjects(
-        repo_path, churn_base, classify_base=input_base
+        repo_path, churn_base, classify_base=diff_ref
     )
     return RepoPrContext(
         base_branch=base_branch,
@@ -227,10 +227,10 @@ def prepare_repo_pr_context(
         existing_pr=effective_existing,
         commit_log=commit_log,
         diff=get_diff(
-            repo_path, input_base, three_dot=three_dot, exclude_patterns=patterns
+            repo_path, diff_ref, three_dot=three_dot, exclude_patterns=patterns
         ),
         diff_stat=get_diff_stat(
-            repo_path, input_base, three_dot=three_dot, exclude_patterns=patterns
+            repo_path, diff_ref, three_dot=three_dot, exclude_patterns=patterns
         ),
         release_context=get_mr_release_context(repo_path),
         churn_subjects=churn_subjects,

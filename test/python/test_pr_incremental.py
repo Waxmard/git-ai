@@ -338,13 +338,40 @@ def test_prepare_repo_pr_context_raises_on_missing_base_branch(
         prepare_repo_pr_context(repo, base_branch="dev")
 
 
-def test_prepare_repo_pr_context_missing_base_hints_remote_fallback(
+def test_prepare_repo_pr_context_uses_origin_base_when_local_missing(
     tmp_path: Path,
 ) -> None:
     repo = _make_repo(tmp_path)
-    head_sha = _commit(repo, "one.txt", "one\n", "feat: add first")
-    # Simulate a fetched-but-not-checked-out default branch: only origin/dev exists.
-    _git(repo, "update-ref", "refs/remotes/origin/dev", head_sha)
+    base_sha = _git(repo, "rev-parse", "HEAD")
+    # A fetched-but-not-checked-out base: only origin/dev exists. It should be
+    # used directly rather than erroring — PRs target the remote base anyway.
+    _git(repo, "update-ref", "refs/remotes/origin/dev", base_sha)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
 
-    with pytest.raises(RuntimeError, match="origin/dev"):
-        prepare_repo_pr_context(repo, base_branch="dev")
+    ctx = prepare_repo_pr_context(repo, base_branch="dev")
+    assert ctx.no_changes is False
+    assert "feat: add first" in ctx.commit_log
+
+
+def test_prepare_repo_pr_context_prefers_origin_over_stale_local_base(
+    tmp_path: Path,
+) -> None:
+    # Repro: local `main` lags behind `origin/main`. Comparing against the stale
+    # local base leaks the already-merged upstream commit into the PR diff/log.
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", repo], check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    sha_a = _commit(repo, "a.txt", "a\n", "chore: init")
+    sha_b = _commit(repo, "b.txt", "b\n", "feat: upstream work already merged")
+    subprocess.run(["git", "checkout", "-b", "feature/x"], cwd=repo, check=True)
+    _commit(repo, "c.txt", "c\n", "refactor: branch-only work")
+    # origin/main is at B (the real base); local main lags at A.
+    _git(repo, "update-ref", "refs/remotes/origin/main", sha_b)
+    _git(repo, "branch", "-f", "main", sha_a)
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    assert "refactor: branch-only work" in ctx.commit_log
+    assert "upstream work already merged" not in ctx.commit_log
+    assert "c.txt" in ctx.diff
+    assert "b.txt" not in ctx.diff
