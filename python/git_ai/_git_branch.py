@@ -104,23 +104,6 @@ def _candidate_base_names(repo_path: str | Path) -> list[str]:
     return names
 
 
-def _commits_ahead(repo_path: str | Path, base_ref: str) -> int | None:
-    """Count commits on HEAD not reachable from base_ref. None on git failure."""
-    result = subprocess.run(
-        ["git", "rev-list", "--count", f"{base_ref}..HEAD"],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    try:
-        return int(result.stdout.strip())
-    except ValueError:
-        return None
-
-
 def _count_range(repo_path: str | Path, rng: str) -> int | None:
     """Count commits in a ``A..B`` range. None on git failure."""
     result = subprocess.run(
@@ -136,6 +119,11 @@ def _count_range(repo_path: str | Path, rng: str) -> int | None:
         return int(result.stdout.strip())
     except ValueError:
         return None
+
+
+def _commits_ahead(repo_path: str | Path, base_ref: str) -> int | None:
+    """Count commits on HEAD not reachable from base_ref. None on git failure."""
+    return _count_range(repo_path, f"{base_ref}..HEAD")
 
 
 def base_warnings(repo_path: str | Path, base_branch: str) -> list[str]:

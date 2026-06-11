@@ -45,8 +45,9 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
             elif isinstance(value, bool):
                 rendered = "true" if value else "false"
             elif isinstance(value, list):
-                # Commit subjects are single-line, so newline-join is a safe
-                # delimiter the build-input step can split back apart.
+                # Commit subjects and warning strings are single-line, so
+                # newline-join is a safe delimiter the build-input step can
+                # split back apart.
                 rendered = "\n".join(str(item) for item in value)
             else:
                 rendered = str(value)
