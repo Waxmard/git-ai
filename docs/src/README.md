@@ -264,16 +264,25 @@ In the Python library, `get_staged_diff`, `get_diff`, and `get_diff_stat` auto-l
 
 git-ai's commit-type and scope heuristics are tuned for typical app repos. Some repos break those assumptions — a GitOps/deploy repo where *every* change is "user-facing" so the default feat-bias misfires, or a repo with its own commit scopes. Drop a free-form `.git-ai-instructions` file at the repo root to teach git-ai the local rules. Its contents are injected verbatim into the commit **and** PR prompts inside a `<repo_guidance>` block, and the prompts treat it as **authoritative** — when it conflicts with the built-in type heuristics, your guidance wins.
 
-It's just prose; write whatever conventions matter. Example for a GitOps/deploy repo:
+**Lead with the repo's user POV.** The single biggest lever on prefix accuracy is stating *who consumes what this repo produces and what they perceive as its output*. git-ai's prompts already reason from that POV — "user-facing" means visible to that audience — so the same edit can be `feat` in one repo and `chore` in another. Start with a `User POV:` line, then a few type rules expressed in that POV's terms. The examples below are illustrative — write your own repo's POV:
 
 ```
 # .git-ai-instructions
-Scopes: api, web, worker, infra.
+User POV: the running app a deploy serves. "User-facing" = what changes for someone using it.
 
-Everything here is a deployment manifest, so "user-facing" does NOT imply feat:
-- Image tag bumps, env var changes, resource limit tweaks → chore
-- A new service directory or a genuinely new capability → feat
+- Bumping an image tag to ship the same app's next build → chore
+- A brand-new deployed service, or a capability its users gain → feat
 ```
+
+```
+# .git-ai-instructions
+User POV: the report this tool prints. Its wording and layout are the product's UI.
+
+- Rewording or restyling the printed report → style (or fix when correcting wrong output)
+- A new export path that consumers of the report never see → build or ci, not feat
+```
+
+Scopes are optional — only add a `Scopes: a, b, c` line if your repo actually uses Conventional Commits scopes (`feat(a):`). When listed, git-ai applies the most fitting one and never invents an unlisted scope; when omitted, it writes scopeless prefixes as usual.
 
 An absent or empty file is a no-op. In the Python library, `load_repo_instructions(repo_path)` returns the trimmed text (or `None`), and `build_commit_prompt` / `build_mr_prompt` accept a `repo_guidance=` argument.
 
