@@ -28,6 +28,7 @@ from ._git_branch import (
     get_default_branch,
     resolve_commit_base,
 )
+from ._instructions import format_repo_guidance, load_repo_instructions
 from ._pr_incremental import (
     RepoPrContext,
     load_cached_pr,
@@ -45,6 +46,7 @@ __all__ = [
     "derive_diff_stat",
     "format_branch_context",
     "format_commit_log",
+    "format_repo_guidance",
     "get_branch_churn_subjects",
     "get_branch_commit_subjects",
     "get_commit_log",
@@ -59,6 +61,7 @@ __all__ = [
     "get_staged_diff",
     "load_cached_pr",
     "load_cached_pr_sha",
+    "load_repo_instructions",
     "parse_commit_response",
     "parse_mr_response",
     "prepare_repo_pr_context",

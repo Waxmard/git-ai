@@ -64,3 +64,25 @@ teardown() {
   assert_success
   assert_output "$expected"
 }
+
+@test "strip_fences: unwraps subject wrapped in an inline code span" {
+  printf '%s' '`feat: add git-ai-instructions playbook page and root file`' > "$TEST_TMP/input.txt"
+  run strip_fences < "${TEST_TMP}/input.txt"
+  assert_success
+  assert_output "feat: add git-ai-instructions playbook page and root file"
+}
+
+@test "strip_fences: unwraps subject but keeps body code spans" {
+  printf '%s\n' '`feat: add thing`' '' 'Body uses the `foo` helper.' > "$TEST_TMP/input.txt"
+  expected=$(printf '%s\n' 'feat: add thing' '' 'Body uses the `foo` helper.')
+  run strip_fences < "${TEST_TMP}/input.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "strip_fences: leaves ambiguous multi-span line untouched" {
+  printf '%s' '`a` and `b`' > "$TEST_TMP/input.txt"
+  run strip_fences < "${TEST_TMP}/input.txt"
+  assert_success
+  assert_output '`a` and `b`'
+}

@@ -161,6 +161,36 @@ def test_build_commit_prompt_embeds_branch_context() -> None:
     )
 
 
+def test_build_commit_prompt_omits_guidance_by_default() -> None:
+    _, user = build_commit_prompt(_SAMPLE_DIFF)
+    assert "<repo_guidance>" not in user
+
+
+def test_build_commit_prompt_embeds_repo_guidance_first() -> None:
+    _, user = build_commit_prompt(
+        _SAMPLE_DIFF, repo_guidance="Scopes: api, web. tag bump = chore."
+    )
+    assert (
+        "<repo_guidance>\nScopes: api, web. tag bump = chore.\n</repo_guidance>" in user
+    )
+    # Guidance leads, ahead of release context and the diff.
+    assert (
+        user.index("<repo_guidance>")
+        < user.index("<release_context>")
+        < user.index("<diff>")
+    )
+
+
+def test_build_mr_prompt_embeds_repo_guidance() -> None:
+    _, user = build_mr_prompt(
+        diff=_SAMPLE_DIFF,
+        commit_log="feat: a\nfix: b",
+        repo_guidance="tag bump = chore.",
+    )
+    assert "<repo_guidance>\ntag bump = chore.\n</repo_guidance>" in user
+    assert user.index("<repo_guidance>") < user.index("<release_context>")
+
+
 def test_build_commit_prompt_emits_only_non_empty_branch_tags() -> None:
     _, user = build_commit_prompt(
         _SAMPLE_DIFF, branch_name="dev-branch", branch_commits="  ", branch_diffstat=""
@@ -312,3 +342,32 @@ def test_parse_mr_response_strips_fences() -> None:
 def test_parse_mr_response_rejects_empty() -> None:
     with pytest.raises(RuntimeError, match="empty response"):
         parse_mr_response("")
+
+
+def test_parse_mr_response_extracts_sentinels() -> None:
+    raw = "===TITLE===\nfeat: title\n===BODY===\n### Features\n- x"
+    assert parse_mr_response(raw) == "feat: title\n\n### Features\n- x"
+
+
+def test_parse_mr_response_discards_preamble_outside_markers() -> None:
+    raw = (
+        "That title is 78 chars. Let me shorten.\n"
+        "Actually, output only title and body.\n"
+        "===TITLE===\nfeat: title\n===BODY===\n### Features\n- x"
+    )
+    assert parse_mr_response(raw) == "feat: title\n\n### Features\n- x"
+
+
+def test_parse_mr_response_extracts_sentinels_inside_fence() -> None:
+    raw = "```\n===TITLE===\nfeat: title\n===BODY===\n- x\n```"
+    assert parse_mr_response(raw) == "feat: title\n\n- x"
+
+
+def test_parse_mr_response_falls_back_without_markers() -> None:
+    raw = "feat: title\n\n### Features\n- x"
+    assert parse_mr_response(raw) == "feat: title\n\n### Features\n- x"
+
+
+def test_parse_mr_response_falls_back_on_missing_body_marker() -> None:
+    raw = "===TITLE===\nfeat: title\nno body marker here"
+    assert parse_mr_response(raw) == "===TITLE===\nfeat: title\nno body marker here"
