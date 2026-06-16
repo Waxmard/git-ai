@@ -282,8 +282,6 @@ User POV: the report this tool prints. Its wording and layout are the product's 
 - A new export path that consumers of the report never see → build or ci, not feat
 ```
 
-Scopes are optional — only add a `Scopes: a, b, c` line if your repo actually uses Conventional Commits scopes (`feat(a):`). When listed, git-ai applies the most fitting one and never invents an unlisted scope; when omitted, it writes scopeless prefixes as usual.
-
 An absent or empty file is a no-op. In the Python library, `load_repo_instructions(repo_path)` returns the trimmed text (or `None`), and `build_commit_prompt` / `build_mr_prompt` accept a `repo_guidance=` argument.
 
 ## Manual configuration (advanced)
