@@ -100,6 +100,7 @@ def _cmd_build_input(args: argparse.Namespace) -> int:
         release_context=_read_optional(args.release_context_file),
         existing_pr=existing_pr,
         churn_subjects=_read_subjects(args.churn_subjects_file),
+        repo_guidance=_read_optional(args.repo_instructions_file),
     )
     sys.stdout.write(json.dumps({"prompt_name": prompt_name, "user_input": user_input}))
     return 0
@@ -133,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--release-context-file")
     build.add_argument("--existing-pr-file")
     build.add_argument("--churn-subjects-file")
+    build.add_argument("--repo-instructions-file")
     build.set_defaults(func=_cmd_build_input)
 
     args = parser.parse_args(argv)

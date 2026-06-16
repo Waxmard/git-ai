@@ -260,6 +260,23 @@ If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`
 
 In the Python library, `get_staged_diff`, `get_diff`, and `get_diff_stat` auto-load `.git-ai-ignore` and apply built-in lockfile defaults when `exclude_patterns` is omitted. Pass `exclude_patterns=[]` to opt out of all filtering.
 
+## Repo-specific conventions (`.git-ai-instructions`)
+
+git-ai's commit-type and scope heuristics are tuned for typical app repos. Some repos break those assumptions — a GitOps/deploy repo where *every* change is "user-facing" so the default feat-bias misfires, or a repo with its own commit scopes. Drop a free-form `.git-ai-instructions` file at the repo root to teach git-ai the local rules. Its contents are injected verbatim into the commit **and** PR prompts inside a `<repo_guidance>` block, and the prompts treat it as **authoritative** — when it conflicts with the built-in type heuristics, your guidance wins.
+
+It's just prose; write whatever conventions matter. Example for a GitOps/deploy repo:
+
+```
+# .git-ai-instructions
+Scopes: api, web, worker, infra.
+
+Everything here is a deployment manifest, so "user-facing" does NOT imply feat:
+- Image tag bumps, env var changes, resource limit tweaks → chore
+- A new service directory or a genuinely new capability → feat
+```
+
+An absent or empty file is a no-op. In the Python library, `load_repo_instructions(repo_path)` returns the trimmed text (or `None`), and `build_commit_prompt` / `build_mr_prompt` accept a `repo_guidance=` argument.
+
 ## Manual configuration (advanced)
 
 Everything below is handled for you by `git-ai setup`. Reach for it only when you want to script config, edit it by hand, or set up an advanced case the wizard leaves alone (service accounts, multi-project Vertex profiles).

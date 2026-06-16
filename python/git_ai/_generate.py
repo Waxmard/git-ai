@@ -18,6 +18,7 @@ from ._git import (
     largest_diff_files,
 )
 from ._git_branch import format_branch_context
+from ._instructions import format_repo_guidance
 from ._pr_prompt_build import build_mr_prompt_input
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -73,6 +74,7 @@ def build_commit_prompt(
     branch_name: str | None = None,
     branch_commits: str | None = None,
     branch_diffstat: str | None = None,
+    repo_guidance: str | None = None,
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for commit-message generation.
 
@@ -85,6 +87,9 @@ def build_commit_prompt(
         branch_commits: Newline-separated subjects of the commits already on
             this branch since its base (most recent first).
         branch_diffstat: ``git diff --stat`` of the whole branch vs its base.
+        repo_guidance: Free-form repo-local conventions (commit scopes,
+            type-classification overrides) from ``.git-ai-instructions``.
+            Surfaced as an authoritative ``<repo_guidance>`` block.
 
     The branch_* values describe the branch's overall purpose; the prompt uses
     them only to disambiguate the prefix when the staged diff alone is
@@ -106,7 +111,11 @@ def build_commit_prompt(
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
 
-    parts = [f"<release_context>{release_context}</release_context>"]
+    parts = []
+    guidance_block = format_repo_guidance(repo_guidance)
+    if guidance_block:
+        parts.append(guidance_block)
+    parts.append(f"<release_context>{release_context}</release_context>")
     branch_block = format_branch_context(
         branch_name=branch_name,
         branch_commits=branch_commits,
@@ -127,6 +136,7 @@ def build_mr_prompt(
     release_context: str | None = None,
     existing_pr: str | None = None,
     churn_subjects: set[str] | None = None,
+    repo_guidance: str | None = None,
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for MR/PR generation.
 
@@ -145,6 +155,8 @@ def build_mr_prompt(
         churn_subjects: Subjects of commits that only refine code introduced
             earlier in this same branch. Folded in the two-pass draft instead
             of emitted as standalone sections. Optional.
+        repo_guidance: Free-form repo-local conventions from
+            ``.git-ai-instructions``, surfaced as a ``<repo_guidance>`` block.
 
     Returns:
         ``(system_prompt, user_input)`` — feed both to your LLM, then run the
@@ -169,6 +181,7 @@ def build_mr_prompt(
         release_context=release_context,
         existing_pr=existing_pr,
         churn_subjects=churn_subjects,
+        repo_guidance=repo_guidance,
     )
     return _load_prompt(prompt_name), user_input
 

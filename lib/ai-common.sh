@@ -61,6 +61,23 @@ load_git_ai_ignore() {
   done
 }
 
+# load_git_ai_instructions <repo_root>
+# Print the trimmed contents of the repo-root .git-ai-instructions file, or
+# nothing when it is absent/empty. Free-form repo-local conventions (commit
+# scopes, type-classification overrides) surfaced to the model as authoritative.
+load_git_ai_instructions() {
+  local repo_root="$1"
+  local instr_file="${repo_root}/.git-ai-instructions"
+  [[ -r "$instr_file" ]] || return 0
+  local content
+  content=$(<"$instr_file")
+  # Trim leading/trailing whitespace; emit nothing when effectively empty.
+  content="${content#"${content%%[![:space:]]*}"}"
+  content="${content%"${content##*[![:space:]]}"}"
+  [[ -n "$content" ]] && printf '%s\n' "$content"
+  return 0
+}
+
 # build_pathspec_excludes [patterns...]
 # Print repo-root pathspec args for `git diff` (one per line), or nothing
 # when no patterns are given. Caller splats the result into the git command.

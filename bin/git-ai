@@ -158,6 +158,9 @@ cmd_commit() {
   local REPO_ROOT
   REPO_ROOT=$(git rev-parse --show-toplevel) || die "failed to determine repo root"
 
+  local REPO_GUIDANCE
+  REPO_GUIDANCE=$(load_git_ai_instructions "$REPO_ROOT")
+
   local -a IGNORE_PATTERNS=() PATHSPEC=()
   local _p
   while IFS= read -r _p; do
@@ -194,7 +197,11 @@ cmd_commit() {
   [[ -n "$BASE" ]] && bc_cmd+=(--base "$BASE")
   BRANCH_CONTEXT=$("${bc_cmd[@]}" 2>/dev/null) || BRANCH_CONTEXT=""
 
-  INPUT="<release_context>${RELEASE_CONTEXT}</release_context>"
+  INPUT=""
+  if [[ -n "$REPO_GUIDANCE" ]]; then
+    INPUT+="<repo_guidance>"$'\n'"${REPO_GUIDANCE}"$'\n'"</repo_guidance>"$'\n\n'
+  fi
+  INPUT+="<release_context>${RELEASE_CONTEXT}</release_context>"
   if [[ -n "$BRANCH_CONTEXT" ]]; then
     INPUT+=$'\n\n'"${BRANCH_CONTEXT}"
   fi
@@ -333,7 +340,7 @@ cmd_pr() {
 
   check_diff_size_or_die "$DIFF"
 
-  local BUILD_FILE PROMPT_NAME PROMPT INPUT DIFF_FILE LOG_FILE STAT_FILE RELEASE_FILE EXISTING_FILE CHURN_FILE
+  local BUILD_FILE PROMPT_NAME PROMPT INPUT DIFF_FILE LOG_FILE STAT_FILE RELEASE_FILE EXISTING_FILE CHURN_FILE INSTR_FILE
   BUILD_FILE=$(mktemp) || die "failed to allocate temp file"
   DIFF_FILE=$(mktemp) || die "failed to allocate temp file"
   LOG_FILE=$(mktemp) || die "failed to allocate temp file"
@@ -341,20 +348,25 @@ cmd_pr() {
   RELEASE_FILE=$(mktemp) || die "failed to allocate temp file"
   EXISTING_FILE=$(mktemp) || die "failed to allocate temp file"
   CHURN_FILE=$(mktemp) || die "failed to allocate temp file"
+  INSTR_FILE=$(mktemp) || die "failed to allocate temp file"
   printf '%s' "$DIFF" >"$DIFF_FILE"
   printf '%s' "$COMMIT_LOG" >"$LOG_FILE"
   printf '%s' "$DIFF_STAT" >"$STAT_FILE"
   printf '%s' "$RELEASE_CONTEXT" >"$RELEASE_FILE"
   printf '%s' "$EXISTING_PR" >"$EXISTING_FILE"
   printf '%s' "$CHURN_SUBJECTS" >"$CHURN_FILE"
+  local PR_REPO_ROOT
+  PR_REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PR_REPO_ROOT="."
+  load_git_ai_instructions "$PR_REPO_ROOT" >"$INSTR_FILE"
   "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_repo_cli.py" build-input \
     --diff-file "$DIFF_FILE" \
     --commit-log-file "$LOG_FILE" \
     --diff-stat-file "$STAT_FILE" \
     --release-context-file "$RELEASE_FILE" \
     --existing-pr-file "$EXISTING_FILE" \
-    --churn-subjects-file "$CHURN_FILE" >"$BUILD_FILE" || {
-      rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE"
+    --churn-subjects-file "$CHURN_FILE" \
+    --repo-instructions-file "$INSTR_FILE" >"$BUILD_FILE" || {
+      rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
       die "failed to build PR prompt input"
     }
   PROMPT_NAME=$("${GIT_AI_PYTHON:-python3}" - <<'PY' "$BUILD_FILE"
@@ -369,7 +381,7 @@ from pathlib import Path
 print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["user_input"])
 PY
 )
-  rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE"
+  rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
 
   # "verbatim": the branch is a single Conventional-Commits commit, so its
   # message already IS the best PR summary — use it directly and skip the LLM.
