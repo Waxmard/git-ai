@@ -18,6 +18,7 @@ from ._git import (
     largest_diff_files,
 )
 from ._git_branch import format_branch_context
+from ._instructions import format_repo_guidance
 from ._pr_prompt_build import build_mr_prompt_input
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -63,7 +64,16 @@ def strip_fences(text: str) -> str:
     """Remove markdown code fences and trim whitespace."""
     text = re.sub(r"^[ \t]*```.*\n", "", text, flags=re.MULTILINE)
     text = re.sub(r"^[ \t]*`+[ \t]*$\n?", "", text, flags=re.MULTILINE)
-    return text.strip()
+    text = text.strip()
+    # Unwrap a subject line the model wrapped in an inline code span, e.g.
+    # "`feat: add x`" -> "feat: add x". Only when the whole first line is a
+    # single span (no internal backticks), so code spans in a body survive.
+    lines = text.split("\n")
+    if lines:
+        m = re.fullmatch(r"[ \t]*(`+)([^`]+)\1[ \t]*", lines[0])
+        if m:
+            lines[0] = m.group(2).strip()
+    return "\n".join(lines).strip()
 
 
 def build_commit_prompt(
@@ -73,6 +83,7 @@ def build_commit_prompt(
     branch_name: str | None = None,
     branch_commits: str | None = None,
     branch_diffstat: str | None = None,
+    repo_guidance: str | None = None,
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for commit-message generation.
 
@@ -85,6 +96,9 @@ def build_commit_prompt(
         branch_commits: Newline-separated subjects of the commits already on
             this branch since its base (most recent first).
         branch_diffstat: ``git diff --stat`` of the whole branch vs its base.
+        repo_guidance: Free-form repo-local conventions (commit scopes,
+            type-classification overrides) from ``.git-ai-instructions``.
+            Surfaced as an authoritative ``<repo_guidance>`` block.
 
     The branch_* values describe the branch's overall purpose; the prompt uses
     them only to disambiguate the prefix when the staged diff alone is
@@ -106,7 +120,11 @@ def build_commit_prompt(
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
 
-    parts = [f"<release_context>{release_context}</release_context>"]
+    parts = []
+    guidance_block = format_repo_guidance(repo_guidance)
+    if guidance_block:
+        parts.append(guidance_block)
+    parts.append(f"<release_context>{release_context}</release_context>")
     branch_block = format_branch_context(
         branch_name=branch_name,
         branch_commits=branch_commits,
@@ -127,6 +145,7 @@ def build_mr_prompt(
     release_context: str | None = None,
     existing_pr: str | None = None,
     churn_subjects: set[str] | None = None,
+    repo_guidance: str | None = None,
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for MR/PR generation.
 
@@ -145,6 +164,8 @@ def build_mr_prompt(
         churn_subjects: Subjects of commits that only refine code introduced
             earlier in this same branch. Folded in the two-pass draft instead
             of emitted as standalone sections. Optional.
+        repo_guidance: Free-form repo-local conventions from
+            ``.git-ai-instructions``, surfaced as a ``<repo_guidance>`` block.
 
     Returns:
         ``(system_prompt, user_input)`` — feed both to your LLM, then run the
@@ -169,6 +190,7 @@ def build_mr_prompt(
         release_context=release_context,
         existing_pr=existing_pr,
         churn_subjects=churn_subjects,
+        repo_guidance=repo_guidance,
     )
     return _load_prompt(prompt_name), user_input
 
@@ -178,6 +200,38 @@ def _parse_response(raw: str) -> str:
     if not text:
         raise RuntimeError("LLM returned an empty response")
     return text
+
+
+_PR_TITLE_MARKER = "===TITLE==="
+_PR_BODY_MARKER = "===BODY==="
+
+
+def _marker_index(lines: list[str], marker: str) -> int:
+    for i, line in enumerate(lines):
+        if line.strip() == marker:
+            return i
+    return -1
+
+
+def _extract_pr_sections(text: str) -> str:
+    """Slice title/body out of sentinel-delimited PR output.
+
+    The PR prompts wrap output in ``===TITLE===`` / ``===BODY===`` line
+    markers so any preamble, reasoning, or char-count chatter the model
+    emits outside the markers is discarded. Returns ``title\\n\\nbody``.
+    Falls back to ``text`` unchanged when the markers are absent or
+    malformed (older or non-compliant models).
+    """
+    lines = text.split("\n")
+    t_idx = _marker_index(lines, _PR_TITLE_MARKER)
+    b_idx = _marker_index(lines, _PR_BODY_MARKER)
+    if t_idx < 0 or b_idx < 0 or t_idx >= b_idx:
+        return text
+    title = "\n".join(lines[t_idx + 1 : b_idx]).strip()
+    if not title:
+        return text
+    body = "\n".join(lines[b_idx + 1 :]).strip()
+    return f"{title}\n\n{body}" if body else title
 
 
 def parse_commit_response(raw: str) -> str:
@@ -190,9 +244,13 @@ def parse_commit_response(raw: str) -> str:
 
 
 def parse_mr_response(raw: str) -> str:
-    """Strip markdown fences from an MR/PR response and validate non-empty.
+    """Parse an MR/PR response: strip fences, slice sentinel sections, validate.
+
+    Unwraps the ``===TITLE===`` / ``===BODY===`` markers the PR prompts
+    emit (discarding any out-of-band preamble); falls back to the
+    fence-stripped text when the markers are absent.
 
     Raises:
         RuntimeError: if the cleaned response is empty.
     """
-    return _parse_response(raw)
+    return _extract_pr_sections(_parse_response(raw))

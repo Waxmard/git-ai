@@ -13,14 +13,17 @@ if TYPE_CHECKING:
         count_conventional_commits,
         derive_diff_stat,
     )
+    from ._instructions import format_repo_guidance
     from ._pr_draft import analyze
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _git = importlib.import_module("_git")
+    _instructions = importlib.import_module("_instructions")
     _pr_draft = importlib.import_module("_pr_draft")
     DEFAULT_RELEASE_CONTEXT = _git.DEFAULT_RELEASE_CONTEXT
     count_conventional_commits = _git.count_conventional_commits
     derive_diff_stat = _git.derive_diff_stat
+    format_repo_guidance = _instructions.format_repo_guidance
     analyze = _pr_draft.analyze
 else:
     from ._git import (
@@ -28,6 +31,7 @@ else:
         count_conventional_commits,
         derive_diff_stat,
     )
+    from ._instructions import format_repo_guidance
     from ._pr_draft import analyze
 
 
@@ -39,12 +43,15 @@ def build_mr_prompt_input(
     release_context: str | None = None,
     existing_pr: str | None = None,
     churn_subjects: set[str] | None = None,
+    repo_guidance: str | None = None,
 ) -> tuple[str, str]:
     """Return (prompt_filename, user_input) for MR generation.
 
     ``churn_subjects`` (commit subjects that only refine code introduced earlier
     in the same branch) is forwarded to the two-pass draft so those entries are
-    folded rather than emitted as standalone sections.
+    folded rather than emitted as standalone sections. ``repo_guidance``
+    (free-form ``.git-ai-instructions`` contents) is surfaced as an
+    authoritative ``<repo_guidance>`` block at the top of the input.
     """
     if not diff.strip():
         raise ValueError("diff is empty")
@@ -94,6 +101,9 @@ def build_mr_prompt_input(
             )
 
     user_input = f"<release_context>{release_context}</release_context>\n\n{user_input}"
+    guidance_block = format_repo_guidance(repo_guidance)
+    if guidance_block:
+        user_input = f"{guidance_block}\n\n{user_input}"
     return prompt_name, user_input
 
 

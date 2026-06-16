@@ -262,6 +262,30 @@ If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`
 
 In the Python library, `get_staged_diff`, `get_diff`, and `get_diff_stat` auto-load `.git-ai-ignore` and apply built-in lockfile defaults when `exclude_patterns` is omitted. Pass `exclude_patterns=[]` to opt out of all filtering.
 
+## Repo-specific conventions (`.git-ai-instructions`)
+
+git-ai's commit-type and scope heuristics are tuned for typical app repos. Some repos break those assumptions — a GitOps/deploy repo where *every* change is "user-facing" so the default feat-bias misfires, or a repo with its own commit scopes. Drop a free-form `.git-ai-instructions` file at the repo root to teach git-ai the local rules. Its contents are injected verbatim into the commit **and** PR prompts inside a `<repo_guidance>` block, and the prompts treat it as **authoritative** — when it conflicts with the built-in type heuristics, your guidance wins.
+
+**Lead with the repo's user POV.** The single biggest lever on prefix accuracy is stating *who consumes what this repo produces and what they perceive as its output*. git-ai's prompts already reason from that POV — "user-facing" means visible to that audience — so the same edit can be `feat` in one repo and `chore` in another. Start with a `User POV:` line, then a few type rules expressed in that POV's terms. The examples below are illustrative — write your own repo's POV:
+
+```
+# .git-ai-instructions
+User POV: the running app a deploy serves. "User-facing" = what changes for someone using it.
+
+- Bumping an image tag to ship the same app's next build → chore
+- A brand-new deployed service, or a capability its users gain → feat
+```
+
+```
+# .git-ai-instructions
+User POV: the report this tool prints. Its wording and layout are the product's UI.
+
+- Rewording or restyling the printed report → style (or fix when correcting wrong output)
+- A new export path that consumers of the report never see → build or ci, not feat
+```
+
+An absent or empty file is a no-op. In the Python library, `load_repo_instructions(repo_path)` returns the trimmed text (or `None`), and `build_commit_prompt` / `build_mr_prompt` accept a `repo_guidance=` argument.
+
 ## Manual configuration (advanced)
 
 Everything below is handled for you by `git-ai setup`. Reach for it only when you want to script config, edit it by hand, or set up an advanced case the wizard leaves alone (service accounts, multi-project Vertex profiles).
