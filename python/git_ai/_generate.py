@@ -64,7 +64,16 @@ def strip_fences(text: str) -> str:
     """Remove markdown code fences and trim whitespace."""
     text = re.sub(r"^[ \t]*```.*\n", "", text, flags=re.MULTILINE)
     text = re.sub(r"^[ \t]*`+[ \t]*$\n?", "", text, flags=re.MULTILINE)
-    return text.strip()
+    text = text.strip()
+    # Unwrap a subject line the model wrapped in an inline code span, e.g.
+    # "`feat: add x`" -> "feat: add x". Only when the whole first line is a
+    # single span (no internal backticks), so code spans in a body survive.
+    lines = text.split("\n")
+    if lines:
+        m = re.fullmatch(r"[ \t]*(`+)([^`]+)\1[ \t]*", lines[0])
+        if m:
+            lines[0] = m.group(2).strip()
+    return "\n".join(lines).strip()
 
 
 def build_commit_prompt(
