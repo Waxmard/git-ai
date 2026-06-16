@@ -27,6 +27,12 @@ def test_load_strips_surrounding_whitespace(tmp_path: Path) -> None:
     assert load_repo_instructions(tmp_path) == "Scopes: a, b.\ntag bump = chore."
 
 
+def test_load_returns_none_when_non_utf8(tmp_path: Path) -> None:
+    # A smart-quote in latin-1 (0x92) is invalid UTF-8; must not crash.
+    (tmp_path / INSTRUCTIONS_FILENAME).write_bytes(b"Scopes: don\x92t crash.")
+    assert load_repo_instructions(tmp_path) is None
+
+
 def test_format_wraps_in_block() -> None:
     assert (
         format_repo_guidance("tag bump = chore.")
