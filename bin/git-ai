@@ -410,6 +410,7 @@ PY
 
   local OUTPUT
   OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL") || exit $?
+  OUTPUT=$(extract_pr_output <<<"$OUTPUT")
   save_last_message pr "$OUTPUT"
   if [[ -n "$CURRENT_BRANCH" ]]; then
     save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" ||

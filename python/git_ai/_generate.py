@@ -202,6 +202,38 @@ def _parse_response(raw: str) -> str:
     return text
 
 
+_PR_TITLE_MARKER = "===TITLE==="
+_PR_BODY_MARKER = "===BODY==="
+
+
+def _marker_index(lines: list[str], marker: str) -> int:
+    for i, line in enumerate(lines):
+        if line.strip() == marker:
+            return i
+    return -1
+
+
+def _extract_pr_sections(text: str) -> str:
+    """Slice title/body out of sentinel-delimited PR output.
+
+    The PR prompts wrap output in ``===TITLE===`` / ``===BODY===`` line
+    markers so any preamble, reasoning, or char-count chatter the model
+    emits outside the markers is discarded. Returns ``title\\n\\nbody``.
+    Falls back to ``text`` unchanged when the markers are absent or
+    malformed (older or non-compliant models).
+    """
+    lines = text.split("\n")
+    t_idx = _marker_index(lines, _PR_TITLE_MARKER)
+    b_idx = _marker_index(lines, _PR_BODY_MARKER)
+    if t_idx < 0 or b_idx < 0 or t_idx >= b_idx:
+        return text
+    title = "\n".join(lines[t_idx + 1 : b_idx]).strip()
+    if not title:
+        return text
+    body = "\n".join(lines[b_idx + 1 :]).strip()
+    return f"{title}\n\n{body}" if body else title
+
+
 def parse_commit_response(raw: str) -> str:
     """Strip markdown fences from a commit-message response and validate non-empty.
 
@@ -212,9 +244,13 @@ def parse_commit_response(raw: str) -> str:
 
 
 def parse_mr_response(raw: str) -> str:
-    """Strip markdown fences from an MR/PR response and validate non-empty.
+    """Parse an MR/PR response: strip fences, slice sentinel sections, validate.
+
+    Unwraps the ``===TITLE===`` / ``===BODY===`` markers the PR prompts
+    emit (discarding any out-of-band preamble); falls back to the
+    fence-stripped text when the markers are absent.
 
     Raises:
         RuntimeError: if the cleaned response is empty.
     """
-    return _parse_response(raw)
+    return _extract_pr_sections(_parse_response(raw))

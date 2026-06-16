@@ -342,3 +342,32 @@ def test_parse_mr_response_strips_fences() -> None:
 def test_parse_mr_response_rejects_empty() -> None:
     with pytest.raises(RuntimeError, match="empty response"):
         parse_mr_response("")
+
+
+def test_parse_mr_response_extracts_sentinels() -> None:
+    raw = "===TITLE===\nfeat: title\n===BODY===\n### Features\n- x"
+    assert parse_mr_response(raw) == "feat: title\n\n### Features\n- x"
+
+
+def test_parse_mr_response_discards_preamble_outside_markers() -> None:
+    raw = (
+        "That title is 78 chars. Let me shorten.\n"
+        "Actually, output only title and body.\n"
+        "===TITLE===\nfeat: title\n===BODY===\n### Features\n- x"
+    )
+    assert parse_mr_response(raw) == "feat: title\n\n### Features\n- x"
+
+
+def test_parse_mr_response_extracts_sentinels_inside_fence() -> None:
+    raw = "```\n===TITLE===\nfeat: title\n===BODY===\n- x\n```"
+    assert parse_mr_response(raw) == "feat: title\n\n- x"
+
+
+def test_parse_mr_response_falls_back_without_markers() -> None:
+    raw = "feat: title\n\n### Features\n- x"
+    assert parse_mr_response(raw) == "feat: title\n\n### Features\n- x"
+
+
+def test_parse_mr_response_falls_back_on_missing_body_marker() -> None:
+    raw = "===TITLE===\nfeat: title\nno body marker here"
+    assert parse_mr_response(raw) == "===TITLE===\nfeat: title\nno body marker here"

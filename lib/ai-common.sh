@@ -139,6 +139,27 @@ strip_fences() {
   '
 }
 
+# Slice title/body out of sentinel-delimited PR output read from stdin. The PR
+# prompts wrap their answer in ===TITLE=== / ===BODY=== line markers so any
+# preamble, reasoning, or char-count chatter outside the markers is discarded;
+# prints "title\n\nbody". Passes the input through unchanged when the markers
+# are absent or malformed (older or non-compliant models). Mirrors
+# python/git_ai/_generate.py:_extract_pr_sections.
+extract_pr_output() {
+  perl -0777 -ne '
+    if (/^===TITLE===[ \t]*\n(.*?)\n===BODY===[ \t]*\n(.*)\z/ms) {
+      my ($t, $b) = ($1, $2);
+      $t =~ s/\A\s+//; $t =~ s/\s+\z//;
+      $b =~ s/\A\s+//; $b =~ s/\s+\z//;
+      if (length $t) {
+        print length($b) ? "$t\n\n$b\n" : "$t\n";
+        next;
+      }
+    }
+    print;
+  '
+}
+
 # Print $1 with leading/trailing whitespace stripped.
 _trim() {
   local s="$1"
