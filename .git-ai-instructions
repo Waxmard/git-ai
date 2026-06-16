@@ -1,0 +1,14 @@
+User POV: developers running git-ai from the CLI (git-ai commit / pr / setup). What they
+perceive as the product is the generated commit & PR text, the commands and flags, the
+setup wizard, and which providers/models work. "User-facing" means a change to any of that.
+
+This repo writes scopeless Conventional Commits — do not add a scope.
+
+Type rules from this POV:
+- A new command, flag, provider, or setup capability → feat
+- Editing a prompt (python/git_ai/prompts/*.txt) or a classification rule so the generated
+  commit/PR output changes → feat or fix. The prompts ARE product behavior, never docs/chore.
+- Restructuring lib/ or python/ internals with no change to CLI or generated output → refactor
+- BATS or pytest changes only → test
+- shellcheck, lefthook, line-limit, release tooling, or CI workflows → ci or build
+- docs/src templates and the generated guides (README/AGENTS/CLAUDE/CONTRIBUTING) → docs

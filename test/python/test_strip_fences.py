@@ -38,3 +38,20 @@ def test_no_fence_multiline_preserved() -> None:
 def test_removes_various_language_tags(lang: str) -> None:
     result = strip_fences(f"```{lang}\ncontent\n```")
     assert result == "content"
+
+
+def test_unwraps_inline_code_span_subject() -> None:
+    assert (
+        strip_fences("`feat: add git-ai-instructions playbook page and root file`")
+        == "feat: add git-ai-instructions playbook page and root file"
+    )
+
+
+def test_unwraps_subject_but_keeps_body_code_spans() -> None:
+    result = strip_fences("`feat: add thing`\n\nBody uses the `foo` helper and `bar`.")
+    assert result == "feat: add thing\n\nBody uses the `foo` helper and `bar`."
+
+
+def test_does_not_unwrap_subject_with_internal_spans() -> None:
+    # Ambiguous line (two spans) — not a clean wrapper, leave untouched.
+    assert strip_fences("`a` and `b`") == "`a` and `b`"

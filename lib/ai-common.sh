@@ -61,6 +61,23 @@ load_git_ai_ignore() {
   done
 }
 
+# load_git_ai_instructions <repo_root>
+# Print the trimmed contents of the repo-root .git-ai-instructions file, or
+# nothing when it is absent/empty. Free-form repo-local conventions (commit
+# scopes, type-classification overrides) surfaced to the model as authoritative.
+load_git_ai_instructions() {
+  local repo_root="$1"
+  local instr_file="${repo_root}/.git-ai-instructions"
+  [[ -r "$instr_file" ]] || return 0
+  local content
+  content=$(<"$instr_file")
+  # Trim leading/trailing whitespace; emit nothing when effectively empty.
+  content="${content#"${content%%[![:space:]]*}"}"
+  content="${content%"${content##*[![:space:]]}"}"
+  [[ -n "$content" ]] && printf '%s\n' "$content"
+  return 0
+}
+
 # build_pathspec_excludes [patterns...]
 # Print repo-root pathspec args for `git diff` (one per line), or nothing
 # when no patterns are given. Caller splats the result into the git command.
@@ -117,7 +134,29 @@ strip_fences() {
     s/^[ \t]*```.*\n//mg;
     s/^[ \t]*`+[ \t]*\n//mg;
     s/\A(?:[ \t]*\n)+//;
+    s/\A[ \t]*(`+)([^`\n]+)\1[ \t]*$/$2/m;
     s/(?:\n[ \t]*)+\z/\n/s;
+  '
+}
+
+# Slice title/body out of sentinel-delimited PR output read from stdin. The PR
+# prompts wrap their answer in ===TITLE=== / ===BODY=== line markers so any
+# preamble, reasoning, or char-count chatter outside the markers is discarded;
+# prints "title\n\nbody". Passes the input through unchanged when the markers
+# are absent or malformed (older or non-compliant models). Mirrors
+# python/git_ai/_generate.py:_extract_pr_sections.
+extract_pr_output() {
+  perl -0777 -ne '
+    if (/^===TITLE===[ \t]*\n(.*?)\n===BODY===[ \t]*\n(.*)\z/ms) {
+      my ($t, $b) = ($1, $2);
+      $t =~ s/\A\s+//; $t =~ s/\s+\z//;
+      $b =~ s/\A\s+//; $b =~ s/\s+\z//;
+      if (length $t) {
+        print length($b) ? "$t\n\n$b\n" : "$t\n";
+        next;
+      }
+    }
+    print;
   '
 }
 
