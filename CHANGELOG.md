@@ -1,5 +1,22 @@
 # Changelog
 
+## [6.4.0](https://github.com/Waxmard/git-ai/compare/v6.3.0...v6.4.0) (2026-06-17)
+
+
+### Features
+
+* support repo-local commit/PR conventions via `.git-ai-instructions` ([#81](https://github.com/Waxmard/git-ai/issues/81)) ([cc24335](https://github.com/Waxmard/git-ai/commit/cc243357edcb1679f4eea39862b8666181cf0e5c))
+
+
+### Bug Fixes
+
+* surface lockfile bumps in PR diff stat for dependency-only branches ([#83](https://github.com/Waxmard/git-ai/issues/83)) ([f974da3](https://github.com/Waxmard/git-ai/commit/f974da37b618912fb7f32f591fccc43e5d5b9a5a))
+
+
+### Miscellaneous Chores
+
+* add MIT license ([128f198](https://github.com/Waxmard/git-ai/commit/128f198253ced68d254929bac56985a98584dfea))
+
 ## [6.3.0](https://github.com/Waxmard/git-ai/compare/v6.2.2...v6.3.0) (2026-06-11)
 
 
