@@ -231,7 +231,14 @@ def prepare_repo_pr_context(
         )
 
     three_dot = input_base == base_branch
-    patterns = load_ignore_patterns(get_repo_root(repo_path))
+    repo_root = get_repo_root(repo_path)
+    patterns = load_ignore_patterns(repo_root)
+    # The diff *stat* keeps lockfiles (built-in defaults) so a lockfile-only
+    # dependency bump — common when draining renovate/dependabot branches into a
+    # feature branch — still shows up as a one-line stat the model can describe;
+    # the full diff above strips them as noise. User `.git-ai-ignore` entries are
+    # still honoured for both.
+    stat_patterns = load_ignore_patterns(repo_root, include_defaults=False)
     # Detect intra-branch refinements so the draft can fold follow-up
     # fix/refactor/perf/docs commits into the feature they refine. Membership
     # uses the whole branch (the resolved base ref); classification covers only
@@ -258,7 +265,7 @@ def prepare_repo_pr_context(
             repo_path, diff_ref, three_dot=three_dot, exclude_patterns=patterns
         ),
         diff_stat=get_diff_stat(
-            repo_path, diff_ref, three_dot=three_dot, exclude_patterns=patterns
+            repo_path, diff_ref, three_dot=three_dot, exclude_patterns=stat_patterns
         ),
         release_context=get_mr_release_context(repo_path),
         churn_subjects=churn_subjects,

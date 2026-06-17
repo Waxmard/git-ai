@@ -37,6 +37,19 @@ def test_load_returns_defaults_when_no_ignore_file(tmp_path: Path) -> None:
     assert patterns == list(DEFAULT_EXCLUDES)
 
 
+def test_load_without_defaults_drops_lockfiles_keeps_user_patterns(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / IGNORE_FILENAME).write_text("build/dist.js\n", encoding="utf-8")
+    patterns = load_ignore_patterns(tmp_path, include_defaults=False)
+    assert "package-lock.json" not in patterns
+    assert patterns == ["build/dist.js"]
+
+
+def test_load_without_defaults_no_ignore_file_is_empty(tmp_path: Path) -> None:
+    assert load_ignore_patterns(tmp_path, include_defaults=False) == []
+
+
 def test_load_appends_extra_patterns(tmp_path: Path) -> None:
     (tmp_path / IGNORE_FILENAME).write_text(
         "# comment line\n\nbuild/dist.js\nfoo/bar.lock\n",

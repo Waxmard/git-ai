@@ -241,12 +241,13 @@ def test_prepare_repo_pr_context_raises_on_non_ancestor_previous_head_sha(
         prepare_repo_pr_context(repo, base_branch="main", previous_head_sha=orphan_sha)
 
 
-def test_prepare_repo_pr_context_excludes_lockfiles_by_default(
+def test_prepare_repo_pr_context_excludes_lockfiles_from_diff_only(
     tmp_path: Path,
 ) -> None:
     repo = _make_repo(tmp_path)
-    # Lockfile commit + a real-code commit. Default excludes should drop the
-    # lockfile from diff/diff_stat output.
+    # Lockfile commit + a real-code commit. Default excludes drop the lockfile
+    # content from the full diff (noise), but the diff *stat* keeps it so a
+    # lockfile-only dependency bump still leaves a one-line trace for the model.
     _commit(repo, "package-lock.json", "lock_contents\n", "chore: lockfile")
     _commit(repo, "app.py", "print('hi')\n", "feat: add app")
 
@@ -254,7 +255,24 @@ def test_prepare_repo_pr_context_excludes_lockfiles_by_default(
 
     assert "app.py" in ctx.diff
     assert "package-lock.json" not in ctx.diff
-    assert "package-lock.json" not in ctx.diff_stat
+    assert "package-lock.json" in ctx.diff_stat
+
+
+def test_prepare_repo_pr_context_diff_stat_honors_user_ignore(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    # A user `.git-ai-ignore` entry must stay excluded from the diff stat even
+    # though built-in lockfile defaults are now surfaced there.
+    (repo / ".git-ai-ignore").write_text("generated.txt\n", encoding="utf-8")
+    _commit(repo, "package-lock.json", "lock_contents\n", "chore: lockfile")
+    _commit(repo, "generated.txt", "noise\n", "chore: generated")
+    _commit(repo, "app.py", "print('hi')\n", "feat: add app")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    assert "package-lock.json" in ctx.diff_stat
+    assert "generated.txt" not in ctx.diff_stat
 
 
 def test_prepare_repo_pr_context_from_subdirectory_uses_repo_root_diff(
