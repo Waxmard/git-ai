@@ -46,12 +46,20 @@ def _parse_ignore_file(text: str) -> tuple[list[str], list[str]]:
     return additions, negations
 
 
-def load_ignore_patterns(repo_path: str | Path) -> list[str]:
+def load_ignore_patterns(
+    repo_path: str | Path, *, include_defaults: bool = True
+) -> list[str]:
     """Return the active exclude pattern list for the repo.
 
     Order: ``DEFAULT_EXCLUDES`` first, then non-negated lines from
     ``.git-ai-ignore``. Patterns listed with a leading ``!`` are removed
     (exact match). Result is deduped while preserving order.
+
+    Set ``include_defaults=False`` to drop the built-in lockfile defaults while
+    still honouring the repo's ``.git-ai-ignore``. Used for the PR diff *stat*,
+    which surfaces lockfile bumps (one stat line each, high signal) that the full
+    diff still strips as noise — otherwise a lockfile-only dependency bump merged
+    from a bot branch leaves no evidence at all for the model to describe.
     """
     additions: list[str] = []
     negations: list[str] = []
@@ -61,10 +69,11 @@ def load_ignore_patterns(repo_path: str | Path) -> list[str]:
             ignore_path.read_text(encoding="utf-8")
         )
 
+    defaults = DEFAULT_EXCLUDES if include_defaults else ()
     negated = set(negations)
     seen: set[str] = set()
     result: list[str] = []
-    for pattern in (*DEFAULT_EXCLUDES, *additions):
+    for pattern in (*defaults, *additions):
         if pattern in negated or pattern in seen:
             continue
         seen.add(pattern)
