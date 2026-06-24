@@ -98,88 +98,21 @@ render_pr_output() {
 }
 
 # ---------------------------------------------------------------------------
-# Commit action picker. Tries fzf (consistent with setup flow); falls back to
-# arrow-key menu. Prints one of: use | edit | abort
-# ---------------------------------------------------------------------------
-_pick_commit_action() {
-  if command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]; then
-    local choice
-    choice=$(printf '%s\n' \
-      "use|Use this message" \
-      "edit|Edit message" \
-      "abort|Abort" \
-      | fzf --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
-            --prompt='git-ai commit> ' --height=~5 --reverse) || {
-      printf 'abort\n'; return
-    }
-    printf '%s\n' "${choice%%|*}"
-    return
-  fi
-  # fzf unavailable — arrow-key fallback
-  local -a opts=("Use this message" "Edit message" "Abort")
-  local idx=0 n=3 key i
-  tput civis 2>/dev/tty
-  for i in "${!opts[@]}"; do printf '  %s\n' "${opts[$i]}" >/dev/tty; done
-  printf "\033[%dA" "$n" >/dev/tty
-  while true; do
-    for i in "${!opts[@]}"; do
-      if [[ $i -eq $idx ]]; then
-        printf '\r\033[K\033[32m> %s\033[0m\n' "${opts[$i]}" >/dev/tty
-      else
-        printf '\r\033[K  %s\n' "${opts[$i]}" >/dev/tty
-      fi
-    done
-    printf "\033[%dA" "$n" >/dev/tty
-    IFS= read -rsn1 key </dev/tty
-    if [[ $key == $'\x1b' ]]; then
-      IFS= read -rsn2 -t 1 key </dev/tty
-      case "$key" in
-        '[A') ((idx > 0)) && ((idx--)) ;;
-        '[B') ((idx < n - 1)) && ((idx++)) ;;
-      esac
-    elif [[ $key == '' ]]; then break
-    elif [[ $key == $'\x03' ]]; then idx=2; break
-    fi
-  done
-  printf "\033[%dB" "$n" >/dev/tty
-  tput cnorm 2>/dev/tty
-  case "$idx" in
-    0) printf 'use\n' ;;
-    1) printf 'edit\n' ;;
-    2) printf 'abort\n' ;;
-  esac
-}
-
-# ---------------------------------------------------------------------------
-# Show message, prompt use/edit/abort, then commit.
+# Open editor with generated message; commit on save. Empty file = abort.
 # ---------------------------------------------------------------------------
 _commit_prompt_and_run() {
   local msg="$1"
   if [[ -t 0 && -t 1 ]]; then
-    printf '%s\n\n' "$msg"
-    local action
-    action=$(_pick_commit_action)
-    case "$action" in
-      use)
-        git commit -m "$msg"
-        ;;
-      edit)
-        local tmpfile editor
-        tmpfile=$(mktemp /tmp/git-ai-commit.XXXXXX)
-        printf '%s\n' "$msg" > "$tmpfile"
-        editor=$(git var GIT_EDITOR 2>/dev/null) || editor="${VISUAL:-${EDITOR:-vi}}"
-        $editor "$tmpfile" </dev/tty >/dev/tty
-        local edited
-        edited=$(cat "$tmpfile")
-        rm -f "$tmpfile"
-        [[ -z "$edited" ]] && die "empty commit message; aborting"
-        git commit -m "$edited"
-        ;;
-      abort)
-        printf 'Aborted.\n' >/dev/tty
-        return 0
-        ;;
-    esac
+    local tmpfile editor
+    tmpfile=$(mktemp /tmp/git-ai-commit.XXXXXX)
+    printf '%s\n' "$msg" > "$tmpfile"
+    editor=$(git var GIT_EDITOR 2>/dev/null) || editor="${VISUAL:-${EDITOR:-vi}}"
+    $editor "$tmpfile" </dev/tty >/dev/tty
+    local edited
+    edited=$(cat "$tmpfile")
+    rm -f "$tmpfile"
+    [[ -z "$edited" ]] && die "empty commit message; aborting"
+    git commit -m "$edited"
   else
     printf '%s\n' "$msg"
   fi
