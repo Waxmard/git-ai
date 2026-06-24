@@ -11,7 +11,7 @@ jobs:
     name: Check generated docs are up to date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check docs (make docs-check)
         run: make docs-check
