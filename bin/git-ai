@@ -102,15 +102,17 @@ render_pr_output() {
 # ---------------------------------------------------------------------------
 _commit_prompt_and_run() {
   local msg="$1"
-  if [[ -t 0 && -t 1 ]]; then
+  if [[ -t 1 ]]; then
     local tmpfile editor
     tmpfile=$(mktemp /tmp/git-ai-commit.XXXXXX)
+    trap 'rm -f "$tmpfile"' EXIT INT TERM
     printf '%s\n' "$msg" > "$tmpfile"
     editor=$(git var GIT_EDITOR 2>/dev/null) || editor="${VISUAL:-${EDITOR:-vi}}"
     $editor "$tmpfile" </dev/tty >/dev/tty
     local edited
     edited=$(cat "$tmpfile")
     rm -f "$tmpfile"
+    trap - EXIT INT TERM
     [[ -z "$edited" ]] && die "empty commit message; aborting"
     git commit -m "$edited"
   else
