@@ -108,7 +108,7 @@ _commit_prompt_and_run() {
     trap 'rm -f "$tmpfile"' EXIT INT TERM
     printf '%s\n' "$msg" > "$tmpfile"
     editor=$(git var GIT_EDITOR 2>/dev/null) || editor="${VISUAL:-${EDITOR:-vi}}"
-    $editor "$tmpfile" </dev/tty >/dev/tty
+    eval "$editor" "$tmpfile" </dev/tty >/dev/tty
     local edited
     edited=$(cat "$tmpfile")
     rm -f "$tmpfile"
