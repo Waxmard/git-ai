@@ -98,6 +98,32 @@ render_pr_output() {
 }
 
 # ---------------------------------------------------------------------------
+# Open editor with generated message; commit on save. Empty file = abort.
+# ---------------------------------------------------------------------------
+_commit_prompt_and_run() {
+  local msg="$1"
+  if [[ -t 1 ]]; then
+    local tmpfile editor
+    tmpfile=$(mktemp /tmp/git-ai-commit.XXXXXX)
+    trap 'rm -f "$tmpfile"' EXIT INT TERM
+    printf '%s\n' "$msg" > "$tmpfile"
+    editor=$(git var GIT_EDITOR 2>/dev/null) || editor="${VISUAL:-${EDITOR:-vi}}"
+    eval "$editor" "$tmpfile" </dev/tty >/dev/tty
+    local edited
+    edited=$(cat "$tmpfile")
+    [[ -z "$edited" ]] && die "empty commit message; aborting"
+    # Commit straight from the file (not -m) so --cleanup=strip drops comment
+    # lines and trims blank runs exactly like a native editor commit. die's
+    # EXIT trap removes the tmpfile on the abort path.
+    git commit --cleanup=strip -F "$tmpfile"
+    rm -f "$tmpfile"
+    trap - EXIT INT TERM
+  else
+    printf '%s\n' "$msg"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
 
@@ -147,11 +173,12 @@ cmd_commit() {
   provider_is_valid "$PROVIDER" || die "unknown auth method: $PROVIDER"
 
   if [[ "$PROVIDER" == "last" ]]; then
-    local GIT_DIR
+    local GIT_DIR last_msg
     GIT_DIR=$(git rev-parse --git-dir)
     [[ -r "${GIT_DIR}/commit-last-message" ]] || die "no saved commit message"
     push_choice_history commit "last"
-    cat "${GIT_DIR}/commit-last-message"
+    last_msg=$(cat "${GIT_DIR}/commit-last-message")
+    _commit_prompt_and_run "$last_msg"
     return 0
   fi
 
@@ -211,7 +238,7 @@ ${STAGED_DIFF}
 
   generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL") || exit $?
   save_last_message commit "$generated"
-  printf '%s\n' "$generated"
+  _commit_prompt_and_run "$generated"
 }
 
 cmd_pr() {
