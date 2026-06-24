@@ -111,10 +111,13 @@ _commit_prompt_and_run() {
     eval "$editor" "$tmpfile" </dev/tty >/dev/tty
     local edited
     edited=$(cat "$tmpfile")
+    [[ -z "$edited" ]] && die "empty commit message; aborting"
+    # Commit straight from the file (not -m) so --cleanup=strip drops comment
+    # lines and trims blank runs exactly like a native editor commit. die's
+    # EXIT trap removes the tmpfile on the abort path.
+    git commit --cleanup=strip -F "$tmpfile"
     rm -f "$tmpfile"
     trap - EXIT INT TERM
-    [[ -z "$edited" ]] && die "empty commit message; aborting"
-    git commit -m "$edited"
   else
     printf '%s\n' "$msg"
   fi
