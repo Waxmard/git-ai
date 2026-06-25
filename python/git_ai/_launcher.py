@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 
-def main() -> int:
+def main() -> None:
     pkg_dir = Path(__file__).resolve().parent
     cli = pkg_dir / "_sh" / "bin" / "git-ai"
     if not cli.is_file():
@@ -21,12 +21,14 @@ def main() -> int:
             f"git-ai: bundled CLI not found at {cli}\n"
             "The wheel may be built incorrectly; reinstall waxmard-git-ai.\n"
         )
-        return 1
+        sys.exit(1)
 
     # The Bash layer resolves prompts/CLIs/data files relative to this; the repo
-    # default (sibling python/git_ai) does not exist in the wheel layout.
+    # default (sibling python/git_ai) does not exist in the wheel layout. The
+    # launcher knows the installed location, so it always wins over any stale
+    # GIT_AI_PKG_DIR lingering in the user's environment.
     env = dict(os.environ)
-    env.setdefault("GIT_AI_PKG_DIR", str(pkg_dir))
+    env["GIT_AI_PKG_DIR"] = str(pkg_dir)
 
     # Trusted exec: `bash` resolved on PATH (like the rest of the tool) running
     # the wheel-bundled CLI. No shell interpolation — args pass as a list.
@@ -34,4 +36,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
