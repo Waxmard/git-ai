@@ -28,3 +28,25 @@ jobs:
 
       - name: Test (pytest)
         run: make py-test
+
+      # Builds the wheel through the in-tree backend (_build_backend.py), which
+      # copies bin/ + lib/ into the package as git_ai/_sh/.
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Wheel carries the bundled CLI
+        run: |
+          set -euo pipefail
+          unzip -l dist/*.whl | grep -q 'git_ai/_sh/bin/git-ai'
+          unzip -l dist/*.whl | grep -q 'git_ai/_sh/lib/ai-common.sh'
+
+      # Install into an isolated env and run the CLI from OUTSIDE the repo, so
+      # it can only succeed via the bundled bash + GIT_AI_PKG_DIR resolution
+      # (not the source tree). `providers` needs no auth/LLM.
+      - name: Smoke-test the pip CLI
+        run: |
+          set -euo pipefail
+          uv venv /tmp/wheelenv
+          uv pip install --python /tmp/wheelenv dist/*.whl
+          cd /tmp
+          /tmp/wheelenv/bin/git-ai providers | grep -q 'anthropic-api'
