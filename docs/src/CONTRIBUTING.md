@@ -23,7 +23,7 @@ make sync           # uv sync — install Python dev deps
 - **`bin/git-ai`** — the CLI entry point; all command logic lives here as shell functions.
 - **`bin/aigit`** — thin alias that execs `git-ai`.
 - **`lib/ai-common.sh`** — shared shell helpers (provider dispatch, auth resolution, fence stripping).
-- **`python/git_ai/`** — the provider-agnostic `waxmard-git-ai` Python package (prompt assembly, git helpers, PR cache). Zero LLM SDK dependencies.
+- **`python/git_ai/`** — the provider-agnostic `waxmard-git-ai` Python package (prompt assembly, git helpers, PR cache). Zero LLM SDK dependencies. It also ships the pip-installable `git-ai` CLI: `_launcher.py` execs the bundled Bash, and the in-tree build backend (`_build_backend.py`) copies `bin/` + `lib/` into `git_ai/_sh/` at build time (so don't hand-edit `_sh/` — it's generated). See [`CLAUDE.md`](CLAUDE.md) for the full packaging flow.
 - **`docs/src/`** — templates for the generated root docs. **Never edit `README.md`, `CLAUDE.md`, `AGENTS.md`, or `CONTRIBUTING.md` directly** — edit the template under `docs/src/` (shared prose lives in `docs/src/partials/`), then run `make docs-build`.
 - **`test/bin/`, `test/lib/`** — BATS tests. **`test/python/`** — pytest.
 
