@@ -1,6 +1,7 @@
 [build-system]
 requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+build-backend = "_build_backend"
+backend-path = ["."]
 
 [project]
 name = "waxmard-git-ai"
@@ -10,6 +11,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
+[project.scripts]
+git-ai = "git_ai._launcher:main"
+aigit = "git_ai._launcher:main"
+
 [project.urls]
 Homepage = "https://github.com/Waxmard/git-ai"
 
@@ -17,7 +22,13 @@ Homepage = "https://github.com/Waxmard/git-ai"
 where = ["python"]
 
 [tool.setuptools.package-data]
-"git_ai" = ["default-excludes.txt", "prompts/*.txt", "py.typed"]
+"git_ai" = [
+    "default-excludes.txt",
+    "prompts/*.txt",
+    "py.typed",
+    "_sh/bin/*",
+    "_sh/lib/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["test/python"]
