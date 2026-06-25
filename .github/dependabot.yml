@@ -6,6 +6,14 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     target-branch: "dev"
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
 
   - package-ecosystem: "pip"
     directory: "/"
@@ -13,6 +21,14 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     target-branch: "dev"
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -20,3 +36,10 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     target-branch: "dev"
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
