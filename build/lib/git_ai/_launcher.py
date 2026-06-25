@@ -28,7 +28,9 @@ def main() -> int:
     env = dict(os.environ)
     env.setdefault("GIT_AI_PKG_DIR", str(pkg_dir))
 
-    os.execvpe("bash", ["bash", str(cli), *sys.argv[1:]], env)
+    # Trusted exec: `bash` resolved on PATH (like the rest of the tool) running
+    # the wheel-bundled CLI. No shell interpolation — args pass as a list.
+    os.execvpe("bash", ["bash", str(cli), *sys.argv[1:]], env)  # noqa: S606
 
 
 if __name__ == "__main__":

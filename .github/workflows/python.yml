@@ -37,8 +37,11 @@ jobs:
       - name: Wheel carries the bundled CLI
         run: |
           set -euo pipefail
-          unzip -l dist/*.whl | grep -q 'git_ai/_sh/bin/git-ai'
-          unzip -l dist/*.whl | grep -q 'git_ai/_sh/lib/ai-common.sh'
+          # Capture once, then grep — `grep -q` on a live pipe would SIGPIPE the
+          # producer and pipefail would flag it.
+          names=$(unzip -Z1 dist/*.whl)
+          grep -q 'git_ai/_sh/bin/git-ai' <<<"$names"
+          grep -q 'git_ai/_sh/lib/ai-common.sh' <<<"$names"
 
       # Install into an isolated env and run the CLI from OUTSIDE the repo, so
       # it can only succeed via the bundled bash + GIT_AI_PKG_DIR resolution
@@ -49,4 +52,7 @@ jobs:
           uv venv /tmp/wheelenv
           uv pip install --python /tmp/wheelenv dist/*.whl
           cd /tmp
-          /tmp/wheelenv/bin/git-ai providers | grep -q 'anthropic-api'
+          # Capture first: `grep -q` would close the pipe early, SIGPIPE the
+          # producer, and pipefail would flag that as a failure.
+          out=$(/tmp/wheelenv/bin/git-ai providers)
+          echo "$out" | grep -q 'anthropic-api'
