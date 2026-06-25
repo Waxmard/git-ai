@@ -97,8 +97,15 @@ render_pr_output() {
   rm -f "$old_tmp" "$new_tmp"
 }
 
+# File mtime in epoch seconds; portable across GNU (stat -c) and BSD (stat -f).
+_file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
 # ---------------------------------------------------------------------------
-# Open editor with generated message; commit on save. Empty file = abort.
+# Open editor with generated message; commit on save, abort on quit-no-save.
+# Mirrors vim muscle memory: save (`:wq`) commits, quit (`:q`/`:q!`) aborts.
+# An emptied-and-saved buffer also aborts, matching native git.
 # ---------------------------------------------------------------------------
 _commit_prompt_and_run() {
   local msg="$1"
@@ -106,11 +113,26 @@ _commit_prompt_and_run() {
     local tmpfile editor
     tmpfile=$(mktemp /tmp/git-ai-commit.XXXXXX)
     trap 'rm -f "$tmpfile"' EXIT INT TERM
-    printf '%s\n' "$msg" > "$tmpfile"
+    {
+      printf '%s\n' "$msg"
+      printf '\n# Save and close (e.g. :wq) to commit this message.\n'
+      printf '# Quit WITHOUT saving (e.g. :q or :q!) to abort — nothing is committed.\n'
+      printf '# Lines starting with %s are ignored.\n' '#'
+    } > "$tmpfile"
+    # Stamp an ancient mtime so any real save bumps it to "now"; a bare quit
+    # leaves the sentinel untouched. Dodges same-second stat granularity.
+    touch -t 197001020000 "$tmpfile" 2>/dev/null
+    local mtime_before
+    mtime_before=$(_file_mtime "$tmpfile")
     editor=$(git var GIT_EDITOR 2>/dev/null) || editor="${VISUAL:-${EDITOR:-vi}}"
     eval "$editor" "$tmpfile" </dev/tty >/dev/tty
+    local mtime_after
+    mtime_after=$(_file_mtime "$tmpfile")
+    [[ "$mtime_after" == "$mtime_before" ]] && die "no changes saved; commit aborted"
+    # Mirror --cleanup=strip (drop comment lines, trim blanks) before checking
+    # for an empty message so the abort path fires the friendly die.
     local edited
-    edited=$(cat "$tmpfile")
+    edited=$(grep -v '^#' "$tmpfile" | _trim)
     [[ -z "$edited" ]] && die "empty commit message; aborting"
     # Commit straight from the file (not -m) so --cleanup=strip drops comment
     # lines and trims blank runs exactly like a native editor commit. die's
