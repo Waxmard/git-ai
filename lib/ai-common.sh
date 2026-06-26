@@ -6,8 +6,14 @@ die() {
   exit 1
 }
 
+# Directory holding the bundled Python package (prompts, CLIs, data files).
+# Defaults to the repo/symlink layout (sibling of lib/); the pip launcher
+# overrides it via env to point at the installed git_ai package.
+GIT_AI_PKG_DIR="${GIT_AI_PKG_DIR:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../python/git_ai}"
+[[ -d "$GIT_AI_PKG_DIR" ]] || die "GIT_AI_PKG_DIR not found: $GIT_AI_PKG_DIR (use the git-ai console script, not _sh/bin/git-ai directly)"
+
 # Built-in lockfile patterns excluded from diffs by default.
-GIT_AI_DEFAULT_EXCLUDES_FILE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../python/git_ai/default-excludes.txt"
+GIT_AI_DEFAULT_EXCLUDES_FILE="${GIT_AI_PKG_DIR}/default-excludes.txt"
 GIT_AI_DEFAULT_EXCLUDES=()
 if [[ ! -r "$GIT_AI_DEFAULT_EXCLUDES_FILE" ]]; then
   die "missing default excludes file: $GIT_AI_DEFAULT_EXCLUDES_FILE"
