@@ -6,7 +6,7 @@ export UV_CACHE_DIR := .uv-cache
 # Parallel BATS jobs: default to the machine's core count (GNU parallel/rush required).
 BATS_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-.PHONY: install uninstall lint line-limit test hooks sync py-format py-lint py-type-check py-test docs-build docs-check
+.PHONY: install uninstall lint line-limit test hooks sync py-format py-lint py-type-check py-test docs-build docs-check prompts-build prompts-check
 
 # --no-parallelize-within-files: per-test GNU-parallel dispatch costs more than
 # it buys for this suite (measured ~16s vs ~10s wall) — file-level fan-out only.
@@ -98,3 +98,10 @@ docs-build:
 
 docs-check:
 	python3 scripts/build_docs.py --check
+
+# LLM prompts (generated from prompts/src/ — stdlib python3, no deps)
+prompts-build:
+	python3 scripts/build_prompts.py --write
+
+prompts-check:
+	python3 scripts/build_prompts.py --check

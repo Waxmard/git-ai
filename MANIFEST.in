@@ -1,0 +1,6 @@
+# Ship the canonical Bash sources in the sdist so from-sdist builds can copy
+# them into the package via _build_backend.py (the wheel layout puts the copy
+# under git_ai/_sh/).
+graft bin
+graft lib
+include _build_backend.py

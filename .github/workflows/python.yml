@@ -11,7 +11,7 @@ jobs:
     name: Lint, type-check, and test Python package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -28,3 +28,31 @@ jobs:
 
       - name: Test (pytest)
         run: make py-test
+
+      # Builds the wheel through the in-tree backend (_build_backend.py), which
+      # copies bin/ + lib/ into the package as git_ai/_sh/.
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Wheel carries the bundled CLI
+        run: |
+          set -euo pipefail
+          # Capture once, then grep — `grep -q` on a live pipe would SIGPIPE the
+          # producer and pipefail would flag it.
+          names=$(unzip -Z1 dist/*.whl)
+          grep -q 'git_ai/_sh/bin/git-ai' <<<"$names"
+          grep -q 'git_ai/_sh/lib/ai-common.sh' <<<"$names"
+
+      # Install into an isolated env and run the CLI from OUTSIDE the repo, so
+      # it can only succeed via the bundled bash + GIT_AI_PKG_DIR resolution
+      # (not the source tree). `providers` needs no auth/LLM.
+      - name: Smoke-test the pip CLI
+        run: |
+          set -euo pipefail
+          uv venv /tmp/wheelenv
+          uv pip install --python /tmp/wheelenv dist/*.whl
+          cd /tmp
+          # Capture first: `grep -q` would close the pipe early, SIGPIPE the
+          # producer, and pipefail would flag that as a failure.
+          out=$(/tmp/wheelenv/bin/git-ai providers)
+          echo "$out" | grep -q 'anthropic-api'

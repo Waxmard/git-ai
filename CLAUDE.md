@@ -1,8 +1,8 @@
-<!-- Generated from docs/src/AGENTS.md by scripts/build_docs.py. Run `make docs-build` to regenerate. Do not edit directly. -->
+<!-- Generated from docs/src/CLAUDE.md by scripts/build_docs.py. Run `make docs-build` to regenerate. Do not edit directly. -->
 
-# AGENTS.md
+# CLAUDE.md
 
-This file provides guidance to AI coding agents working in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Overview
 

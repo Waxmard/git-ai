@@ -10,6 +10,14 @@ LLM-powered git workflow tools. Generate Conventional Commits messages and PR de
 npm install -g @waxmard/git-ai
 ```
 
+Or via pip / uv — the `waxmard-git-ai` package ships the same `git-ai` CLI **and** the importable [Python library](#python-library):
+
+```bash
+pip install waxmard-git-ai     # or: uv tool install waxmard-git-ai
+```
+
+The pip CLI runs the bundled Bash program, so it needs `bash` on your `PATH` (already present on macOS/Linux) plus your provider's CLI or API key — same runtime as the npm install.
+
 Or clone and symlink for local development (edits are live):
 
 ```bash
@@ -140,7 +148,7 @@ git-ai models <auth-method> [commit|pr]
 
 ## Python library
 
-git-ai is also distributed as a Python package (`waxmard-git-ai`) so other tools can reuse the same commit-message and MR-description prompt assembly without shelling out.
+Beyond the `git-ai` CLI it installs, the `waxmard-git-ai` package is an importable library, so other tools can reuse the same commit-message and MR-description prompt assembly without shelling out.
 
 ```bash
 pip install waxmard-git-ai

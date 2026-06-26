@@ -65,3 +65,48 @@ teardown() {
   assert_output --partial "Removed."
   assert_equal "$(cat "$NPM_RMLOG")" "RM:waxmard-git-ai"
 }
+
+# Stub a pipx/uv tool that reports waxmard-git-ai and records uninstalls. The
+# npm stub in $TEST_DIR/bin has no package, so only the pyx branch fires.
+_stub_pyx() {
+  local tool="$1"
+  export PYX_RMLOG="$TEST_DIR/pyx-rm.log"
+  cat >"$TEST_DIR/bin/$tool" <<EOF
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  "list --short") printf 'waxmard-git-ai 6.3.0\n' ;;
+  "tool list")    printf 'waxmard-git-ai v6.3.0\n' ;;
+  *uninstall*)    printf 'UNINSTALL:%s\n' "\${@: -1}" >>"\$PYX_RMLOG" ;;
+esac
+EOF
+  chmod +x "$TEST_DIR/bin/$tool"
+}
+
+@test "_setup_check_shadow: no-ops when the pyx package is not installed" {
+  cat >"$TEST_DIR/bin/uv" <<'EOF'
+#!/usr/bin/env bash
+:   # `uv tool list` prints nothing → no match
+EOF
+  chmod +x "$TEST_DIR/bin/uv"
+  PATH="$TEST_DIR/bin:$PATH" run _setup_check_shadow </dev/null
+  assert_success
+  assert_output ""
+}
+
+@test "_setup_check_shadow: detects a uv-tool git-ai and removes when accepted" {
+  _stub_pyx uv
+  PATH="$TEST_DIR/bin:$PATH" run _setup_check_shadow <<<"y"
+  assert_success
+  assert_output --partial "a uv-managed git-ai is also installed"
+  assert_output --partial "Removed."
+  assert_equal "$(cat "$PYX_RMLOG")" "UNINSTALL:waxmard-git-ai"
+}
+
+@test "_setup_check_shadow: detects a pipx git-ai but keeps it when declined" {
+  _stub_pyx pipx
+  PATH="$TEST_DIR/bin:$PATH" run _setup_check_shadow <<<"n"
+  assert_success
+  assert_output --partial "a pipx-managed git-ai is also installed"
+  assert_output --partial "Left as-is"
+  [ ! -f "$PYX_RMLOG" ]
+}

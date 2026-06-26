@@ -24,12 +24,12 @@ branch_cache_path() {
   local git_dir="$1"
   local branch_name="$2"
   local base_branch="$3"
-  "${GIT_AI_PYTHON:-python3}" - <<'PY' "$SCRIPT_DIR" "$git_dir" "$branch_name" "$base_branch" || return 1
+  "${GIT_AI_PYTHON:-python3}" - <<'PY' "$GIT_AI_PKG_DIR" "$git_dir" "$branch_name" "$base_branch" || return 1
 import sys
 from pathlib import Path
 
-script_dir, git_dir, branch_name, base_branch = sys.argv[1:]
-sys.path.insert(0, str(Path(script_dir).resolve().parent / "python" / "git_ai"))
+pkg_dir, git_dir, branch_name, base_branch = sys.argv[1:]
+sys.path.insert(0, str(Path(pkg_dir).resolve()))
 from _pr_incremental import branch_cache_path
 
 print(branch_cache_path(git_dir, branch_name, base_branch))
@@ -67,7 +67,7 @@ save_cached_pr() {
   output_file=$(mktemp) || return 1
   printf '%s\n' "$output" >"$output_file"
   local save_cmd=(
-    "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_repo_cli.py" save-cache
+    "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_pr_repo_cli.py" save-cache
     --git-dir "$git_dir"
     --branch-name "$branch_name"
     --base-branch "$base_branch"
@@ -91,33 +91,65 @@ render_pr_output() {
   new_tmp=$(mktemp 2>/dev/null) || { rm -f "$old_tmp"; printf '%s\n' "$output"; return 0; }
   printf '%s\n' "$existing" > "$old_tmp"
   printf '%s\n' "$output"   > "$new_tmp"
-  "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_render.py" \
+  "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_pr_render.py" \
     "$old_tmp" "$new_tmp" \
     || printf '%s\n' "$output"
   rm -f "$old_tmp" "$new_tmp"
 }
 
+# File mtime in epoch seconds; portable across GNU (stat -c) and BSD (stat -f).
+_file_mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
 # ---------------------------------------------------------------------------
-# Open editor with generated message; commit on save. Empty file = abort.
+# Open editor with generated message; commit on save, abort on quit-no-save.
+# Mirrors vim muscle memory: save (`:wq`) commits, quit (`:q`/`:q!`) aborts.
+# An emptied-and-saved buffer also aborts, matching native git.
 # ---------------------------------------------------------------------------
 _commit_prompt_and_run() {
   local msg="$1"
   if [[ -t 1 ]]; then
-    local tmpfile editor
+    local tmpfile editor comment_char
     tmpfile=$(mktemp /tmp/git-ai-commit.XXXXXX)
     trap 'rm -f "$tmpfile"' EXIT INT TERM
-    printf '%s\n' "$msg" > "$tmpfile"
+    # Honor core.commentChar so our help lines are stripped, not committed.
+    # "auto" (and unset) resolve to '#'; we pin the char on the commit below
+    # so git's cleanup agrees with what we wrote.
+    comment_char=$(git config --get core.commentChar 2>/dev/null)
+    [[ -z "$comment_char" || "$comment_char" == "auto" ]] && comment_char='#'
+    {
+      printf '%s\n' "$msg"
+      printf '\n%s Save and close (e.g. :wq) to commit this message.\n' "$comment_char"
+      printf '%s Quit WITHOUT saving (e.g. :q or :q!) to abort — nothing is committed.\n' "$comment_char"
+      printf '%s Lines starting with %s are ignored.\n' "$comment_char" "$comment_char"
+    } > "$tmpfile"
+    # Stamp an ancient mtime so any real save bumps it to "now"; a bare quit
+    # leaves the sentinel untouched. Dodges same-second stat granularity.
+    touch -t 197001020000 "$tmpfile" 2>/dev/null
+    local mtime_before
+    mtime_before=$(_file_mtime "$tmpfile")
     editor=$(git var GIT_EDITOR 2>/dev/null) || editor="${VISUAL:-${EDITOR:-vi}}"
-    eval "$editor" "$tmpfile" </dev/tty >/dev/tty
+    local editor_status=0
+    eval "$editor" "$tmpfile" </dev/tty >/dev/tty || editor_status=$?
+    ((editor_status != 0)) && die "editor exited with status $editor_status; commit aborted"
+    local mtime_after
+    mtime_after=$(_file_mtime "$tmpfile")
+    [[ "$mtime_after" == "$mtime_before" ]] && die "no changes saved; commit aborted"
+    # Mirror --cleanup=strip (drop comment lines, trim blanks) before checking
+    # for an empty message so the abort path fires the friendly die. stripspace
+    # honors core.commentChar, matching git's own cleanup exactly.
     local edited
-    edited=$(cat "$tmpfile")
+    edited=$(git -c core.commentChar="$comment_char" stripspace --strip-comments < "$tmpfile" | _trim)
     [[ -z "$edited" ]] && die "empty commit message; aborting"
     # Commit straight from the file (not -m) so --cleanup=strip drops comment
     # lines and trims blank runs exactly like a native editor commit. die's
     # EXIT trap removes the tmpfile on the abort path.
-    git commit --cleanup=strip -F "$tmpfile"
+    local commit_status=0
+    git -c core.commentChar="$comment_char" commit --cleanup=strip -F "$tmpfile" || commit_status=$?
     rm -f "$tmpfile"
     trap - EXIT INT TERM
+    return "$commit_status"
   else
     printf '%s\n' "$msg"
   fi
@@ -152,7 +184,7 @@ cmd_commit() {
     PROVIDER="${PROVIDER%%:*}"
   fi
   local PROMPT
-  PROMPT=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/commit.txt") || die "failed to read commit prompt"
+  PROMPT=$(cat "${GIT_AI_PKG_DIR}/prompts/commit.txt") || die "failed to read commit prompt"
 
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
@@ -179,7 +211,7 @@ cmd_commit() {
     push_choice_history commit "last"
     last_msg=$(cat "${GIT_DIR}/commit-last-message")
     _commit_prompt_and_run "$last_msg"
-    return 0
+    return $?
   fi
 
   local REPO_ROOT
@@ -216,7 +248,7 @@ cmd_commit() {
   # the whole branch. Never blocks a commit: failures yield an empty block.
   local BRANCH_CONTEXT
   local -a bc_cmd=(
-    "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_commit_cli.py"
+    "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py"
     branch-context --repo "$REPO_ROOT"
   )
   # Only --base is forwarded here; GIT_AI_COMMIT_BASE is consumed inside Python
@@ -315,10 +347,10 @@ cmd_pr() {
   fi
 
   local PROMPT_TWO_PASS PROMPT_FALLBACK PROMPT_TWO_PASS_UPDATE PROMPT_FALLBACK_UPDATE
-  PROMPT_TWO_PASS=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/pr-two-pass.txt") || die "failed to read pr-two-pass prompt"
-  PROMPT_FALLBACK=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/pr-fallback.txt") || die "failed to read pr-fallback prompt"
-  PROMPT_TWO_PASS_UPDATE=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/pr-two-pass-update.txt") || die "failed to read pr-two-pass-update prompt"
-  PROMPT_FALLBACK_UPDATE=$(cat "${SCRIPT_DIR}/../python/git_ai/prompts/pr-fallback-update.txt") || die "failed to read pr-fallback-update prompt"
+  PROMPT_TWO_PASS=$(cat "${GIT_AI_PKG_DIR}/prompts/pr-two-pass.txt") || die "failed to read pr-two-pass prompt"
+  PROMPT_FALLBACK=$(cat "${GIT_AI_PKG_DIR}/prompts/pr-fallback.txt") || die "failed to read pr-fallback prompt"
+  PROMPT_TWO_PASS_UPDATE=$(cat "${GIT_AI_PKG_DIR}/prompts/pr-two-pass-update.txt") || die "failed to read pr-two-pass-update prompt"
+  PROMPT_FALLBACK_UPDATE=$(cat "${GIT_AI_PKG_DIR}/prompts/pr-fallback-update.txt") || die "failed to read pr-fallback-update prompt"
 
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
   local GIT_DIR
@@ -331,7 +363,7 @@ cmd_pr() {
   local PREP_OUTPUT PREP_FILE
   PREP_FILE=$(mktemp) || die "failed to allocate temp file"
   local prep_cmd=(
-    "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_repo_cli.py" prepare
+    "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_pr_repo_cli.py" prepare
     --repo-path "."
     --base-branch "$BASE"
     --format shell
@@ -385,7 +417,7 @@ cmd_pr() {
   local PR_REPO_ROOT
   PR_REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PR_REPO_ROOT="."
   load_git_ai_instructions "$PR_REPO_ROOT" >"$INSTR_FILE"
-  "${GIT_AI_PYTHON:-python3}" "${SCRIPT_DIR}/../python/git_ai/_pr_repo_cli.py" build-input \
+  "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_pr_repo_cli.py" build-input \
     --diff-file "$DIFF_FILE" \
     --commit-log-file "$LOG_FILE" \
     --diff-stat-file "$STAT_FILE" \
