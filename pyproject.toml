@@ -24,6 +24,7 @@ where = ["python"]
 [tool.setuptools.package-data]
 "git_ai" = [
     "default-excludes.txt",
+    "recommended-models.conf",
     "prompts/*.txt",
     "py.typed",
     "_sh/bin/*",

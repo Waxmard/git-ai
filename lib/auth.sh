@@ -292,11 +292,12 @@ provider_display_name() {
   fi
 }
 
-# Curated recommended-model defaults live in a dedicated DATA file at the repo
-# root so model bumps read as data changes, not code changes (commits touching
-# only that file are routine "chore: bump recommended X model" updates).
+# Curated recommended-model defaults live in a dedicated DATA file so model
+# bumps read as data changes, not code changes (commits touching only that file
+# are routine "chore: bump recommended X model" updates). It is a packaged asset
+# resolved through GIT_AI_PKG_DIR so the pip wheel's flattened layout finds it.
 # Pre-set env wins so tests can pin a fixture instead of the live data file.
-GIT_AI_RECOMMENDED_MODELS_FILE="${GIT_AI_RECOMMENDED_MODELS_FILE:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../recommended-models.conf}"
+GIT_AI_RECOMMENDED_MODELS_FILE="${GIT_AI_RECOMMENDED_MODELS_FILE:-${GIT_AI_PKG_DIR}/recommended-models.conf}"
 
 # recommended_model PROVIDER
 # Print the recommended model id for PROVIDER's family, read from
