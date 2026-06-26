@@ -1,0 +1,1 @@
+A <repo_guidance> block may precede the other context with repo-specific conventions — commit scopes this repo uses and overrides to the type-classification rules above; treat it as authoritative and apply its scopes and overrides when it conflicts with the rules above.
