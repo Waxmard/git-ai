@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.5.0](https://github.com/Waxmard/git-ai/compare/v6.4.0...v6.5.0) (2026-06-26)
+
+
+### Features
+
+* install git-ai via pip with full Bash CLI bundled ([#89](https://github.com/Waxmard/git-ai/issues/89)) ([7ec9668](https://github.com/Waxmard/git-ai/commit/7ec96685a4a35082a538f30f43b042986742dadb))
+* open editor directly after generating a commit message ([#88](https://github.com/Waxmard/git-ai/issues/88)) ([20f4e51](https://github.com/Waxmard/git-ai/commit/20f4e51a4cd71caaf6f529f29c2d12ce1c91df30))
+
 ## [6.4.0](https://github.com/Waxmard/git-ai/compare/v6.3.0...v6.4.0) (2026-06-17)
 
 
