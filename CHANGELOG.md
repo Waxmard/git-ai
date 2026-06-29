@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.5.1](https://github.com/Waxmard/git-ai/compare/v6.5.0...v6.5.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* strip whitespace from commit message before empty check ([f407e81](https://github.com/Waxmard/git-ai/commit/f407e818449342a1d48b004cb057d7715a4833d3))
+
 ## [6.5.0](https://github.com/Waxmard/git-ai/compare/v6.4.0...v6.5.0) (2026-06-26)
 
 
