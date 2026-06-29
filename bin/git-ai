@@ -140,7 +140,7 @@ _commit_prompt_and_run() {
     # for an empty message so the abort path fires the friendly die. stripspace
     # honors core.commentChar, matching git's own cleanup exactly.
     local edited
-    edited=$(git -c core.commentChar="$comment_char" stripspace --strip-comments < "$tmpfile" | _trim)
+    edited=$(_trim "$(git -c core.commentChar="$comment_char" stripspace --strip-comments < "$tmpfile")")
     [[ -z "$edited" ]] && die "empty commit message; aborting"
     # Commit straight from the file (not -m) so --cleanup=strip drops comment
     # lines and trims blank runs exactly like a native editor commit. die's
