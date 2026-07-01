@@ -10,7 +10,7 @@ setup() {
   for p in claude-code anthropic-api vertex-anthropic; do
     run recommended_model "$p"
     assert_success
-    assert_output "claude-sonnet-4-6"
+    assert_output "claude-sonnet-5"
   done
 }
 
@@ -33,7 +33,7 @@ setup() {
 @test "recommended_model: profile-qualified vertex token resolves to base family" {
   run recommended_model "vertex-anthropic@acme"
   assert_success
-  assert_output "claude-sonnet-4-6"
+  assert_output "claude-sonnet-5"
 }
 
 @test "recommended_model: unknown provider produces no output" {
