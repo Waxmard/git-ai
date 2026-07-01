@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.5.2](https://github.com/Waxmard/git-ai/compare/v6.5.1...v6.5.2) (2026-07-01)
+
+
+### Miscellaneous Chores
+
+* **ci:** bump anthropics/claude-code-action ([f02a550](https://github.com/Waxmard/git-ai/commit/f02a5501e4b4c26c2edbfd953940281a53116e8a))
+* **config:** update anthropic sonnet to version 5 ([#97](https://github.com/Waxmard/git-ai/issues/97)) ([41e5b56](https://github.com/Waxmard/git-ai/commit/41e5b5661b62fe995bd2354b7bec9fa315f09744))
+
 ## [6.5.1](https://github.com/Waxmard/git-ai/compare/v6.5.0...v6.5.1) (2026-06-29)
 
 
