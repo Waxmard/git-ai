@@ -20,10 +20,6 @@ from git_ai._git import build_draft_body, count_conventional_commits, largest_di
 from git_ai._git_branch import base_warnings
 from git_ai._pr_incremental import branch_cache_dir
 
-# ---------------------------------------------------------------------------
-# count_conventional_commits
-# ---------------------------------------------------------------------------
-
 _ALL_CONVENTIONAL = """\
 GITAI_COMMIT feat: add new feature
 GITAI_COMMIT fix: correct a bug
@@ -118,10 +114,6 @@ def test_count_all_types_recognized() -> None:
     assert total == len(types)
 
 
-# ---------------------------------------------------------------------------
-# build_draft_body
-# ---------------------------------------------------------------------------
-
 _DRAFT_LOG = """\
 GITAI_COMMIT feat: add login page
 GITAI_COMMIT fix: correct null pointer
@@ -163,11 +155,6 @@ def test_draft_body_includes_commit_body_lines() -> None:
     log = "GITAI_COMMIT feat: new thing\nsome body detail\nGITAI_COMMIT fix: other\n"
     draft = build_draft_body(log)
     assert "some body detail" in draft
-
-
-# ---------------------------------------------------------------------------
-# largest_diff_files
-# ---------------------------------------------------------------------------
 
 
 _LARGEST_DIFF = """\
@@ -361,11 +348,6 @@ def test_get_diff_stat_excludes_default_lockfiles(tmp_path: Path) -> None:
     assert "package-lock.json" not in stat
 
 
-# ---------------------------------------------------------------------------
-# branch-aware commit base resolution
-# ---------------------------------------------------------------------------
-
-
 def _checkout(repo: Path, *args: str) -> None:
     subprocess.run(["git", "checkout", *args], cwd=repo, check=True)
 
@@ -467,10 +449,9 @@ def test_resolve_commit_base_stacked_parent_after_parent_advances(
     _commit_files(repo, {"a.py": "a\n"}, "feat: a")
     _checkout(repo, "-b", "feature-b")
     _commit_files(repo, {"b.py": "b\n"}, "feat: b")
-    # The parent advances *after* feature-b forked off it, so feature-a is no
-    # longer an ancestor of HEAD (a bare `--merged HEAD` fast-path would miss it
-    # and wrongly fall back to main). feature-a..HEAD = 1 ahead / 1 behind still
-    # beats main..HEAD = 2 ahead / 0 behind on the ahead count.
+    # The parent advances *after* feature-b forks off, so feature-a is no longer
+    # an ancestor of HEAD (a `--merged HEAD` fast-path would miss it and fall
+    # back to main). 1 ahead / 1 behind still beats main's 2 ahead / 0 behind.
     _checkout(repo, "feature-a")
     _commit_files(repo, {"a2.py": "a2\n"}, "feat: a more")
     _checkout(repo, "feature-b")
@@ -525,9 +506,8 @@ def test_emit_branch_context_honors_env_base(
     _commit_files(repo, {"a.py": "1\n"}, "feat: a")
     _commit_files(repo, {"b.py": "2\n"}, "feat: b")
 
-    # Auto-resolution would pick main (both commits ahead). GIT_AI_COMMIT_BASE
-    # is honored even without --base, narrowing the base to HEAD~1 so only the
-    # most recent commit is in scope.
+    # Auto-resolution would pick main (both commits ahead); GIT_AI_COMMIT_BASE
+    # narrows it to HEAD~1 without --base, scoping to the newest commit.
     monkeypatch.setenv("GIT_AI_COMMIT_BASE", "HEAD~1")
     _emit_branch_context(str(repo), None)
 
@@ -535,11 +515,6 @@ def test_emit_branch_context_honors_env_base(
     assert "<branch>feature</branch>" in block
     assert "feat: b" in block
     assert "feat: a" not in block
-
-
-# ---------------------------------------------------------------------------
-# intra-branch churn detection
-# ---------------------------------------------------------------------------
 
 
 def _churn_repo(repo: Path) -> None:
@@ -646,7 +621,6 @@ def test_base_warnings_no_fork_warning_when_detached(tmp_path: Path) -> None:
     ).stdout.strip()
     _checkout(repo, head)  # detach HEAD
 
-    # Detached HEAD has no branch — "branch looks forked from X" is nonsensical
-    # and must not fire when current_branch is None.
+    # Detached HEAD: "branch looks forked from X" must not fire.
     warnings = base_warnings(repo, "main", None)
     assert not any("forked from" in w for w in warnings)

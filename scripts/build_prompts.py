@@ -2,8 +2,7 @@
 """Render LLM prompts from templates in prompts/src/.
 
 Templates pull shared prose in via ``{{ include:partials/<name>.txt }}``
-directives so wording that must stay in lockstep across prompts (type
-classification, output markers, preservation rules) lives in one place.
+directives so wording that must stay in lockstep across prompts lives once.
 
 Unlike scripts/build_docs.py, NO header comment is prepended: a generated
 prompt is fed verbatim to an LLM, so any extra text would alter behavior.
@@ -23,9 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "prompts" / "src"
 OUT = REPO_ROOT / "python" / "git_ai" / "prompts"
 
-# template (relative to SRC) -> output (relative to OUT). commit.txt is left
-# standalone (it shares no verbatim text with the PR prompts) and is edited
-# directly in python/git_ai/prompts/.
+# commit.txt is deliberately absent — it shares no verbatim text with the PR
+# prompts, so it's edited directly in python/git_ai/prompts/.
 TEMPLATES: dict[str, str] = {
     "pr-two-pass.txt": "pr-two-pass.txt",
     "pr-two-pass-update.txt": "pr-two-pass-update.txt",

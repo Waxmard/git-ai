@@ -29,7 +29,6 @@ DEFAULT_RELEASE_CONTEXT = (
 
 
 def _git(repo_path: str | Path, *args: str) -> str:
-    """Run a git command and return stdout. Raises RuntimeError on failure."""
     result = subprocess.run(
         ["git", *args],
         cwd=str(repo_path),
@@ -43,7 +42,6 @@ def _git(repo_path: str | Path, *args: str) -> str:
 
 
 def get_git_dir(repo_path: str | Path) -> str:
-    """Return the repository git dir path."""
     git_dir = _git(repo_path, "rev-parse", "--git-dir").strip()
     git_dir_path = Path(git_dir)
     if git_dir_path.is_absolute():
@@ -52,7 +50,6 @@ def get_git_dir(repo_path: str | Path) -> str:
 
 
 def get_repo_root(repo_path: str | Path) -> Path:
-    """Return the repository top-level directory."""
     return Path(_git(repo_path, "rev-parse", "--show-toplevel").strip())
 
 
@@ -63,12 +60,10 @@ def get_current_branch(repo_path: str | Path) -> str | None:
 
 
 def get_head_sha(repo_path: str | Path) -> str:
-    """Return HEAD commit SHA."""
     return _git(repo_path, "rev-parse", "HEAD").strip()
 
 
 def git_ref_exists(repo_path: str | Path, ref: str) -> bool:
-    """Return True when ref resolves to a commit in this repo."""
     result = subprocess.run(
         ["git", "cat-file", "-e", f"{ref}^{{commit}}"],
         cwd=str(repo_path),
@@ -81,7 +76,6 @@ def git_ref_exists(repo_path: str | Path, ref: str) -> bool:
 def git_is_ancestor(
     repo_path: str | Path, ancestor_ref: str, descendant_ref: str
 ) -> bool:
-    """Return True if ancestor_ref is an ancestor of descendant_ref."""
     result = subprocess.run(
         ["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref],
         cwd=str(repo_path),
@@ -106,7 +100,6 @@ def git_merge_base(repo_path: str | Path, ref_a: str, ref_b: str) -> str | None:
 
 
 def check_git_repo(repo_path: str | Path) -> None:
-    """Raise RuntimeError if not inside a git repository."""
     result = subprocess.run(
         ["git", "rev-parse", "--git-dir"],
         cwd=str(repo_path),
@@ -121,10 +114,7 @@ def _resolve_exclude_patterns(
     repo_path: str | Path,
     exclude_patterns: list[str] | tuple[str, ...] | None,
 ) -> list[str] | tuple[str, ...]:
-    """Auto-load ``.git-ai-ignore`` + lockfile defaults when patterns is None.
-
-    Pass an empty list/tuple to opt out of all filtering.
-    """
+    """Auto-load ``.git-ai-ignore`` + lockfile defaults when patterns is None."""
     if exclude_patterns is not None:
         return exclude_patterns
     return load_ignore_patterns(get_repo_root(repo_path))
@@ -137,9 +127,8 @@ def get_staged_diff(
 ) -> str:
     """Return staged diff. Raises RuntimeError if nothing is staged.
 
-    When ``exclude_patterns`` is omitted, auto-loads ``.git-ai-ignore`` from the
-    repo root and applies built-in lockfile defaults. Pass ``exclude_patterns=[]``
-    to opt out of all filtering.
+    Omitting ``exclude_patterns`` auto-loads ``.git-ai-ignore`` plus the
+    lockfile defaults; pass ``[]`` to opt out of filtering.
     """
     pathspec = to_pathspec_args(_resolve_exclude_patterns(repo_path, exclude_patterns))
     quiet = subprocess.run(
@@ -154,7 +143,6 @@ def get_staged_diff(
 
 
 def get_release_context(repo_path: str | Path) -> str:
-    """Return release context string (last tag + commits since)."""
     result = subprocess.run(
         ["git", "describe", "--tags", "--abbrev=0"],
         cwd=str(repo_path),
@@ -221,7 +209,6 @@ def get_mr_release_context(repo_path: str | Path) -> str:
 
 
 def get_commit_log(repo_path: str | Path, base_branch: str) -> str:
-    """Return commit log in GITAI_COMMIT-prefixed format."""
     return _git(
         repo_path,
         "log",
@@ -240,9 +227,8 @@ def get_diff_stat(
 ) -> str:
     """Return git diff --stat between base and HEAD.
 
-    When ``exclude_patterns`` is omitted, auto-loads ``.git-ai-ignore`` from the
-    repo root and applies built-in lockfile defaults. Pass ``exclude_patterns=[]``
-    to opt out of all filtering.
+    Omitting ``exclude_patterns`` auto-loads ``.git-ai-ignore`` plus the
+    lockfile defaults; pass ``[]`` to opt out of filtering.
     """
     sep = "..." if three_dot else ".."
     return _git(
@@ -263,9 +249,8 @@ def get_diff(
 ) -> str:
     """Return git diff -U0 between base and HEAD.
 
-    When ``exclude_patterns`` is omitted, auto-loads ``.git-ai-ignore`` from the
-    repo root and applies built-in lockfile defaults. Pass ``exclude_patterns=[]``
-    to opt out of all filtering.
+    Omitting ``exclude_patterns`` auto-loads ``.git-ai-ignore`` plus the
+    lockfile defaults; pass ``[]`` to opt out of filtering.
     """
     sep = "..." if three_dot else ".."
     return _git(
@@ -293,10 +278,7 @@ def count_conventional_commits(log: str) -> tuple[int, int]:
 
 
 def format_commit_log(commits: Iterable[tuple[str, str]]) -> str:
-    """Build a GITAI_COMMIT-prefixed log from (subject, body) pairs.
-
-    Produces the same shape as `git log --format=GITAI_COMMIT %s%n%b`.
-    """
+    """Build a log matching `git log --format=GITAI_COMMIT %s%n%b`."""
     parts: list[str] = []
     for subject, body in commits:
         parts.append(f"GITAI_COMMIT {subject}")
@@ -311,10 +293,9 @@ _DIFF_FILE_HEADER = re.compile(r"^diff --git a/(?P<a>.+?) b/(?P<b>.+)$")
 
 
 def derive_diff_stat(diff: str) -> str:
-    """Derive a git-diff-stat-style summary from a raw unified diff string.
+    """Approximate `git diff --stat` from a raw unified diff.
 
-    Output shape approximates `git diff --stat`: one line per file with change
-    count and a +/- bar, plus a summary footer. Binary files are reported with
+    One line per file (count + a +/- bar) and a footer; binary files show
     "Bin" instead of counts.
     """
     files: list[tuple[str, int, int, bool]] = []
@@ -379,10 +360,9 @@ def derive_diff_stat(diff: str) -> str:
 
 
 def largest_diff_files(diff: str, n: int = 5) -> list[tuple[str, int, int]]:
-    """Return top-``n`` files in ``diff`` by (insertions + deletions), descending.
+    """Top-``n`` ``(path, insertions, deletions)`` by churn, descending.
 
-    Each entry is ``(path, insertions, deletions)``. Used to format the
-    "Largest staged files" hint when a diff exceeds the size guard.
+    Feeds the "Largest staged files" hint when a diff exceeds the size guard.
     """
     files: list[tuple[str, int, int]] = []
     current_path: str | None = None
@@ -416,7 +396,6 @@ def largest_diff_files(diff: str, n: int = 5) -> list[tuple[str, int, int]]:
 
 
 def build_draft_body(log: str) -> str:
-    """Build a draft PR body from conventional commit messages."""
     sections = [
         ("Features", "feat"),
         ("Bug Fixes", "fix"),

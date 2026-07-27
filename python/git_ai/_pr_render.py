@@ -26,12 +26,9 @@ def _color(text: str, code: str, enabled: bool) -> str:
 def render_pr_diff(existing: str, updated: str, *, color: bool) -> str:
     """Render a unified diff between two PR texts.
 
-    Uses prefixes so every emitted content line has the same leading width:
-      ``  `` (two spaces) for context, ``~ `` for a line that replaced an
-      old one, ``+ `` for a pure addition, ``- `` for a pure removal. Hunk
-      headers (``@@ ... @@``) pass through verbatim.
-
-    ANSI color is applied to change lines only when ``color`` is True.
+    Prefixes are equal-width so content stays aligned: ``  `` context, ``~ ``
+    replaced line, ``+ `` pure addition, ``- `` pure removal. Hunk headers
+    pass through verbatim.
     """
     a = existing.splitlines()
     b = updated.splitlines()
@@ -82,10 +79,9 @@ _INTRO = "_intro"
 
 
 def _parse_sections(text: str) -> dict[str, list[str]]:
-    """Group non-blank lines by ``### Heading``.
+    """Group non-blank lines by ``### Heading``, order preserved.
 
-    Lines before the first heading land in the ``_INTRO`` bucket (typically
-    the PR title and any preamble). Section order is preserved.
+    Lines before the first heading (title, preamble) land in ``_INTRO``.
     """
     sections: dict[str, list[str]] = {_INTRO: []}
     current = _INTRO
@@ -104,14 +100,10 @@ def _parse_sections(text: str) -> dict[str, list[str]]:
 def summarize_pr_changes(existing: str, updated: str) -> str:
     """Return a markdown-safe summary of per-section net additions/removals.
 
-    Empty string when ``existing`` is blank, the texts are identical, or no
-    section-level changes are detected. Output is a small bulleted list
-    suitable to prepend above the updated body — it never contains diff
-    prefixes that would break markdown rendering when copy-pasted.
-
-    Set-based comparison: reorder-only changes and duplicate-line dedup
-    within a section both produce no delta, so ``existing != updated`` can
-    still yield an empty summary.
+    A bulleted list safe to prepend above the updated body — no diff prefixes
+    that would break markdown when copy-pasted. Comparison is set-based, so
+    reordering and duplicate lines yield no delta and ``existing != updated``
+    can still summarize to empty.
     """
     if not existing.strip() or existing == updated:
         return ""
@@ -163,7 +155,6 @@ def main(argv: list[str] | None = None) -> int:
         existing = Path(args.existing).read_text(encoding="utf-8")
         updated = Path(args.updated).read_text(encoding="utf-8")
 
-        # No prior draft or non-interactive stdout: emit updated text verbatim.
         if not existing.strip() or not _is_interactive():
             sys.stdout.write(updated)
             return 0

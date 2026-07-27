@@ -33,14 +33,12 @@ else:
 
 _BASE_CANDIDATE_NAMES = ("main", "master", "dev")
 
-# Cap on branches scored by the fork-parent heuristic, so a repo with
-# thousands of stale remote branches can't make a commit crawl. Branches are
-# considered most-recently-committed first, so the relevant ones are kept.
+# Caps the fork-parent heuristic so thousands of stale remote branches can't
+# stall a commit. Branches are taken most-recently-committed first.
 _MAX_ENUMERATED_BRANCHES = 50
 
-# Cap on commits classified by churn detection. Each commit costs one
-# `git show` plus a `git blame` per modified file, so an unbounded branch could
-# make `git-ai pr` crawl; over the cap we skip churn detection entirely.
+# Each churn-classified commit costs a `git show` plus a `git blame` per
+# modified file; over the cap, churn detection is skipped entirely.
 _MAX_CHURN_COMMITS = 50
 
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+")
@@ -62,11 +60,7 @@ def _load_branch_cache_dir() -> Callable[..., Path]:
 
 
 def get_default_branch(repo_path: str | Path) -> str | None:
-    """Return the remote's default branch name (origin/HEAD), or None.
-
-    Strips the ``origin/`` prefix so the result is a bare branch name such as
-    ``main`` or ``dev``.
-    """
+    """Return the remote's default branch as a bare name (origin/HEAD), or None."""
     result = subprocess.run(
         ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
         cwd=str(repo_path),
@@ -139,9 +133,8 @@ def base_warnings(
     3. HEAD forked from another branch that sits between the base and HEAD, so
        the PR diff folds in that branch's commits unless ``--base`` is narrowed.
 
-    ``current_branch`` is the caller's already-resolved branch name; when given
-    it is used as-is to avoid a redundant ``git rev-parse`` (and the race of a
-    second lookup disagreeing with the caller's value).
+    ``current_branch`` is used as-is when given, avoiding a second
+    ``git rev-parse`` that could race and disagree with the caller.
     """
     warnings: list[str] = []
     origin_ref = f"origin/{base_branch}"
@@ -162,10 +155,8 @@ def base_warnings(
             f"shows already-merged work."
         )
 
-    # Fork detection only makes sense on a named branch: detached HEAD has no
-    # branch, so "branch looks forked from 'X'" would be nonsensical (and would
-    # contradict the caller's detached-HEAD warning). The stale-base warnings
-    # above still apply — they describe the diff baseline, not the branch.
+    # Fork detection needs a named branch — on detached HEAD "branch looks
+    # forked from 'X'" is nonsense and contradicts the caller's own warning.
     base_ref = origin_ref if has_origin else (base_branch if has_local else None)
     if base_ref and current_branch is not None:
         fork = _nearest_fork_parent(repo_path, current_branch)
@@ -188,9 +179,8 @@ def _base_name_from_pr_cache(
 ) -> str | None:
     """Return the most-recent candidate base the user drafted a PR against.
 
-    git-ai's PR cache lives under ``<git-dir>/pr-cache/<hash(branch+base)>/``;
-    the base is not stored, so we probe each candidate's cache dir and pick the
-    most recently written match. Reflects an explicit ``git-ai pr`` choice.
+    The PR cache key is ``hash(branch+base)`` and doesn't store the base, so
+    each candidate's cache dir is probed and the newest match wins.
     """
     if not git_dir or not branch:
         return None
@@ -208,12 +198,7 @@ def _base_name_from_pr_cache(
 
 
 def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list[str]:
-    """Local + origin branch short-refs, newest first, minus the current branch.
-
-    Excludes the current branch (and its ``origin/`` counterpart) and the
-    ``origin/HEAD`` pointer, then caps the list at
-    :data:`_MAX_ENUMERATED_BRANCHES`.
-    """
+    """Local + origin branch short-refs, newest first, minus the current branch."""
     result = subprocess.run(
         [
             "git",
@@ -292,13 +277,10 @@ def _branch_ahead_behind(
 ) -> list[tuple[str, int, int]] | None:
     """One-shot ``(ref, ahead, behind)`` for every candidate branch, or None.
 
-    Uses ``for-each-ref``'s ``ahead-behind:HEAD`` token (git >= 2.41) to compute
-    each branch's divergence from HEAD in a single subprocess, replacing one
-    ``git rev-list`` probe per branch. ``ahead``/``behind`` match
-    :func:`_ahead_behind` (``ahead`` = HEAD-only commits, ``behind`` = ref-only).
-    Returns None when the token is unsupported (older git exits non-zero) so the
-    caller can fall back to per-ref probing. Same exclusions and
-    :data:`_MAX_ENUMERATED_BRANCHES` cap as :func:`_list_branch_refs`.
+    Uses ``for-each-ref``'s ``ahead-behind:HEAD`` token (git >= 2.41) to get
+    every branch's divergence in one subprocess instead of a ``rev-list`` probe
+    each. None when the token is unsupported, so the caller can fall back to
+    per-ref probing. ``ahead``/``behind`` match :func:`_ahead_behind`.
     """
     result = subprocess.run(
         [
@@ -347,14 +329,10 @@ def _nearest_fork_parent(
     """Return the branch HEAD most likely forked from, or None.
 
     Scores every other branch by ``(commits-ahead, commits-behind, name-rank)``
-    and picks the smallest: the nearest ancestor with the least divergence.
-    This finds the real base regardless of name — ``release/*``, ``staging``, a
-    parent feature branch in a stacked PR — not just ``main``/``master``/``dev``.
-    Branches that already contain all of HEAD (nothing ahead) are skipped.
-
-    Divergence comes from a single :func:`_branch_ahead_behind` call, falling
-    back to per-ref :func:`_ahead_behind` probing only on git too old for the
-    ``ahead-behind`` token.
+    and takes the smallest — the nearest ancestor with the least divergence.
+    Name-agnostic, so it finds ``release/*``, ``staging``, or a stacked parent
+    branch, not just ``main``/``master``/``dev``. Branches that already contain
+    all of HEAD are skipped.
     """
     default_name = get_default_branch(repo_path)
     rows = _branch_ahead_behind(repo_path, current_branch)
@@ -415,7 +393,6 @@ def resolve_commit_base(
 def get_branch_commit_subjects(
     repo_path: str | Path, base_ref: str, *, limit: int = 30
 ) -> str:
-    """Return up to ``limit`` non-merge commit subjects on HEAD since base_ref."""
     return _git(
         repo_path,
         "log",
@@ -487,20 +464,18 @@ def get_branch_churn_subjects(
 ) -> list[str]:
     """Subjects of commits that only refine code this branch itself introduced.
 
-    A commit in ``classify_base..HEAD`` is *intra-branch churn* when every
-    pre-image line it modifies or deletes was introduced by a branch-local
-    commit — i.e. ``git blame`` of its parent traces those lines to a commit in
-    ``branch_base..HEAD``. Such a commit (a follow-up ``fix``/``refactor``/
-    ``perf``/``docs`` on code added earlier in the same PR) is invisible from
-    the base branch's perspective: the net diff only shows the final feature.
+    A commit in ``classify_base..HEAD`` is *intra-branch churn* when ``git
+    blame`` of its parent traces every pre-image line it edits or deletes back
+    to ``branch_base..HEAD``. Such a follow-up (``fix``/``refactor``/``perf``/
+    ``docs`` on code added earlier in the same PR) is invisible from the base
+    branch, whose net diff shows only the final feature. Pure additions never
+    count — they introduce code, so they keep their own section.
 
-    Pure-addition commits never count as churn — they introduce code, so they
-    keep their own section. ``classify_base`` defaults to ``branch_base``; pass
-    the incremental base (e.g. a cached HEAD SHA) to classify only new commits
-    while still treating the whole branch as "branch-introduced".
+    ``classify_base`` defaults to ``branch_base``; pass the incremental base
+    (e.g. a cached HEAD SHA) to classify only new commits while still treating
+    the whole branch as "branch-introduced".
 
-    Best-effort: returns ``[]`` on any git failure or when the classify range
-    exceeds ``limit`` commits.
+    Best-effort: ``[]`` on any git failure or a classify range over ``limit``.
     """
     if classify_base is None:
         classify_base = branch_base
@@ -543,9 +518,8 @@ def format_branch_context(
 ) -> str:
     """Assemble the optional branch-context block for a commit prompt.
 
-    Each tag is emitted only when its value is non-empty, so a fresh branch
-    (no commits yet) or a commit made directly on the base branch yields an
-    empty string. Returns the block without surrounding blank lines.
+    Empty-valued tags are dropped, so a fresh branch or a commit made directly
+    on the base branch yields ``""``.
     """
     segments: list[str] = []
     if branch_name and branch_name.strip():

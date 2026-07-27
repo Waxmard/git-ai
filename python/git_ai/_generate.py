@@ -1,9 +1,7 @@
 """Prompt builders and response parsers for commit + MR generation.
 
-git_ai is **provider-agnostic**: it owns prompt assembly, diff-stat derivation,
-and output cleanup but never calls an LLM. Consumers wire their own model
-call between :func:`build_commit_prompt` / :func:`build_mr_prompt` and
-:func:`parse_commit_response` / :func:`parse_mr_response`.
+Provider-agnostic: never calls an LLM. Consumers wire their own model call
+between the ``build_*_prompt`` and ``parse_*_response`` halves.
 """
 
 from __future__ import annotations
@@ -61,13 +59,11 @@ def _load_prompt(name: str) -> str:
 
 
 def strip_fences(text: str) -> str:
-    """Remove markdown code fences and trim whitespace."""
     text = re.sub(r"^[ \t]*```.*\n", "", text, flags=re.MULTILINE)
     text = re.sub(r"^[ \t]*`+[ \t]*$\n?", "", text, flags=re.MULTILINE)
     text = text.strip()
-    # Unwrap a subject line the model wrapped in an inline code span, e.g.
-    # "`feat: add x`" -> "feat: add x". Only when the whole first line is a
-    # single span (no internal backticks), so code spans in a body survive.
+    # Unwrap a subject wrapped in an inline code span ("`feat: add x`"). Only a
+    # whole-line single span, so code spans inside a body survive.
     lines = text.split("\n")
     if lines:
         m = re.fullmatch(r"[ \t]*(`+)([^`]+)\1[ \t]*", lines[0])
@@ -87,26 +83,12 @@ def build_commit_prompt(
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for commit-message generation.
 
-    Args:
-        diff: Unified diff string (e.g. ``git diff --staged`` output).
-        release_context: Optional release-context blurb. Defaults to a generic
-            "no release tags found" string.
-        branch_name: Current branch name. Surfaced so the model can pick the
-            commit prefix from the perspective of the whole branch.
-        branch_commits: Newline-separated subjects of the commits already on
-            this branch since its base (most recent first).
-        branch_diffstat: ``git diff --stat`` of the whole branch vs its base.
-        repo_guidance: Free-form repo-local conventions (commit scopes,
-            type-classification overrides) from ``.git-ai-instructions``.
-            Surfaced as an authoritative ``<repo_guidance>`` block.
-
     The branch_* values describe the branch's overall purpose; the prompt uses
     them only to disambiguate the prefix when the staged diff alone is
-    ambiguous. Any branch tag whose value is empty is omitted.
-
-    Returns:
-        ``(system_prompt, user_input)`` — feed both to your LLM, then run the
-        raw response through :func:`parse_commit_response`.
+    ambiguous. Empty branch tags are omitted. ``repo_guidance``
+    (``.git-ai-instructions``) becomes an authoritative ``<repo_guidance>``
+    block. Feed both returned strings to your LLM, then run the response
+    through :func:`parse_commit_response`.
 
     Raises:
         ValueError: if ``diff`` is empty.
@@ -149,27 +131,13 @@ def build_mr_prompt(
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for MR/PR generation.
 
-    Selects the two-pass or fallback prompt template based on whether the
-    supplied ``commit_log`` is mostly Conventional Commits, and an
-    update-flavoured variant when ``existing_pr`` is supplied.
-
-    Args:
-        diff: Unified diff string (e.g. ``git diff base...HEAD`` output).
-        commit_log: Commits log in ``GITAI_COMMIT``-prefixed form
-            (see :func:`format_commit_log`). Optional.
-        diff_stat: Pre-computed diff stat. Derived from ``diff`` when omitted.
-        release_context: Optional release-context blurb.
-        existing_pr: Prior PR text to refine against. When supplied, the
-            update-flavoured prompt variant is selected.
-        churn_subjects: Subjects of commits that only refine code introduced
-            earlier in this same branch. Folded in the two-pass draft instead
-            of emitted as standalone sections. Optional.
-        repo_guidance: Free-form repo-local conventions from
-            ``.git-ai-instructions``, surfaced as a ``<repo_guidance>`` block.
-
-    Returns:
-        ``(system_prompt, user_input)`` — feed both to your LLM, then run the
-        raw response through :func:`parse_mr_response`.
+    Selects the two-pass or fallback prompt template based on whether
+    ``commit_log`` (``GITAI_COMMIT``-prefixed, see :func:`format_commit_log`)
+    is mostly Conventional Commits, and an update-flavoured variant when
+    ``existing_pr`` is supplied. ``churn_subjects`` are commits that only
+    refine code introduced earlier in the same branch — folded into the draft
+    instead of emitted as standalone sections. Feed both returned strings to
+    your LLM, then run the response through :func:`parse_mr_response`.
 
     Raises:
         ValueError: if ``diff`` is empty.
@@ -214,12 +182,10 @@ def _marker_index(lines: list[str], marker: str) -> int:
 
 
 def _extract_pr_sections(text: str) -> str:
-    """Slice title/body out of sentinel-delimited PR output.
+    """Slice ``title\\n\\nbody`` out of ``===TITLE===`` / ``===BODY===`` markers.
 
-    The PR prompts wrap output in ``===TITLE===`` / ``===BODY===`` line
-    markers so any preamble, reasoning, or char-count chatter the model
-    emits outside the markers is discarded. Returns ``title\\n\\nbody``.
-    Falls back to ``text`` unchanged when the markers are absent or
+    Preamble, reasoning, or char-count chatter outside the markers is
+    discarded. Falls back to ``text`` unchanged when the markers are absent or
     malformed (older or non-compliant models).
     """
     lines = text.split("\n")
@@ -235,22 +201,14 @@ def _extract_pr_sections(text: str) -> str:
 
 
 def parse_commit_response(raw: str) -> str:
-    """Strip markdown fences from a commit-message response and validate non-empty.
-
-    Raises:
-        RuntimeError: if the cleaned response is empty.
-    """
+    """Strip fences from a commit-message response. Raises if it cleans to empty."""
     return _parse_response(raw)
 
 
 def parse_mr_response(raw: str) -> str:
-    """Parse an MR/PR response: strip fences, slice sentinel sections, validate.
+    """Strip fences and unwrap the ``===TITLE===`` / ``===BODY===`` markers.
 
-    Unwraps the ``===TITLE===`` / ``===BODY===`` markers the PR prompts
-    emit (discarding any out-of-band preamble); falls back to the
-    fence-stripped text when the markers are absent.
-
-    Raises:
-        RuntimeError: if the cleaned response is empty.
+    Falls back to the fence-stripped text when the markers are absent. Raises
+    if the response cleans to empty.
     """
     return _extract_pr_sections(_parse_response(raw))
