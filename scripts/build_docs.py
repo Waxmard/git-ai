@@ -28,6 +28,10 @@ TEMPLATES: dict[str, list[str]] = {
     "CLAUDE.md": ["CLAUDE.md"],
     "AGENTS.md": ["AGENTS.md"],
     "CONTRIBUTING.md": ["CONTRIBUTING.md"],
+    "python-CLAUDE.md": ["python/CLAUDE.md"],
+    "python-AGENTS.md": ["python/AGENTS.md"],
+    "test-CLAUDE.md": ["test/CLAUDE.md"],
+    "test-AGENTS.md": ["test/AGENTS.md"],
 }
 
 INCLUDE_RE = re.compile(r"\{\{\s*include:([^\s}]+)\s*\}\}")
