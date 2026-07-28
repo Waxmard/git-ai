@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.6.1](https://github.com/Waxmard/git-ai/compare/v6.6.0...v6.6.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* prevent stray markers and turn limits from corrupting generated text ([#109](https://github.com/Waxmard/git-ai/issues/109)) ([3792254](https://github.com/Waxmard/git-ai/commit/37922548c573cbd780e7ce4957f30a4467057122))
+
 ## [6.6.0](https://github.com/Waxmard/git-ai/compare/v6.5.2...v6.6.0) (2026-07-28)
 
 
