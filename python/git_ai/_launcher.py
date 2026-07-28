@@ -1,9 +1,7 @@
 """Console-script entry point for the pip-installed `git-ai` / `aigit` CLIs.
 
-The CLI itself is the Bash program under ``bin/git-ai``; the wheel bundles it
-(plus ``lib/``) under ``git_ai/_sh/``. This launcher just points the Bash layer
-at the installed package (via ``GIT_AI_PKG_DIR``) and execs it, so a
-``pip install`` user gets the real tool with no Python reimplementation.
+The real CLI is the wheel-bundled Bash under ``git_ai/_sh/``. This points it at
+the installed package (``GIT_AI_PKG_DIR``) and execs it — no Python reimplementation.
 """
 
 from __future__ import annotations
@@ -23,15 +21,13 @@ def main() -> None:
         )
         sys.exit(1)
 
-    # The Bash layer resolves prompts/CLIs/data files relative to this; the repo
-    # default (sibling python/git_ai) does not exist in the wheel layout. The
-    # launcher knows the installed location, so it always wins over any stale
-    # GIT_AI_PKG_DIR lingering in the user's environment.
+    # Bash resolves prompts/CLIs/data files from this; its repo default
+    # (sibling python/git_ai) doesn't exist in the wheel layout. Always
+    # overrides a stale GIT_AI_PKG_DIR in the user's environment.
     env = dict(os.environ)
     env["GIT_AI_PKG_DIR"] = str(pkg_dir)
 
-    # Trusted exec: `bash` resolved on PATH (like the rest of the tool) running
-    # the wheel-bundled CLI. No shell interpolation — args pass as a list.
+    # Trusted exec: `bash` off PATH, args as a list, no shell interpolation.
     os.execvpe("bash", ["bash", str(cli), *sys.argv[1:]], env)  # noqa: S606
 
 

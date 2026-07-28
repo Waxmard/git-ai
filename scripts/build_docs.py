@@ -19,15 +19,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "docs" / "src"
 
-# template (relative to SRC) -> output paths (relative to REPO_ROOT).
-# CLAUDE.md and AGENTS.md are thin per-agent headers that both include
-# partials/guide-body.md, so the shared guidance stays in lockstep while each
-# keeps its own audience-appropriate framing.
+# The per-agent templates are thin headers over partials/guide-body.md, so the
+# shared guidance stays in lockstep while each keeps its own framing.
 TEMPLATES: dict[str, list[str]] = {
     "README.md": ["README.md"],
     "CLAUDE.md": ["CLAUDE.md"],
     "AGENTS.md": ["AGENTS.md"],
     "CONTRIBUTING.md": ["CONTRIBUTING.md"],
+    "python-CLAUDE.md": ["python/CLAUDE.md"],
+    "python-AGENTS.md": ["python/AGENTS.md"],
+    "test-CLAUDE.md": ["test/CLAUDE.md"],
+    "test-AGENTS.md": ["test/AGENTS.md"],
 }
 
 INCLUDE_RE = re.compile(r"\{\{\s*include:([^\s}]+)\s*\}\}")
@@ -50,7 +52,6 @@ def _sub(match: re.Match[str]) -> str:
 
 
 def render(template: str) -> str:
-    """Expand a template's include directives, resolving nested includes."""
     text = (SRC / template).read_text(encoding="utf-8")
     for _ in range(MAX_PASSES):
         if not INCLUDE_RE.search(text):

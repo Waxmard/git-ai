@@ -10,8 +10,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-# TYPE_CHECKING block gives mypy symbol resolution; runtime imports happen in
-# the elif (standalone via importlib) and else (package) branches below.
+# TYPE_CHECKING is for mypy only; the elif (standalone) and else (package)
+# branches below are what actually import at runtime.
 if TYPE_CHECKING:
     from ._git import (
         check_git_repo,
@@ -183,11 +183,9 @@ def prepare_repo_pr_context(
     ):
         input_base = cached_sha
 
-    # Resolve the base branch to a usable ref, preferring the remote-tracking
-    # copy (origin/<base>) over a local branch that may lag behind the remote.
-    # A stale local base leaks commits already merged upstream into the diff and
-    # commit log, so the PR ends up describing work that is not on this branch.
-    # This mirrors the commit flow, which also resolves bases via _best_base_ref.
+    # Prefer origin/<base> over a local branch that may lag: a stale local base
+    # leaks already-merged commits into the diff and log, so the PR describes
+    # work that isn't on this branch.
     base_ref = _best_base_ref(repo_path, base_branch)
     if input_base == base_branch:
         if base_ref is None:
@@ -196,8 +194,7 @@ def prepare_repo_pr_context(
                 f"(looked for {base_branch!r} and 'origin/{base_branch}')."
             )
         diff_ref = base_ref
-        # A three-dot base..HEAD diff requires a common ancestor; without one
-        # git errors cryptically. Fail early with an actionable message instead.
+        # A three-dot diff needs a common ancestor; git's own error is cryptic.
         if git_merge_base(repo_path, diff_ref, "HEAD") is None:
             raise RuntimeError(
                 f"{base_branch!r} and HEAD share no common ancestor, so they "
@@ -233,16 +230,12 @@ def prepare_repo_pr_context(
     three_dot = input_base == base_branch
     repo_root = get_repo_root(repo_path)
     patterns = load_ignore_patterns(repo_root)
-    # The diff *stat* keeps lockfiles (built-in defaults) so a lockfile-only
-    # dependency bump — common when draining renovate/dependabot branches into a
-    # feature branch — still shows up as a one-line stat the model can describe;
-    # the full diff above strips them as noise. User `.git-ai-ignore` entries are
-    # still honoured for both.
+    # The stat keeps lockfiles so a lockfile-only bump (common when draining bot
+    # branches) still shows as one describable line; the full diff strips them
+    # as noise. User `.git-ai-ignore` entries apply to both.
     stat_patterns = load_ignore_patterns(repo_root, include_defaults=False)
-    # Detect intra-branch refinements so the draft can fold follow-up
-    # fix/refactor/perf/docs commits into the feature they refine. Membership
-    # uses the whole branch (the resolved base ref); classification covers only
-    # the commits the draft will list (diff_ref).
+    # Churn membership spans the whole branch (base ref); classification covers
+    # only the commits the draft will list (diff_ref).
     churn_base = base_ref if base_ref is not None else diff_ref
     churn_subjects = get_branch_churn_subjects(
         repo_path, churn_base, classify_base=diff_ref
@@ -250,8 +243,7 @@ def prepare_repo_pr_context(
     warnings: list[str] = []
     if current_branch is None:
         warnings.append("detached HEAD: PR caching is disabled for this run.")
-    # Base-relationship warnings only make sense for a full base..HEAD PR; an
-    # incremental update (input_base = a HEAD SHA) has no base relationship.
+    # An incremental update (input_base = a HEAD SHA) has no base relationship.
     if three_dot:
         warnings.extend(base_warnings(repo_path, base_branch, current_branch))
     return RepoPrContext(
