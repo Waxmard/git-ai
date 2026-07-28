@@ -163,7 +163,7 @@ extract_pr_output() {
       my ($t, $b) = ($1, $2);
       $t =~ s/\A\s+//; $t =~ s/\s+\z//;
       $b =~ s/\A\s+//; $b =~ s/\s+\z//;
-      while ($b =~ s/(?:\A|\n)[ \t]*===(?:TITLE|BODY)===[ \t]*\z//) { $b =~ s/\s+\z//; }
+      while ($b =~ s/(?:\A|\n)[ \t]*={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}[ \t]*\z//) { $b =~ s/\s+\z//; }
       if (length $t) {
         print length($b) ? "$t\n\n$b\n" : "$t\n";
         next;
@@ -185,13 +185,13 @@ extract_commit_output() {
     if (/^===COMMIT===[ \t]*\n(.*)\z/ms) {
       my $m = $1;
       $m =~ s/\A\s+//; $m =~ s/\s+\z//;
-      while ($m =~ s/(?:\A|\n)[ \t]*===COMMIT===[ \t]*\z//) { $m =~ s/\s+\z//; }
+      while ($m =~ s/(?:\A|\n)[ \t]*={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}[ \t]*\z//) { $m =~ s/\s+\z//; }
       if (length $m) { print "$m\n"; next; }
     }
     if (/^[ \t]*((?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)(?:\([^)]*\))?!?: \S.*)\z/ms) {
       my $m = $1;
       $m =~ s/\s+\z//;
-      while ($m =~ s/(?:\A|\n)[ \t]*===COMMIT===[ \t]*\z//) { $m =~ s/\s+\z//; }
+      while ($m =~ s/(?:\A|\n)[ \t]*={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}[ \t]*\z//) { $m =~ s/\s+\z//; }
       print "$m\n";
       next;
     }

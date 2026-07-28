@@ -6,11 +6,11 @@ A <branch>, <branch_commits>, and/or <branch_diffstat> block may precede the <di
 
 A <repo_guidance> block may precede the other context. It holds repo-specific conventions — commit scopes this repo uses and overrides to the type-classification rules above. Treat it as authoritative: when it conflicts with the default heuristics in this prompt, the repo guidance wins. If it defines scopes, apply the single most fitting one as a Conventional Commits scope, e.g. feat(scope): — never invent a scope it does not list.
 
-Wrap your answer in the exact line markers shown below. Emit NOTHING before the ===COMMIT=== line — no preamble, no restatement of the diff, no explanation of which type you picked or why. Any reasoning you do stays out of the output entirely.
+Wrap your answer in the exact line marker shown below. Emit NOTHING before the ===COMMIT=== line — no preamble, no restatement of the diff, no explanation of which type you picked or why. Any reasoning you do stays out of the output entirely. ===COMMIT=== is the only marker that exists: the message simply ends the response, so never emit a closing marker such as ===END===.
 
 ===COMMIT===
 <subject line>
 
 <optional body>
 
-Keep the subject on one line, concise (under 72 characters), and write it from the reader's perspective: describe what changed or what users can now do, not which files were edited or which internal rules were added. Avoid implementation details (file names, function names, rule descriptions) in the subject unless they are the user-facing thing that changed — prefer "improve X behavior" over "add X rule for Y classification". Include a description body separated by a blank line for non-trivial changes. No numbering, no bullets, no explanations. Do not wrap in code blocks or backticks.
+Keep the subject on one line, concise (under 72 characters), and write it from the reader's perspective: describe what changed or what users can now do, not which files were edited or which internal rules were added. Avoid implementation details (file names, function names, rule descriptions) in the subject unless they are the user-facing thing that changed — prefer "improve X behavior" over "add X rule for Y classification". Include a description body separated by a blank line for every change beyond a one-line trivial edit, covering what changed and why. Omit the body only when the subject already says everything there is to say. No numbering, no bullets, no explanations. Do not wrap in code blocks or backticks.
