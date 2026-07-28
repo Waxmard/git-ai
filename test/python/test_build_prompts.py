@@ -214,6 +214,20 @@ def test_parse_commit_response_strips_whitespace() -> None:
     assert parse_commit_response("\n  feat: x  \n") == "feat: x"
 
 
+def test_parse_commit_response_unwraps_commit_marker() -> None:
+    raw = "Reasoning: feat, new capability.\n===COMMIT===\nfeat: add thing\n\nBody."
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
+def test_parse_commit_response_drops_preamble_without_marker() -> None:
+    raw = "docs+test changes. feat, new capability.\n\nfix: preselect entries\n\nBody."
+    assert parse_commit_response(raw) == "fix: preselect entries\n\nBody."
+
+
+def test_parse_commit_response_passes_through_unclassifiable_text() -> None:
+    assert parse_commit_response("just some text") == "just some text"
+
+
 def test_parse_commit_response_rejects_empty() -> None:
     with pytest.raises(RuntimeError, match="empty response"):
         parse_commit_response("")
@@ -336,3 +350,23 @@ def test_parse_mr_response_falls_back_without_markers() -> None:
 def test_parse_mr_response_falls_back_on_missing_body_marker() -> None:
     raw = "===TITLE===\nfeat: title\nno body marker here"
     assert parse_mr_response(raw) == "===TITLE===\nfeat: title\nno body marker here"
+
+
+def test_parse_mr_response_drops_trailing_closing_marker() -> None:
+    raw = "===TITLE===\nfeat: title\n===BODY===\n- x\n===BODY===\n"
+    assert parse_mr_response(raw) == "feat: title\n\n- x"
+
+
+def test_parse_mr_response_drops_repeated_trailing_markers() -> None:
+    raw = "===TITLE===\nfeat: title\n===BODY===\n- x\n\n===BODY===\n===TITLE===\n"
+    assert parse_mr_response(raw) == "feat: title\n\n- x"
+
+
+def test_parse_mr_response_body_of_only_a_closing_marker_yields_title() -> None:
+    raw = "===TITLE===\nfeat: title\n===BODY===\n===BODY===\n"
+    assert parse_mr_response(raw) == "feat: title"
+
+
+def test_parse_commit_response_drops_trailing_closing_marker() -> None:
+    raw = "===COMMIT===\nfeat: add thing\n\nBody.\n===COMMIT===\n"
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."

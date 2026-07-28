@@ -163,10 +163,37 @@ extract_pr_output() {
       my ($t, $b) = ($1, $2);
       $t =~ s/\A\s+//; $t =~ s/\s+\z//;
       $b =~ s/\A\s+//; $b =~ s/\s+\z//;
+      while ($b =~ s/(?:\A|\n)[ \t]*===(?:TITLE|BODY)===[ \t]*\z//) { $b =~ s/\s+\z//; }
       if (length $t) {
         print length($b) ? "$t\n\n$b\n" : "$t\n";
         next;
       }
+    }
+    print;
+  '
+}
+
+# Slice the commit message out of a model response read from stdin, discarding
+# any preamble. Reasoning models emit their type-choice rationale ahead of the
+# message, which otherwise lands as the subject line. Prefers everything after
+# the ===COMMIT=== marker the commit prompt asks for; falls back to the first
+# Conventional Commits subject line onward for models that drop the marker, and
+# passes the input through unchanged when neither is present. Mirrors
+# python/git_ai/_generate.py:_extract_commit_message.
+extract_commit_output() {
+  perl -0777 -ne '
+    if (/^===COMMIT===[ \t]*\n(.*)\z/ms) {
+      my $m = $1;
+      $m =~ s/\A\s+//; $m =~ s/\s+\z//;
+      while ($m =~ s/(?:\A|\n)[ \t]*===COMMIT===[ \t]*\z//) { $m =~ s/\s+\z//; }
+      if (length $m) { print "$m\n"; next; }
+    }
+    if (/^[ \t]*((?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)(?:\([^)]*\))?!?: \S.*)\z/ms) {
+      my $m = $1;
+      $m =~ s/\s+\z//;
+      while ($m =~ s/(?:\A|\n)[ \t]*===COMMIT===[ \t]*\z//) { $m =~ s/\s+\z//; }
+      print "$m\n";
+      next;
     }
     print;
   '
