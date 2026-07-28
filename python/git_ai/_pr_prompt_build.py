@@ -47,11 +47,9 @@ def build_mr_prompt_input(
 ) -> tuple[str, str]:
     """Return (prompt_filename, user_input) for MR generation.
 
-    ``churn_subjects`` (commit subjects that only refine code introduced earlier
-    in the same branch) is forwarded to the two-pass draft so those entries are
-    folded rather than emitted as standalone sections. ``repo_guidance``
-    (free-form ``.git-ai-instructions`` contents) is surfaced as an
-    authoritative ``<repo_guidance>`` block at the top of the input.
+    ``churn_subjects`` reach the two-pass draft so those commits fold into the
+    feature they refine instead of becoming standalone sections.
+    ``repo_guidance`` leads the input as an authoritative block.
     """
     if not diff.strip():
         raise ValueError("diff is empty")
@@ -112,11 +110,10 @@ def verbatim_pr_text(
 ) -> str | None:
     """Return a ready-made PR body when the branch is one conventional commit.
 
-    A branch with exactly one commit that already follows Conventional Commits
-    IS its own best PR summary, so the CLI can emit the commit subject/body
-    verbatim and skip the LLM. Returns ``None`` (caller falls back to the normal
-    prompt flow) when there are zero/multiple commits, the lone commit is not
-    conventional, or an ``existing_pr`` is being refined.
+    Such a commit already IS its own best PR summary, so the CLI emits it
+    verbatim and skips the LLM. ``None`` — caller falls back to the prompt
+    flow — for zero/multiple commits, a non-conventional lone commit, or a
+    refine-an-``existing_pr`` run.
     """
     if existing_pr:
         return None

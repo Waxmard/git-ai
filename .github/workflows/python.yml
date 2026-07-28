@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, dev]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   python:
     name: Lint, type-check, and test Python package
@@ -13,9 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v8.3.2
         with:
-          enable-caching: true
+          enable-cache: true
 
       - name: Install dependencies
         run: uv sync

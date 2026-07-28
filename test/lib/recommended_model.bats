@@ -18,15 +18,15 @@ setup() {
   for p in gemini-api vertex-gemini; do
     run recommended_model "$p"
     assert_success
-    assert_output "gemini-3.5-flash"
+    assert_output "gemini-3.6-flash"
   done
 }
 
-@test "recommended_model: openai family maps to gpt mini" {
+@test "recommended_model: openai family maps to gpt luna" {
   for p in openai-api codex; do
     run recommended_model "$p"
     assert_success
-    assert_output "gpt-5.4-mini"
+    assert_output "gpt-5.6-luna"
   done
 }
 
