@@ -643,7 +643,7 @@ _stub_fzf() {
 
 @test "_setup_multiselect: confirming with only the sentinel returns 0 and no rows" {
   local stub; stub="$(mktemp -d)"
-  printf '#!/bin/sh\ncat >/dev/null\nprintf "\\xe2\\x80\\x94|skip\\n"\nexit 0\n' >"${stub}/fzf"
+  printf '#!/bin/sh\ncat >/dev/null\nprintf "%%s\\n" "—|skip"\nexit 0\n' >"${stub}/fzf"
   chmod +x "${stub}/fzf"
   run bash -c '
     export PATH="'"${stub}"':$PATH"
