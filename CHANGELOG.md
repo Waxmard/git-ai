@@ -1,5 +1,18 @@
 # Changelog
 
+## [6.6.0](https://github.com/Waxmard/git-ai/compare/v6.5.2...v6.6.0) (2026-07-28)
+
+
+### Features
+
+* setup wizard validates API keys and guards vertex account mismatches ([#106](https://github.com/Waxmard/git-ai/issues/106)) ([7b0a267](https://github.com/Waxmard/git-ai/commit/7b0a2670808d1ec8416b07df184a05d89f733b27))
+
+
+### Bug Fixes
+
+* classify pinned values correctly in generated PRs ([#104](https://github.com/Waxmard/git-ai/issues/104)) ([ba438f2](https://github.com/Waxmard/git-ai/commit/ba438f2ebcb6893ea37c491dc4de53973ded06e8))
+* refresh provider readiness after inline auth setup ([7b0a267](https://github.com/Waxmard/git-ai/commit/7b0a2670808d1ec8416b07df184a05d89f733b27))
+
 ## [6.5.2](https://github.com/Waxmard/git-ai/compare/v6.5.1...v6.5.2) (2026-07-01)
 
 
