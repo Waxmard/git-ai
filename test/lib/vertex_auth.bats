@@ -48,7 +48,7 @@ write_curl_stub() {
   cat >"${STUB_BIN}/curl" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-  *anthropic*) printf '{"content":[{"text":"anthropic ok"}]}\n' ;;
+  *anthropic*) printf '{"content":[{"type":"text","text":"anthropic ok"}]}\n' ;;
   *) printf '{"candidates":[{"content":{"parts":[{"text":"gemini ok"}]}}]}\n' ;;
 esac
 EOF
