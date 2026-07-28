@@ -370,3 +370,18 @@ def test_parse_mr_response_body_of_only_a_closing_marker_yields_title() -> None:
 def test_parse_commit_response_drops_trailing_closing_marker() -> None:
     raw = "===COMMIT===\nfeat: add thing\n\nBody.\n===COMMIT===\n"
     assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
+def test_parse_commit_response_drops_invented_end_marker() -> None:
+    raw = "===COMMIT===\nfeat: add thing\n\nBody.\n=== END ===\n"
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
+def test_parse_commit_response_drops_end_marker_on_fallback_path() -> None:
+    raw = "Reasoning:\nfix: guard the path\n\nBody.\n===END===\n"
+    assert parse_commit_response(raw) == "fix: guard the path\n\nBody."
+
+
+def test_parse_mr_response_drops_invented_end_marker() -> None:
+    raw = "===TITLE===\nfeat: title\n===BODY===\n- x\n===END===\n"
+    assert parse_mr_response(raw) == "feat: title\n\n- x"
