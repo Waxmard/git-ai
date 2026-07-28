@@ -51,3 +51,11 @@ teardown() {
   assert_success
   assert_output "===COMMIT==="
 }
+
+@test "extract_commit_output: drops a trailing closing marker" {
+  printf '%s\n' '===COMMIT===' 'feat: add thing' '' 'Body.' '===COMMIT===' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'feat: add thing' '' 'Body.')
+  run extract_commit_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}

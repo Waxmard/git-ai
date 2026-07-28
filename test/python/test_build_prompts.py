@@ -350,3 +350,23 @@ def test_parse_mr_response_falls_back_without_markers() -> None:
 def test_parse_mr_response_falls_back_on_missing_body_marker() -> None:
     raw = "===TITLE===\nfeat: title\nno body marker here"
     assert parse_mr_response(raw) == "===TITLE===\nfeat: title\nno body marker here"
+
+
+def test_parse_mr_response_drops_trailing_closing_marker() -> None:
+    raw = "===TITLE===\nfeat: title\n===BODY===\n- x\n===BODY===\n"
+    assert parse_mr_response(raw) == "feat: title\n\n- x"
+
+
+def test_parse_mr_response_drops_repeated_trailing_markers() -> None:
+    raw = "===TITLE===\nfeat: title\n===BODY===\n- x\n\n===BODY===\n===TITLE===\n"
+    assert parse_mr_response(raw) == "feat: title\n\n- x"
+
+
+def test_parse_mr_response_body_of_only_a_closing_marker_yields_title() -> None:
+    raw = "===TITLE===\nfeat: title\n===BODY===\n===BODY===\n"
+    assert parse_mr_response(raw) == "feat: title"
+
+
+def test_parse_commit_response_drops_trailing_closing_marker() -> None:
+    raw = "===COMMIT===\nfeat: add thing\n\nBody.\n===COMMIT===\n"
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."

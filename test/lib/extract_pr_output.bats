@@ -46,3 +46,26 @@ teardown() {
   assert_success
   assert_output "$expected"
 }
+
+@test "extract_pr_output: drops a trailing closing body marker" {
+  printf '%s\n' '===TITLE===' 'feat: title' '===BODY===' '- x' '===BODY===' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'feat: title' '' '- x')
+  run extract_pr_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "extract_pr_output: drops repeated trailing markers" {
+  printf '%s\n' '===TITLE===' 'feat: title' '===BODY===' '- x' '' '===BODY===' '===TITLE===' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'feat: title' '' '- x')
+  run extract_pr_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "extract_pr_output: passes through when the body is only a closing marker" {
+  printf '%s\n' '===TITLE===' 'feat: title' '===BODY===' '===BODY===' > "$TEST_TMP/in.txt"
+  run extract_pr_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "feat: title"
+}
