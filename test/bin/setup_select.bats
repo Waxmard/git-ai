@@ -631,3 +631,28 @@ SH
   run cat "$CONF"
   assert_line "projects = a, typed-proj"
 }
+
+@test "_setup_gcloud_projects: names the logins whose project listing failed" {
+  local stub; stub="$(mktemp -d)"
+  cat >"${stub}/gcloud" <<'SH'
+#!/bin/sh
+case "$*" in
+  *"auth list --filter=status:ACTIVE"*) echo a@x.com ;;
+  *"auth list"*) printf 'a@x.com\nb@y.com\n' ;;
+  *"projects list --account=a@x.com"*) echo proj-a ;;
+  *"projects list --account=b@y.com"*) echo "ERROR: Reauthentication failed." >&2; exit 1 ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_gcloud_projects 2>&1 >/dev/null
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "gcloud could not list projects for: b@y.com"
+  refute_output --partial "a@x.com"
+}

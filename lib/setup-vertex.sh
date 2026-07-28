@@ -45,6 +45,18 @@ _setup_vertex_api_enabled() {
     --filter="config.name=aiplatform.googleapis.com" \
     --format="value(config.name)" 2>/dev/null | grep -q aiplatform
 }
+
+# Name the logins whose project listing failed. An expired, revoked, or
+# reauth-required gcloud login errors out the same way an account with zero
+# projects returns nothing, so without this an empty picker reads as "you have
+# no projects" and the user has no idea a re-auth would fix it.
+_setup_warn_gcloud_failures() {
+  [[ $# -gt 0 ]] || return 0
+  printf 'gcloud could not list projects for: %s\n' "$(_join_comma "$@")" >&2
+  printf '  Re-auth with: gcloud auth login --account=<account>\n' >&2
+  printf '  (You can still type a project id via the custom row.)\n' >&2
+}
+
 # Every GCP project reachable from this machine's gcloud logins, as
 # "project<TAB>account" lines (active account's projects first, deduped by
 # project id). A bare `gcloud projects list` covers only the ACTIVE account, so
@@ -52,25 +64,33 @@ _setup_vertex_api_enabled() {
 # actually want. Each account is a network round-trip, so the sweep is capped.
 _setup_gcloud_projects() {
   command -v gcloud >/dev/null 2>&1 || return 0
-  local a p seen_accounts=$'\n' seen=$'\n' probed=0 any=0
+  local a p listed seen_accounts=$'\n' seen=$'\n' probed=0 any=0
+  local -a failed=()
   while IFS= read -r a; do
     [[ -n "$a" && "$seen_accounts" != *$'\n'"$a"$'\n'* ]] || continue
     seen_accounts+="$a"$'\n'
     [[ $probed -ge 5 ]] && break
     probed=$((probed + 1))
     any=1
+    if ! listed=$(gcloud projects list --account="$a" --format="value(projectId)" 2>/dev/null); then
+      failed+=("$a")
+      continue
+    fi
     while IFS= read -r p; do
       [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
       seen+="$p"$'\n'
       printf '%s\t%s\n' "$p" "$a"
-    done < <(gcloud projects list --account="$a" --format="value(projectId)" 2>/dev/null)
+    done <<<"$listed"
   done < <(
     gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null
     gcloud auth list --format="value(account)" 2>/dev/null
   )
+  if [[ $any -eq 1 ]]; then
+    _setup_warn_gcloud_failures ${failed[@]+"${failed[@]}"}
+    return 0
+  fi
   # No user logins (service-account ADC only) — fall back to whatever the
   # default credential can see, with no account to tag it with.
-  [[ $any -eq 1 ]] && return 0
   while IFS= read -r p; do
     [[ -n "$p" ]] && printf '%s\t\n' "$p"
   done < <(gcloud projects list --format="value(projectId)" 2>/dev/null)
