@@ -188,7 +188,7 @@ extract_commit_output() {
       while ($m =~ s/(?:\A|\n)[ \t]*===COMMIT===[ \t]*\z//) { $m =~ s/\s+\z//; }
       if (length $m) { print "$m\n"; next; }
     }
-    if (/^((?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)(?:\([^)]*\))?!?: \S.*)\z/ms) {
+    if (/^[ \t]*((?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)(?:\([^)]*\))?!?: \S.*)\z/ms) {
       my $m = $1;
       $m =~ s/\s+\z//;
       while ($m =~ s/(?:\A|\n)[ \t]*===COMMIT===[ \t]*\z//) { $m =~ s/\s+\z//; }

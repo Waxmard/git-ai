@@ -59,3 +59,11 @@ teardown() {
   assert_success
   assert_output "$expected"
 }
+
+@test "extract_commit_output: falls back to an indented conventional subject" {
+  printf '%s\n' 'Reasoning:' '  fix: correct the guard' '' 'Body.' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'fix: correct the guard' '' 'Body.')
+  run extract_commit_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
