@@ -200,9 +200,41 @@ def _extract_pr_sections(text: str) -> str:
     return f"{title}\n\n{body}" if body else title
 
 
+_COMMIT_MARKER = "===COMMIT==="
+_COMMIT_SUBJECT_RE = re.compile(
+    r"^(?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)"
+    r"(?:\([^)]*\))?!?: \S"
+)
+
+
+def _extract_commit_message(text: str) -> str:
+    """Slice the message out of a commit response, discarding any preamble.
+
+    Reasoning models emit their type-choice rationale ahead of the message,
+    which otherwise lands as the subject line. Prefers everything after the
+    ``===COMMIT===`` marker; falls back to the first Conventional Commits
+    subject line onward for models that drop the marker, and to ``text``
+    unchanged when neither is present.
+    """
+    lines = text.split("\n")
+    idx = _marker_index(lines, _COMMIT_MARKER)
+    if idx >= 0:
+        after = "\n".join(lines[idx + 1 :]).strip()
+        if after:
+            return after
+    for i, line in enumerate(lines):
+        if _COMMIT_SUBJECT_RE.match(line.strip()):
+            return "\n".join(lines[i:]).strip()
+    return text
+
+
 def parse_commit_response(raw: str) -> str:
-    """Strip fences from a commit-message response. Raises if it cleans to empty."""
-    return _parse_response(raw)
+    """Strip fences and unwrap the ``===COMMIT===`` marker.
+
+    Falls back to the fence-stripped text when the marker is absent. Raises if
+    the response cleans to empty.
+    """
+    return _extract_commit_message(_parse_response(raw))
 
 
 def parse_mr_response(raw: str) -> str:

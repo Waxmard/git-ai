@@ -214,6 +214,20 @@ def test_parse_commit_response_strips_whitespace() -> None:
     assert parse_commit_response("\n  feat: x  \n") == "feat: x"
 
 
+def test_parse_commit_response_unwraps_commit_marker() -> None:
+    raw = "Reasoning: feat, new capability.\n===COMMIT===\nfeat: add thing\n\nBody."
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
+def test_parse_commit_response_drops_preamble_without_marker() -> None:
+    raw = "docs+test changes. feat, new capability.\n\nfix: preselect entries\n\nBody."
+    assert parse_commit_response(raw) == "fix: preselect entries\n\nBody."
+
+
+def test_parse_commit_response_passes_through_unclassifiable_text() -> None:
+    assert parse_commit_response("just some text") == "just some text"
+
+
 def test_parse_commit_response_rejects_empty() -> None:
     with pytest.raises(RuntimeError, match="empty response"):
         parse_commit_response("")

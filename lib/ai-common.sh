@@ -172,6 +172,30 @@ extract_pr_output() {
   '
 }
 
+# Slice the commit message out of a model response read from stdin, discarding
+# any preamble. Reasoning models emit their type-choice rationale ahead of the
+# message, which otherwise lands as the subject line. Prefers everything after
+# the ===COMMIT=== marker the commit prompt asks for; falls back to the first
+# Conventional Commits subject line onward for models that drop the marker, and
+# passes the input through unchanged when neither is present. Mirrors
+# python/git_ai/_generate.py:_extract_commit_message.
+extract_commit_output() {
+  perl -0777 -ne '
+    if (/^===COMMIT===[ \t]*\n(.*)\z/ms) {
+      my $m = $1;
+      $m =~ s/\A\s+//; $m =~ s/\s+\z//;
+      if (length $m) { print "$m\n"; next; }
+    }
+    if (/^((?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)(?:\([^)]*\))?!?: \S.*)\z/ms) {
+      my $m = $1;
+      $m =~ s/\s+\z//;
+      print "$m\n";
+      next;
+    }
+    print;
+  '
+}
+
 # Print $1 with leading/trailing whitespace stripped.
 _trim() {
   local s="$1"

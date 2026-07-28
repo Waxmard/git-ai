@@ -487,3 +487,147 @@ EOF
   # Exactly one bullet row — the split must not leak.
   [ "$(grep -c 'Vertex AI' <<<"$output")" -eq 1 ]
 }
+
+# --- _setup_multiselect (preselect) ---
+
+@test "_setup_multiselect: preselect query marks the (current) rows on load" {
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$@" >&2\ncat >/dev/null\nexit 130\n' >"${stub}/fzf"
+  chmod +x "${stub}/fzf"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    unset GIT_AI_NO_FZF
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_multiselect "p> " "h" "skip" "a|a (current)" "$SETUP_PRESELECT_CURRENT"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "--query='(current)"
+  assert_output --partial "--bind=load:select-all+clear-query"
+}
+
+@test "_setup_multiselect: no preselect query leaves the bind off" {
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$@" >&2\ncat >/dev/null\nexit 130\n' >"${stub}/fzf"
+  chmod +x "${stub}/fzf"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    unset GIT_AI_NO_FZF
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_multiselect "p> " "h" "skip" "a|a"
+  '
+  rm -rf "$stub"
+  assert_success
+  refute_output --partial "select-all"
+}
+
+# --- _setup_action_add (re-adding vertex attaches a project, keeps models) ---
+
+@test "_setup_action_add: re-adding vertex skips the model picker and carries pins over" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic]
+claude-sonnet-5
+
+[vertex-gemini]
+gemini-3.6-flash
+
+[vertex]
+projects = old-proj
+EOF
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "3\nnew-proj\n\n\n\n\n" | GIT_AI_NO_FZF=1 _setup_action_add "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Set vertex projects: old-proj, new-proj"
+  assert_output --partial "Models carried over to every project: claude-sonnet-5, gemini-3.6-flash"
+  refute_output --partial "Models to keep"
+  run cat "$CONF"
+  assert_line "claude-sonnet-5"
+  assert_line "gemini-3.6-flash"
+  assert_line "projects = old-proj, new-proj"
+}
+
+# --- GCP project discovery / picking ---
+
+@test "_setup_gcloud_projects: sweeps every gcloud login, active account first" {
+  local stub; stub="$(mktemp -d)"
+  cat >"${stub}/gcloud" <<'SH'
+#!/bin/sh
+case "$*" in
+  *"auth list --filter=status:ACTIVE"*) echo b@y.com ;;
+  *"auth list"*) printf 'a@x.com\nb@y.com\n' ;;
+  *"projects list --account=a@x.com"*) printf 'proj-a\nshared\n' ;;
+  *"projects list --account=b@y.com"*) printf 'proj-b\nshared\n' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_gcloud_projects
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_line --index 0 "$(printf 'proj-b\tb@y.com')"
+  assert_line --index 1 "$(printf 'shared\tb@y.com')"
+  assert_line --index 2 "$(printf 'proj-a\ta@x.com')"
+  refute_line "$(printf 'shared\ta@x.com')"
+}
+
+@test "_setup_project_rows: tags rows with the account only when logins differ" {
+  local stub; stub="$(mktemp -d)"
+  cat >"${stub}/gcloud" <<'SH'
+#!/bin/sh
+case "$*" in
+  *"auth list --filter=status:ACTIVE"*) echo a@x.com ;;
+  *"auth list"*) echo a@x.com ;;
+  *"projects list --account=a@x.com"*) printf 'proj-a\nproj-b\n' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_project_rows $'\''\nproj-a\n'\''
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output "proj-b|proj-b"
+}
+
+@test "_setup_change_vertex_projects: the custom row accepts an unlistable project id" {
+  printf '[vertex]\nprojects = a\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  cat >"${stub}/fzf" <<'SH'
+#!/bin/sh
+cat >/dev/null
+printf 'a|a (current)\n=custom=|custom\n'
+SH
+  chmod +x "${stub}/gcloud" "${stub}/fzf"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    unset GIT_AI_NO_FZF
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "typed-proj\n" | _setup_change_vertex_projects "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Set vertex projects: a, typed-proj"
+  run cat "$CONF"
+  assert_line "projects = a, typed-proj"
+}

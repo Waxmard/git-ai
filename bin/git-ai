@@ -268,7 +268,7 @@ cmd_commit() {
 ${STAGED_DIFF}
 </diff>"
 
-  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL") || exit $?
+  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL" | extract_commit_output) || exit $?
   save_last_message commit "$generated"
   _commit_prompt_and_run "$generated"
 }

@@ -128,20 +128,28 @@ _setup_action_add() {
       *) case "$with_models" in *$'\n'"$p"$'\n'*) ;; *) cands+=("$p") ;; esac ;;
     esac
   done
-  if [[ ${#cands[@]} -eq 0 ]]; then
-    printf 'All providers already have models configured.\n'
-    return 0
-  fi
   local provider
   provider=$(_setup_choose_provider 'Set up which provider? ' "${cands[@]}") || { printf 'Cancelled.\n'; return 0; }
 
-  # Present section → replace-style model edit (Esc keeps the current pins,
-  # which is the common case when re-adding vertex just to attach another
-  # project). Truly absent → append a new section. Either way no duplicate
-  # [provider] header is created.
+  # Present section → replace-style model edit. Truly absent → append a new
+  # section. Either way no duplicate [provider] header is created.
   local present=$'\n'
   while IFS= read -r p; do present+="$p"$'\n'; done < <(_setup_conf_wizard_providers "$conf")
   if [[ "$present" == *$'\n'"$provider"$'\n'* ]]; then
+    # Re-adding an already-configured vertex means "attach another GCP project",
+    # so go straight to the project picker. Models live in the shared
+    # [vertex-gemini]/[vertex-anthropic] sections and parse_user_options expands
+    # them across every project in the list — the new project inherits the
+    # existing pins with no re-pick. Dropping some is a later, separate edit.
+    if [[ "$provider" == vertex ]]; then
+      _setup_choose_vertex_projects "$provider" "$conf"
+      local inherited
+      inherited=$(_setup_existing_models vertex | paste -sd, - | sed 's/,/, /g')
+      [[ -n "$inherited" ]] &&
+        printf 'Models carried over to every project: %s\n' "$inherited"
+      _setup_ensure_auth "$provider" "$conf"
+      return 0
+    fi
     _setup_change_models "$conf" "$provider"
   else
     local -a models=()
@@ -221,34 +229,43 @@ _setup_change_vertex_projects() {
   current=$(_setup_current_vertex_projects)
   [[ -n "$current" ]] && printf 'Current vertex projects: %s\n' "$current"
 
-  # Union: current entries first (labelled "(current)"), then gcloud's list.
-  local rows="" seen=$'\n'
+  # Union: current entries first (labelled "(current)"), then every project the
+  # machine's gcloud logins can see, then the custom-id row — a project none of
+  # those logins can list is the normal reason to be here, so there must always
+  # be a way to type one.
+  local rows="" seen=$'\n' preselect="" discovered
   while IFS= read -r p; do
     p=$(_trim "$p")
     [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
     seen+="$p"$'\n'
     rows+="${p}|${p} (current)"$'\n'
+    preselect="$SETUP_PRESELECT_CURRENT"
   done < <(printf '%s\n' "${current//,/$'\n'}")
-  if command -v gcloud >/dev/null 2>&1; then
-    while IFS= read -r p; do
-      [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
-      seen+="$p"$'\n'
-      rows+="${p}|${p}"$'\n'
-    done < <(gcloud projects list --format="value(projectId)" 2>/dev/null)
-  fi
+  discovered=$(_setup_project_rows "$seen")
+  [[ -n "$discovered" ]] && rows+="${discovered}"$'\n'
+  rows+="$SETUP_CUSTOM_PROJECT_ROW"
 
   local -a picked=()
-  local selected
-  if [[ -n "$rows" ]] && selected=$(_setup_multiselect 'vertex projects> ' \
-      'Tab-mark ALL projects to keep — the marked set replaces the list; Esc keeps current' \
-      '— keep current list —' "$rows"); then
-    while IFS= read -r p; do [[ -n "$p" ]] && picked+=("$p"); done <<<"$selected"
+  local selected want_custom="" line pseen=$'\n'
+  if selected=$(_setup_multiselect 'vertex projects> ' \
+      'Current projects start marked — Tab to add/drop; Enter saves the marked set; Esc keeps current' \
+      '— keep current list —' "$rows" "$preselect"); then
+    while IFS= read -r p; do
+      [[ -n "$p" && "$pseen" != *$'\n'"$p"$'\n'* ]] || continue
+      if [[ "$p" == '=custom=' ]]; then want_custom=1; else picked+=("$p"); pseen+="$p"$'\n'; fi
+    done <<<"$selected"
+    if [[ -n "$want_custom" ]]; then
+      read -rp 'Additional project id(s), comma-separated: ' line || line=""
+      while IFS= read -r p; do
+        p=$(_trim "$p")
+        [[ -n "$p" && "$pseen" != *$'\n'"$p"$'\n'* ]] && { picked+=("$p"); pseen+="$p"$'\n'; }
+      done < <(printf '%s\n' "${line//,/$'\n'}")
+    fi
   else
-    local line
     read -rp 'Projects to keep, comma-separated (blank to keep current): ' line || line=""
     while IFS= read -r p; do
       p=$(_trim "$p")
-      [[ -n "$p" ]] && picked+=("$p")
+      [[ -n "$p" && "$pseen" != *$'\n'"$p"$'\n'* ]] && { picked+=("$p"); pseen+="$p"$'\n'; }
     done < <(printf '%s\n' "${line//,/$'\n'}")
   fi
 
@@ -353,11 +370,12 @@ _setup_change_models() {
     # Union: current pins first (labelled "(current)"), then the suggestion
     # rows. Built only on the fzf path — the free-text fallback never shows
     # suggestions, so don't pay for discovery there.
-    local rows="" seen=$'\n' lbl
+    local rows="" seen=$'\n' lbl preselect=""
     while IFS= read -r m; do
       [[ -n "$m" && "$seen" != *$'\n'"$m"$'\n'* ]] || continue
       seen+="$m"$'\n'
       rows+="${m}|${m} (current)"$'\n'
+      preselect="$SETUP_PRESELECT_CURRENT"
     done < <(_setup_existing_models "$provider")
     while IFS='|' read -r m lbl; do
       [[ -n "$m" && "$seen" != *$'\n'"$m"$'\n'* ]] || continue
@@ -365,9 +383,9 @@ _setup_change_models() {
       rows+="${m}|${lbl}"$'\n'
     done < <(_setup_model_rows "$provider" "$(_setup_suggest_models "$provider")")
 
-    selected=$(_setup_multiselect "models for ${provider}> " \
-      'Tab-mark ALL models to keep — the marked set replaces the pins; Esc keeps current' \
-      '— keep current models —' "$rows")
+    selected=$(_setup_multiselect "models for $(provider_display_name "$provider")> " \
+      'Current pins start marked — Tab to add/drop; Enter saves the marked set; Esc keeps current' \
+      '— keep current models —' "$rows" "$preselect")
     while IFS= read -r m; do
       [[ -n "$m" && "$pseen" != *$'\n'"$m"$'\n'* ]] || continue
       if [[ "$m" == '=custom=' ]]; then want_custom=1; else picked+=("$m"); pseen+="$m"$'\n'; fi

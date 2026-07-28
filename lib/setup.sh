@@ -40,50 +40,6 @@ _setup_provider_for_model() {
   fi
 }
 
-# Best-effort: pick the GCP project fast setup should pin for Vertex AI when
-# neither the config nor the environment names one. The gcloud-active project
-# is probed first (cheap, the common case — note `gcloud projects list` sorts
-# alphabetically, it does NOT lead with the active project); then the account's
-# other projects (assumed few; capped) are filtered to those with the Vertex AI
-# API enabled. Exactly one match wins outright, several fall back to the first,
-# none falls back to the active project. Empty when gcloud is absent or nothing
-# resolves — the user can always add/change projects later via the wizard's
-# "Change Vertex AI projects" action.
-_setup_detect_vertex_project() {
-  command -v gcloud >/dev/null 2>&1 || return 0
-
-  local active
-  active=$(_gcloud_active_project)
-  if [[ -n "$active" ]] && _setup_vertex_api_enabled "$active"; then
-    printf '%s\n' "$active"
-    return 0
-  fi
-
-  # Each enablement probe is a gcloud API round-trip, so cap the sweep — a
-  # pathological org account must not hang setup for minutes.
-  local p probed=0
-  local -a enabled=()
-  while IFS= read -r p; do
-    [[ -n "$p" && "$p" != "$active" ]] || continue
-    [[ $probed -ge 10 ]] && break
-    probed=$((probed + 1))
-    _setup_vertex_api_enabled "$p" && enabled+=("$p")
-  done < <(gcloud projects list --format="value(projectId)" 2>/dev/null)
-
-  if [[ ${#enabled[@]} -gt 0 ]]; then
-    printf '%s\n' "${enabled[0]}"
-  elif [[ -n "$active" ]]; then
-    printf '%s\n' "$active"
-  fi
-}
-
-# True when PROJECT has the Vertex AI API (aiplatform.googleapis.com) enabled.
-_setup_vertex_api_enabled() {
-  gcloud services list --enabled --project="$1" \
-    --filter="config.name=aiplatform.googleapis.com" \
-    --format="value(config.name)" 2>/dev/null | grep -q aiplatform
-}
-
 # Collapse the config's provider sections into wizard tokens for choosers and
 # summaries: the two vertex sections fold into a single `vertex` entry (deduped,
 # first-seen order) so the user is never asked to tell them apart.
@@ -228,56 +184,40 @@ _setup_pick_models() {
   done < <(printf '%s\n' "${line//,/$'\n'}")
 }
 
-# _setup_multiselect PROMPT HEADER SKIP_LABEL ROWS
+# _setup_multiselect PROMPT HEADER SKIP_LABEL ROWS [PRESELECT_QUERY]
 # fzf multi-select over "value|label" ROWS, led by a skip sentinel so a bare
 # Enter (nothing marked) selects nothing — fzf otherwise returns the focused
 # row. Prints the marked values one per line (possibly none); returns non-zero
 # when fzf is unavailable so callers fall back to their free-text prompt.
 # FZF_DEFAULT_OPTS is cleared so a user's keybindings can't auto-select.
+#
+# PRESELECT_QUERY is an fzf query (matched against the *labels*, since
+# --with-nth=2 makes the label the searchable string) whose matches are marked
+# on load before the query is cleared — fzf's only way to open with rows already
+# selected. Replace-style editors use it so the current set arrives pre-marked
+# and the user unmarks what they want dropped instead of re-marking everything.
+# The skip sentinel must never match it.
 _setup_multiselect() {
-  local prompt="$1" header="$2" skip_label="$3" rows="$4"
+  local prompt="$1" header="$2" skip_label="$3" rows="$4" preselect="${5:-}"
   _setup_has_fzf || return 1
   local selected v
+  local -a preselect_opts=()
+  [[ -n "$preselect" ]] &&
+    preselect_opts=(--query="$preselect" --bind='load:select-all+clear-query')
   selected=$(printf '—|%s\n%s' "$skip_label" "$rows" \
     | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
       --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
-      --height=40% --reverse --header="$header" --prompt="$prompt") || selected=""
+      --height=40% --reverse --header="$header" --prompt="$prompt" \
+      ${preselect_opts[@]+"${preselect_opts[@]}"}) || selected=""
   while IFS='|' read -r v _; do
     [[ -n "$v" && "$v" != "—" ]] && printf '%s\n' "$v"
   done <<<"$selected"
   return 0
 }
 
-# Multi-select GCP projects for vertex providers, sourced from `gcloud projects
-# list` (fzf multi-select with a free-text fallback). Prints chosen project ids,
-# one per line; empty output means "leave the current projects unchanged".
-_setup_pick_projects() {
-  local listed="" line p rows="" selected
-  command -v gcloud >/dev/null 2>&1 &&
-    listed=$(gcloud projects list --format="value(projectId)" 2>/dev/null)
-
-  if [[ -n "$listed" ]]; then
-    while IFS= read -r p; do [[ -n "$p" ]] && rows+="${p}|${p}"$'\n'; done <<<"$listed"
-    if selected=$(_setup_multiselect 'vertex projects> ' \
-        'Tab marks GCP project(s); Enter confirms; Esc keeps current' \
-        '— skip / keep current —' "$rows"); then
-      if [[ -n "$selected" ]]; then
-        printf '%s\n' "$selected"
-        return 0
-      fi
-    else
-      printf 'Your GCP projects:\n' >&2
-      printf '%s\n' "$listed" | sed 's/^/  /' >&2
-    fi
-  fi
-
-  read -rp "GCP project id(s), comma-separated (blank to keep current): " line || line=""
-  [[ -n "$line" ]] || return 0
-  while IFS= read -r p; do
-    p=$(_trim "$p")
-    [[ -n "$p" ]] && printf '%s\n' "$p"
-  done < <(printf '%s\n' "${line//,/$'\n'}")
-}
+# PRESELECT_QUERY for the replace-style editors: fzf's exact-match operator (')
+# against the "(current)" suffix they label already-configured rows with.
+SETUP_PRESELECT_CURRENT="'(current)"
 
 # maybe_first_run_setup TOOL
 # Launch the setup wizard the first time a user runs commit/pr with nothing
@@ -302,74 +242,6 @@ maybe_first_run_setup() {
   cmd_setup
   mkdir -p "$(dirname "$sentinel")" 2>/dev/null || true
   : >"$sentinel" 2>/dev/null || true
-}
-
-# Interactive vertex auth assist: offer ADC login, then prompt for the common
-# per-section settings (project required, region/account optional) and write
-# them into [PROVIDER] via conf_set_section_setting — for the wizard's `vertex`
-# token that is the shared [vertex] block. [vertex-x@profile] profiles and
-# service-account credentials= stay manual (see the README).
-_setup_vertex_assist() {
-  local provider="$1" conf="$2"
-  local label account project region input ans
-  label=$(provider_display_name "$provider")
-  printf '\n%s needs Google Cloud access.\n' "$label"
-
-  # 1. Application Default Credentials (or a per-section account).
-  account=$(vertex_resolve "$provider" account)
-  if ! _vertex_has_auth "$account"; then
-    read -rp '  Run "gcloud auth application-default login" now? [y/N]: ' ans
-    case "$ans" in
-      y | Y | yes | Yes)
-        if command -v gcloud >/dev/null 2>&1; then
-          gcloud auth application-default login || printf '  gcloud login failed.\n'
-        else
-          printf '  gcloud not installed — see https://cloud.google.com/sdk\n'
-        fi
-        ;;
-      *) printf '  Skipped — run it yourself, then re-run setup.\n' ;;
-    esac
-  fi
-
-  # 2. Project (required). Default-fill from gcloud's active config.
-  project=$(vertex_resolve "$provider" project)
-  project="${project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
-  if [[ -z "$project" ]]; then
-    local default_project
-    default_project=$(_gcloud_active_project)
-    read -rp "  GCP project${default_project:+ [$default_project]}: " input
-    input="${input:-$default_project}"
-    if [[ -n "$input" ]]; then
-      _conf_apply "$conf" conf_set_section_setting "$provider" project "$input" &&
-        printf '  Set project = %s\n' "$input"
-    else
-      printf '  No project set — vertex requires one to run.\n'
-    fi
-  fi
-
-  # 3. Region (optional; default us-central1).
-  region=$(vertex_resolve "$provider" region)
-  if [[ -z "$region" ]]; then
-    read -rp '  Vertex region [Enter for us-central1]: ' input
-    if [[ -n "$input" ]]; then
-      _conf_apply "$conf" conf_set_section_setting "$provider" region "$input" &&
-        printf '  Set region = %s\n' "$input"
-    fi
-  fi
-
-  # 4. Account (optional; pin a specific gcloud login for token minting).
-  if [[ -z "$account" ]]; then
-    if command -v gcloud >/dev/null 2>&1; then
-      local accts
-      accts=$(gcloud auth list --format="value(account)" 2>/dev/null)
-      [[ -n "$accts" ]] && printf '  Known gcloud accounts:\n%s\n' "$(printf '%s\n' "$accts" | sed 's/^/    /')"
-    fi
-    read -rp '  Pin a gcloud account? [Enter for default ADC]: ' input
-    if [[ -n "$input" ]]; then
-      _conf_apply "$conf" conf_set_section_setting "$provider" account "$input" &&
-        printf '  Set account = %s\n' "$input"
-    fi
-  fi
 }
 
 # Help the user authenticate PROVIDER if it isn't ready yet. Key providers get
@@ -488,17 +360,19 @@ _setup_choose_provider() {
 }
 
 # ---------------------------------------------------------------------------
-# Config overview + in-place edit actions live in setup-edit.sh, and the
-# shadow-install detection lives in setup-shadow.sh (both kept under the repo's
+# Config overview + in-place edit actions live in setup-edit.sh, the Vertex AI
+# project discovery/picker + auth-assist in setup-vertex.sh, and the
+# shadow-install detection in setup-shadow.sh (all kept under the repo's
 # per-file line limit). Sourced here so the full wizard surface is available
 # whether bin/git-ai or a test sources setup.sh.
 # ---------------------------------------------------------------------------
 _SETUP_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 # shellcheck source=lib/setup-edit.sh
 source "${_SETUP_DIR}/setup-edit.sh"
+# shellcheck source=lib/setup-vertex.sh
+source "${_SETUP_DIR}/setup-vertex.sh"
 # shellcheck source=lib/setup-shadow.sh
 source "${_SETUP_DIR}/setup-shadow.sh"
-
 
 # Replace the whole config by re-running the fresh flow (fast path first, so
 # detected providers are enabled with recommended models in one stroke).
