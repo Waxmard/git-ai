@@ -71,8 +71,7 @@ def test_prepare_repo_pr_context_uses_incremental_range_from_explicit_sha(
     assert "fix: add second" in context.commit_log
     assert "feat: add first" not in context.commit_log
     assert "two.txt" in context.diff_stat
-    # log must be GITAI_COMMIT-prefixed so build_mr_prompt_input can detect
-    # conventional commits and choose two-pass vs fallback correctly
+    # GITAI_COMMIT prefixes are what let the builder pick two-pass vs fallback.
     assert "GITAI_COMMIT" in context.commit_log
 
 
@@ -245,9 +244,8 @@ def test_prepare_repo_pr_context_excludes_lockfiles_from_diff_only(
     tmp_path: Path,
 ) -> None:
     repo = _make_repo(tmp_path)
-    # Lockfile commit + a real-code commit. Default excludes drop the lockfile
-    # content from the full diff (noise), but the diff *stat* keeps it so a
-    # lockfile-only dependency bump still leaves a one-line trace for the model.
+    # Default excludes drop lockfile content from the full diff, but the stat
+    # keeps it so a lockfile-only bump still leaves a trace for the model.
     _commit(repo, "package-lock.json", "lock_contents\n", "chore: lockfile")
     _commit(repo, "app.py", "print('hi')\n", "feat: add app")
 
@@ -262,8 +260,8 @@ def test_prepare_repo_pr_context_diff_stat_honors_user_ignore(
     tmp_path: Path,
 ) -> None:
     repo = _make_repo(tmp_path)
-    # A user `.git-ai-ignore` entry must stay excluded from the diff stat even
-    # though built-in lockfile defaults are now surfaced there.
+    # User `.git-ai-ignore` entries stay excluded from the stat, unlike the
+    # built-in lockfile defaults.
     (repo / ".git-ai-ignore").write_text("generated.txt\n", encoding="utf-8")
     _commit(repo, "package-lock.json", "lock_contents\n", "chore: lockfile")
     _commit(repo, "generated.txt", "noise\n", "chore: generated")
@@ -361,8 +359,7 @@ def test_prepare_repo_pr_context_uses_origin_base_when_local_missing(
 ) -> None:
     repo = _make_repo(tmp_path)
     base_sha = _git(repo, "rev-parse", "HEAD")
-    # A fetched-but-not-checked-out base: only origin/dev exists. It should be
-    # used directly rather than erroring — PRs target the remote base anyway.
+    # Only origin/dev exists (fetched, never checked out) — use it, don't error.
     _git(repo, "update-ref", "refs/remotes/origin/dev", base_sha)
     _commit(repo, "one.txt", "one\n", "feat: add first")
 
@@ -374,8 +371,8 @@ def test_prepare_repo_pr_context_uses_origin_base_when_local_missing(
 def test_prepare_repo_pr_context_prefers_origin_over_stale_local_base(
     tmp_path: Path,
 ) -> None:
-    # Repro: local `main` lags behind `origin/main`. Comparing against the stale
-    # local base leaks the already-merged upstream commit into the PR diff/log.
+    # Local `main` lags origin/main; the stale base would leak the already-merged
+    # upstream commit into the diff/log.
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-b", "main", repo], check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
@@ -406,8 +403,8 @@ def test_prepare_warns_when_no_origin_base(tmp_path: Path) -> None:
 
 
 def test_prepare_warns_when_forked_from_other_branch(tmp_path: Path) -> None:
-    # HEAD forks from feat-x, which itself forks from main. A PR against main
-    # folds in feat-x's commit, so warn and suggest --base feat-x.
+    # HEAD forks from feat-x, which forks from main — a PR against main folds in
+    # feat-x's commit, so warn and suggest --base feat-x.
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-b", "main", repo], check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)
@@ -425,8 +422,7 @@ def test_prepare_warns_when_forked_from_other_branch(tmp_path: Path) -> None:
 
 
 def test_prepare_raises_on_no_common_ancestor(tmp_path: Path) -> None:
-    # HEAD and the base have unrelated histories (orphan branch): the three-dot
-    # diff would error cryptically, so prepare should fail with a clear message.
+    # Unrelated histories: the three-dot diff would error cryptically.
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-b", "main", repo], check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, check=True)

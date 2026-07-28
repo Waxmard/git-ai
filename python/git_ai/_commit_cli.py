@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """CLI bridge for the shell `git-ai commit` path.
 
-Emits the optional branch-context block (``<branch>`` / ``<branch_commits>`` /
-``<branch_diffstat>``) so the shell can splice it into the commit prompt input
-without reimplementing the base-resolution cascade in bash. Branch context is
-best-effort: any failure prints nothing and exits 0 so a commit is never
-blocked by it.
+Emits the branch-context block so the shell can splice it into the commit
+prompt without reimplementing the base-resolution cascade in bash. Best-effort:
+any failure prints nothing and exits 0, never blocking a commit.
 """
 
 from __future__ import annotations

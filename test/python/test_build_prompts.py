@@ -34,11 +34,6 @@ index ccc..ddd 100644
 """
 
 
-# ---------------------------------------------------------------------------
-# format_commit_log
-# ---------------------------------------------------------------------------
-
-
 def test_format_commit_log_empty() -> None:
     assert format_commit_log([]) == ""
 
@@ -53,11 +48,6 @@ def test_format_commit_log_with_bodies() -> None:
     assert log == (
         "GITAI_COMMIT feat: a\nbody line 1\nbody line 2\nGITAI_COMMIT fix: b\n"
     )
-
-
-# ---------------------------------------------------------------------------
-# derive_diff_stat
-# ---------------------------------------------------------------------------
 
 
 def test_derive_diff_stat_empty_input() -> None:
@@ -97,11 +87,6 @@ def test_derive_diff_stat_skips_header_lines() -> None:
     stat = derive_diff_stat(diff)
     assert "1 insertion(+)" in stat
     assert "1 deletion(-)" in stat
-
-
-# ---------------------------------------------------------------------------
-# build_commit_prompt
-# ---------------------------------------------------------------------------
 
 
 def test_build_commit_prompt_returns_non_empty_pair() -> None:
@@ -200,11 +185,6 @@ def test_build_commit_prompt_emits_only_non_empty_branch_tags() -> None:
     assert "<branch_diffstat>" not in user
 
 
-# ---------------------------------------------------------------------------
-# format_branch_context
-# ---------------------------------------------------------------------------
-
-
 def test_format_branch_context_all_empty_returns_blank() -> None:
     assert format_branch_context() == ""
     assert (
@@ -226,11 +206,6 @@ def test_format_branch_context_strips_and_tags_each_part() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# parse_commit_response
-# ---------------------------------------------------------------------------
-
-
 def test_parse_commit_response_strips_fences() -> None:
     assert parse_commit_response("```\nfeat: do thing\n```") == "feat: do thing"
 
@@ -247,11 +222,6 @@ def test_parse_commit_response_rejects_empty() -> None:
 def test_parse_commit_response_rejects_whitespace_only() -> None:
     with pytest.raises(RuntimeError, match="empty response"):
         parse_commit_response("   \n  \n")
-
-
-# ---------------------------------------------------------------------------
-# build_mr_prompt
-# ---------------------------------------------------------------------------
 
 
 _CONVENTIONAL_LOG = (
@@ -327,11 +297,6 @@ def test_build_mr_prompt_respects_release_context_override() -> None:
         diff=_SAMPLE_DIFF, release_context="Release context: v2.0.0"
     )
     assert "Release context: v2.0.0" in user
-
-
-# ---------------------------------------------------------------------------
-# parse_mr_response
-# ---------------------------------------------------------------------------
 
 
 def test_parse_mr_response_strips_fences() -> None:

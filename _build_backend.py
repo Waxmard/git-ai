@@ -1,11 +1,9 @@
 """In-tree PEP 517 build backend.
 
-The CLI is the Bash program at ``bin/git-ai`` + ``lib/*.sh``, which live at the
-repo root (the canonical source shared with the npm package and ``make
-install``). The wheel needs them *under* the Python package so they install
-alongside ``git_ai``. This backend copies them into ``python/git_ai/_sh/``
-before each build, so the wheel's Bash is always a fresh build output and never
-drifts from the root sources. Everything else delegates to setuptools.
+The canonical Bash CLI (``bin/git-ai`` + ``lib/*.sh``) lives at the repo root,
+shared with the npm package and ``make install``, but the wheel needs it under
+the Python package. This copies it into ``python/git_ai/_sh/`` before each
+build so it can't drift. Everything else delegates to setuptools.
 """
 
 from __future__ import annotations
@@ -21,7 +19,6 @@ _DEST = _ROOT / "python" / "git_ai" / "_sh"
 
 
 def _sync_bash() -> None:
-    """Mirror root bin/ + lib/ into the package as fresh build output."""
     if _DEST.exists():
         shutil.rmtree(_DEST)
     for sub in ("bin", "lib"):

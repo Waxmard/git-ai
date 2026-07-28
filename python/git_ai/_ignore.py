@@ -1,10 +1,8 @@
 """git-ai ignore patterns: built-in lockfile defaults + repo-root `.git-ai-ignore`.
 
 Patterns become repo-root git pathspec excludes
-(`:(top,exclude,glob)**/<pattern>`) so noisy generated files (lockfiles
-especially) never reach the LLM. Lines starting with `!` in `.git-ai-ignore`
-remove a pattern from the active set, letting users opt back into a built-in
-default when they actually want to review it.
+(`:(top,exclude,glob)**/<pattern>`) so generated noise never reaches the LLM.
+A leading `!` removes a pattern, opting back into a built-in default.
 """
 
 from __future__ import annotations
@@ -51,15 +49,13 @@ def load_ignore_patterns(
 ) -> list[str]:
     """Return the active exclude pattern list for the repo.
 
-    Order: ``DEFAULT_EXCLUDES`` first, then non-negated lines from
-    ``.git-ai-ignore``. Patterns listed with a leading ``!`` are removed
-    (exact match). Result is deduped while preserving order.
+    ``DEFAULT_EXCLUDES`` first, then non-negated ``.git-ai-ignore`` lines;
+    ``!`` entries are removed by exact match. Deduped, order-preserving.
 
-    Set ``include_defaults=False`` to drop the built-in lockfile defaults while
-    still honouring the repo's ``.git-ai-ignore``. Used for the PR diff *stat*,
-    which surfaces lockfile bumps (one stat line each, high signal) that the full
-    diff still strips as noise — otherwise a lockfile-only dependency bump merged
-    from a bot branch leaves no evidence at all for the model to describe.
+    ``include_defaults=False`` drops the lockfile defaults but still honours
+    ``.git-ai-ignore``. Used for the PR diff *stat*, where lockfile bumps are
+    one high-signal line each — without them a lockfile-only bot bump leaves
+    the model no evidence to describe.
     """
     additions: list[str] = []
     negations: list[str] = []
@@ -84,8 +80,7 @@ def load_ignore_patterns(
 def to_pathspec_args(patterns: list[str] | tuple[str, ...] | None) -> list[str]:
     """Build trailing ``-- :/ :(top,exclude,glob)**/X ...`` args for ``git diff``.
 
-    Returns an empty list when ``patterns`` is empty/None so callers can
-    splat it unconditionally.
+    Empty when ``patterns`` is empty/None, so callers can splat unconditionally.
     """
     if not patterns:
         return []
