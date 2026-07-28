@@ -11,24 +11,28 @@
 # and clobber the wizard's own traps. The key goes in a curl config file rather
 # than argv, keeping it out of `ps`.
 _setup_probe_key() (
-  local provider="$1" key="$2" cfg url code st
+  local provider="$1" key="$2" cfg url code st esc
   [[ -z "${GIT_AI_NO_KEY_PROBE:-}" ]] || return 2
   command -v curl >/dev/null 2>&1 || return 2
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 2
   trap 'rm -f "$cfg"' EXIT
+  # curl's config parser reads \ and " inside a quoted value as escapes, so an
+  # unescaped key silently probes a truncated string and reports a false reject.
+  esc=${key//\\/\\\\}
+  esc=${esc//\"/\\\"}
   case "${provider%%@*}" in
     anthropic-api)
-      printf 'header = "x-api-key: %s"\nheader = "anthropic-version: 2023-06-01"\n' "$key" >"$cfg"
+      printf 'header = "x-api-key: %s"\nheader = "anthropic-version: 2023-06-01"\n' "$esc" >"$cfg"
       url="https://api.anthropic.com/v1/models?limit=1"
       ;;
     openai-api)
-      printf 'header = "Authorization: Bearer %s"\n' "$key" >"$cfg"
+      printf 'header = "Authorization: Bearer %s"\n' "$esc" >"$cfg"
       url="https://api.openai.com/v1/models"
       ;;
     # Gemini takes the key as a query parameter, so the whole URL lives in the
     # config file too and none of it can be passed on the command line.
     gemini-api)
-      printf 'url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=%s"\n' "$key" >"$cfg"
+      printf 'url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=%s"\n' "$esc" >"$cfg"
       url=""
       ;;
     *) return 2 ;;
