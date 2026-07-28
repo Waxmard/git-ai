@@ -181,10 +181,20 @@ def _marker_index(lines: list[str], marker: str) -> int:
     return -1
 
 
-def _drop_trailing_markers(text: str, markers: tuple[str, ...]) -> str:
-    """Drop trailing marker lines a model emitted as a closing delimiter."""
+_CLOSING_MARKER_RE = re.compile(r"^={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}$")
+
+
+def _drop_trailing_markers(text: str) -> str:
+    """Drop trailing sentinel lines a model emitted as a closing delimiter.
+
+    Matches any ``===WORD===`` line, not just the markers the prompt asks for:
+    models routinely close a ``===COMMIT===`` section with an invented
+    ``===END===`` that would otherwise land in the commit body.
+    """
     lines = text.split("\n")
-    while lines and (not lines[-1].strip() or lines[-1].strip() in markers):
+    while lines and (
+        not lines[-1].strip() or _CLOSING_MARKER_RE.match(lines[-1].strip())
+    ):
         lines.pop()
     return "\n".join(lines)
 
@@ -204,9 +214,7 @@ def _extract_pr_sections(text: str) -> str:
     title = "\n".join(lines[t_idx + 1 : b_idx]).strip()
     if not title:
         return text
-    body = _drop_trailing_markers(
-        "\n".join(lines[b_idx + 1 :]), (_PR_TITLE_MARKER, _PR_BODY_MARKER)
-    ).strip()
+    body = _drop_trailing_markers("\n".join(lines[b_idx + 1 :])).strip()
     return f"{title}\n\n{body}" if body else title
 
 
@@ -229,16 +237,12 @@ def _extract_commit_message(text: str) -> str:
     lines = text.split("\n")
     idx = _marker_index(lines, _COMMIT_MARKER)
     if idx >= 0:
-        after = _drop_trailing_markers(
-            "\n".join(lines[idx + 1 :]), (_COMMIT_MARKER,)
-        ).strip()
+        after = _drop_trailing_markers("\n".join(lines[idx + 1 :])).strip()
         if after:
             return after
     for i, line in enumerate(lines):
         if _COMMIT_SUBJECT_RE.match(line.strip()):
-            return _drop_trailing_markers(
-                "\n".join(lines[i:]), (_COMMIT_MARKER,)
-            ).strip()
+            return _drop_trailing_markers("\n".join(lines[i:])).strip()
     return text
 
 

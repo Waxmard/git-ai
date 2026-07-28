@@ -60,6 +60,22 @@ teardown() {
   assert_output "$expected"
 }
 
+@test "extract_commit_output: drops an invented trailing ===END=== marker" {
+  printf '%s\n' '===COMMIT===' 'feat: add thing' '' 'Body.' '===END===' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'feat: add thing' '' 'Body.')
+  run extract_commit_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "extract_commit_output: drops a trailing ===END=== marker on the fallback path" {
+  printf '%s\n' 'Reasoning:' 'fix: correct the guard' '' 'Body.' '=== END ===' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'fix: correct the guard' '' 'Body.')
+  run extract_commit_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
 @test "extract_commit_output: falls back to an indented conventional subject" {
   printf '%s\n' 'Reasoning:' '  fix: correct the guard' '' 'Body.' > "$TEST_TMP/in.txt"
   expected=$(printf '%s\n' 'fix: correct the guard' '' 'Body.')

@@ -258,7 +258,9 @@ run_provider() {
     claude-code)
       command -v claude >/dev/null 2>&1 ||
         die "Claude Code auth requires the Claude Code CLI. See: https://claude.ai/code"
-      claude -p "$prompt" --max-turns 1 --model "$model" <<<"$input" | strip_fences ||
+      # --max-turns must exceed 1: reasoning models spend a turn thinking, so a
+      # cap of 1 aborts with "Reached max turns" before any text is emitted.
+      claude -p "$prompt" --max-turns 3 --model "$model" <<<"$input" | strip_fences ||
         die "Claude generation failed"
       ;;
     anthropic-api)

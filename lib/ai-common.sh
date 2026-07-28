@@ -151,6 +151,12 @@ strip_fences() {
   '
 }
 
+# Shape of a ===WORD=== sentinel line, passed into the perl extractors below
+# through the environment. Trailing lines matching it are dropped whatever the
+# word is: models routinely close a section with an invented ===END=== no prompt
+# asked for. Mirrors python/git_ai/_generate.py:_CLOSING_MARKER_RE.
+export GIT_AI_CLOSING_MARKER_RE='={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}'
+
 # Slice title/body out of sentinel-delimited PR output read from stdin. The PR
 # prompts wrap their answer in ===TITLE=== / ===BODY=== line markers so any
 # preamble, reasoning, or char-count chatter outside the markers is discarded;
@@ -159,11 +165,15 @@ strip_fences() {
 # python/git_ai/_generate.py:_extract_pr_sections.
 extract_pr_output() {
   perl -0777 -ne '
+    # ${...} braces are required: a bare $re followed by [ \t] parses as an
+    # array subscript, not interpolation.
+    my $re = qr/$ENV{GIT_AI_CLOSING_MARKER_RE}/;
+    my $marker = qr/(?:\A|\n)[ \t]*${re}[ \t]*\z/;
     if (/^===TITLE===[ \t]*\n(.*?)\n===BODY===[ \t]*\n(.*)\z/ms) {
       my ($t, $b) = ($1, $2);
       $t =~ s/\A\s+//; $t =~ s/\s+\z//;
       $b =~ s/\A\s+//; $b =~ s/\s+\z//;
-      while ($b =~ s/(?:\A|\n)[ \t]*===(?:TITLE|BODY)===[ \t]*\z//) { $b =~ s/\s+\z//; }
+      while ($b =~ s/$marker//) { $b =~ s/\s+\z//; }
       if (length $t) {
         print length($b) ? "$t\n\n$b\n" : "$t\n";
         next;
@@ -182,16 +192,20 @@ extract_pr_output() {
 # python/git_ai/_generate.py:_extract_commit_message.
 extract_commit_output() {
   perl -0777 -ne '
+    # ${...} braces are required: a bare $re followed by [ \t] parses as an
+    # array subscript, not interpolation.
+    my $re = qr/$ENV{GIT_AI_CLOSING_MARKER_RE}/;
+    my $marker = qr/(?:\A|\n)[ \t]*${re}[ \t]*\z/;
     if (/^===COMMIT===[ \t]*\n(.*)\z/ms) {
       my $m = $1;
       $m =~ s/\A\s+//; $m =~ s/\s+\z//;
-      while ($m =~ s/(?:\A|\n)[ \t]*===COMMIT===[ \t]*\z//) { $m =~ s/\s+\z//; }
+      while ($m =~ s/$marker//) { $m =~ s/\s+\z//; }
       if (length $m) { print "$m\n"; next; }
     }
     if (/^[ \t]*((?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)(?:\([^)]*\))?!?: \S.*)\z/ms) {
       my $m = $1;
       $m =~ s/\s+\z//;
-      while ($m =~ s/(?:\A|\n)[ \t]*===COMMIT===[ \t]*\z//) { $m =~ s/\s+\z//; }
+      while ($m =~ s/$marker//) { $m =~ s/\s+\z//; }
       print "$m\n";
       next;
     }
