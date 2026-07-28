@@ -9,7 +9,7 @@ Guidance for Claude Code (claude.ai/code) when working under `test/`. The repo-w
 - **BATS** — `test/bin/`, `test/lib/`, run via `make test` or `npm test` (`.github/workflows/test.yml`).
 - **pytest** — `test/python/`, run via `make py-test` or `uv run pytest` (`.github/workflows/python.yml`).
 
-Shell helpers now live across `lib/{auth,discovery,config,provider}.sh` but load through the `lib/ai-common.sh` umbrella — tests source only the umbrella. The wizard libs (`lib/setup.sh` / `lib/setup-edit.sh` / `lib/setup-shadow.sh`) are exercised by sourcing `bin/git-ai`. Tests that touch provider APIs stub `curl` / `gcloud` / `security` / the provider CLIs on `PATH`; discovery tests run against seeded caches with the network blocked.
+Shell helpers now live across `lib/{auth,discovery,config,provider}.sh` but load through the `lib/ai-common.sh` umbrella — tests source only the umbrella. The wizard libs (`lib/setup.sh` / `lib/setup-edit.sh` / `lib/setup-auth.sh` / `lib/setup-vertex.sh` / `lib/setup-shadow.sh`) are exercised by sourcing `bin/git-ai`. Tests that touch provider APIs stub `curl` / `gcloud` / `security` / the provider CLIs on `PATH`; discovery tests run against seeded caches with the network blocked.
 
 ## Intentionally not covered
 

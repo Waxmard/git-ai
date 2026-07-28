@@ -79,7 +79,7 @@ setup() {
   [[ "$written" == *"[claude-code]"* ]]
 }
 
-@test "git-ai setup: no providers selected exits 1" {
+@test "git-ai setup: no providers selected exits cleanly" {
   local xdg stub c
   xdg=$(mktemp -d)
   # Stub out the wizard's provider_ready probes (real gcloud/keychain hits).
@@ -90,8 +90,10 @@ setup() {
   done
   run bash -c "export PATH=\"$stub:\$PATH\"; XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 GIT_AI_NO_SETUP_FAST=1 printf '\n' | XDG_CONFIG_HOME='$xdg' GIT_AI_NO_FZF=1 GIT_AI_NO_SETUP_FAST=1 '$GIT_AI' setup"
   rm -rf "$xdg" "$stub"
-  assert_failure 1
-  assert_output --partial "No providers selected"
+  # Backing out is a normal "not now" — the wizard also auto-launches on the
+  # first commit, where dying here would fail the commit.
+  assert_success
+  assert_output --partial "No providers selected — nothing written."
 }
 
 @test "git-ai: unknown subcommand exits 1" {

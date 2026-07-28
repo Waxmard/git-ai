@@ -106,6 +106,23 @@ _vertex_endpoint() {
     "$host" "$project" "$region" "$publisher" "$model" "$method"
 }
 
+# Thinking-capable models put a `thinking` block first, so content[0] is not
+# always the answer — concatenate every text block instead.
+_extract_anthropic_text() {
+  python3 -c '
+import json, sys
+data = json.loads(sys.stdin.read())
+text = "".join(
+  block.get("text", "")
+  for block in data.get("content", [])
+  if block.get("type") == "text"
+)
+if not text.strip():
+    sys.exit(1)
+print(text)
+'
+}
+
 _run_vertex_anthropic_api() {
   local model="$1" prompt="$2" input="$3" project="$4" region="$5" account="${6:-}"
   local token body url curl_cfg response
@@ -127,11 +144,7 @@ print(json.dumps({
   local curl_status=$?
   rm -f "$curl_cfg"
   [[ $curl_status -eq 0 ]] || die "Vertex Anthropic API request failed"
-  python3 -c '
-import json, sys
-data = json.loads(sys.stdin.read())
-print(data["content"][0]["text"])
-' <<<"$response" || die "Failed to parse Vertex Anthropic response"
+  _extract_anthropic_text <<<"$response" || die "Failed to parse Vertex Anthropic response"
 }
 
 _run_vertex_gemini_api() {
@@ -188,11 +201,7 @@ print(json.dumps({
   local curl_status=$?
   rm -f "$curl_cfg"
   [[ $curl_status -eq 0 ]] || die "Anthropic API request failed"
-  python3 -c '
-import json, sys
-data = json.loads(sys.stdin.read())
-print(data["content"][0]["text"])
-' <<<"$response" || die "Failed to parse Anthropic API response"
+  _extract_anthropic_text <<<"$response" || die "Failed to parse Anthropic API response"
 }
 
 _run_openai_api() {
