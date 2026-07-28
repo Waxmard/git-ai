@@ -54,14 +54,53 @@ _setup_conf_wizard_providers() {
   done < <(conf_section_providers <"$conf")
 }
 
+# Memoized readiness tag ("ready" / "setup") for PROVIDER. provider_ready shells
+# out to keychains and gcloud, so each provider is probed at most once per
+# wizard run. The label builders below run inside command substitution, where a
+# cache write would be discarded — callers warm the cache first via
+# _setup_warm_ready.
+_SETUP_READY_CACHE=$'\n'
+_setup_ready_tag() {
+  local p="$1" rest tag
+  case "$_SETUP_READY_CACHE" in
+    *$'\n'"$p="*)
+      rest="${_SETUP_READY_CACHE#*$'\n'"$p="}"
+      printf '%s' "${rest%%$'\n'*}"
+      return 0
+      ;;
+  esac
+  if provider_ready "$p" 2>/dev/null; then tag=ready; else tag=setup; fi
+  _SETUP_READY_CACHE+="$p=$tag"$'\n'
+  printf '%s' "$tag"
+}
+
+_setup_warm_ready() {
+  local p
+  for p in "$@"; do _setup_ready_tag "$p" >/dev/null; done
+}
+
+# Picker label for PROVIDER: display name plus its readiness, so a pick that
+# will immediately demand an API key is visible before it's made.
+_setup_provider_label() {
+  local tag
+  tag=$(_setup_ready_tag "$1")
+  if [[ "$tag" == ready ]]; then
+    printf '%s  [ready]\n' "$(provider_display_name "$1")"
+  else
+    printf '%s  [needs setup]\n' "$(provider_display_name "$1")"
+  fi
+}
+
 # Print the readiness status table for every provider.
 _setup_status_table() {
   local p reason
   printf 'Detected providers:\n\n'
   for p in "${SETUP_PROVIDERS[@]}"; do
     if reason=$(provider_ready "$p" 2>&1 1>/dev/null); then
+      _SETUP_READY_CACHE+="$p=ready"$'\n'
       printf '  [ready]  %s\n' "$(provider_display_name "$p")"
     else
+      _SETUP_READY_CACHE+="$p=setup"$'\n'
       printf '  [setup]  %-22s — %s\n' "$(provider_display_name "$p")" "$reason"
     fi
   done
@@ -73,16 +112,23 @@ _setup_has_fzf() {
   command -v fzf >/dev/null 2>&1 && [[ -z "${GIT_AI_NO_FZF:-}" ]]
 }
 
+# Shared fzf look-and-feel, so the provider, model, and project pickers don't
+# each behave differently. Per-picker flags (--multi, --delimiter, --with-nth,
+# --header, --prompt) stay at the call site.
+SETUP_FZF_OPTS=(--height=40% --reverse --cycle --border --no-sort --tiebreak=index)
+
 # Pick one or more providers. Prefers fzf; falls back to a numbered prompt.
 # Prints chosen provider tokens, one per line.
 _setup_pick_providers() {
   local p line
+  _setup_warm_ready "${SETUP_PROVIDERS[@]}"
   if _setup_has_fzf; then
     for p in "${SETUP_PROVIDERS[@]}"; do
-      printf '%s|%s\n' "$p" "$(provider_display_name "$p")"
+      printf '%s|%s\n' "$p" "$(_setup_provider_label "$p")"
     done | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE \
-      fzf --multi --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
-      --prompt='enable providers (tab to multi-select)> ' --height=50% --reverse |
+      fzf --multi --delimiter='|' --with-nth=2 "${SETUP_FZF_OPTS[@]}" \
+      --header='Tab marks a provider; Enter confirms; Esc cancels' \
+      --prompt='enable providers> ' |
       while IFS='|' read -r p _; do printf '%s\n' "$p"; done
     return
   fi
@@ -90,7 +136,7 @@ _setup_pick_providers() {
   # Numbered fallback.
   local i=1
   for p in "${SETUP_PROVIDERS[@]}"; do
-    printf '  %d) %s\n' "$i" "$(provider_display_name "$p")" >&2
+    printf '  %d) %s\n' "$i" "$(_setup_provider_label "$p")" >&2
     i=$((i + 1))
   done
   printf 'Select providers by number (space-separated): ' >&2
@@ -144,39 +190,37 @@ _setup_model_rows() {
 }
 
 # Pick zero or more models for PROVIDER. Models are discovered live from the
-# provider's API (cached) and offered as suggestions — recommended first — but
-# nothing is selected unless the user *explicitly* marks it (Tab) or types it.
-# Prints chosen model IDs, one per line — empty output is valid (the provider
-# is enabled with no pinned model and the model is chosen at commit/pr time).
-# Never adds a model the user didn't deliberately choose.
+# provider's API (cached) and offered as suggestions, with the family's
+# recommended id(s) pre-marked so the common case is a bare Enter. Prints chosen
+# model IDs, one per line — empty output is valid (the provider is enabled with
+# no pinned model and the model is chosen at commit/pr time).
 _setup_pick_models() {
-  local provider="$1" listed line m
+  local provider="$1" listed line m st
   listed=$(_setup_suggest_models "$provider")
 
   if [[ -n "$listed" ]]; then
     local rows selected want_custom=""
     rows=$(_setup_model_rows "$provider" "$listed")
-    if selected=$(_setup_multiselect "models for ${provider}> " \
-        'Tab marks a model; Enter confirms marked rows; Esc selects none' \
-        '— skip / no model —' "$rows"); then
-      # The fzf choice is final: skipping does NOT fall through to the
-      # free-text prompt — unlisted ids go via the explicit custom row, which
-      # emits any models marked alongside it and then drops to the prompt.
-      while IFS= read -r m; do
-        [[ -n "$m" ]] || continue
-        if [[ "$m" == '=custom=' ]]; then want_custom=1; else printf '%s\n' "$m"; fi
-      done <<<"$selected"
-      [[ -n "$want_custom" ]] || return 0
-    else
-      printf 'Suggested models for %s:\n' "$provider" >&2
-      printf '%s\n' "$listed" | sed 's/^/  /' >&2
-    fi
+    selected=$(_setup_multiselect "models for $(provider_display_name "$provider")> " \
+      'Recommended start marked — Tab to add/drop; Enter confirms; Esc picks none' \
+      '— no model (pick one at commit time) —' "$rows" "$SETUP_PRESELECT_RECOMMENDED")
+    st=$?
+    # Cancel and a confirmed-empty pick collapse here: nothing is configured yet,
+    # so there is no current set for "cancel" to preserve.
+    [[ $st -eq 0 ]] || return 0
+    # The picker's answer is final: unlisted ids go via its explicit custom row,
+    # which emits any models marked alongside it and then drops to the prompt.
+    while IFS= read -r m; do
+      [[ -n "$m" ]] || continue
+      if [[ "$m" == '=custom=' ]]; then want_custom=1; else printf '%s\n' "$m"; fi
+    done <<<"$selected"
+    [[ -n "$want_custom" ]] || return 0
   fi
 
-  # Reached via the explicit custom-id row, when fzf is unavailable, or when
-  # the provider has no discoverable models (e.g. claude-code/codex without a
-  # key). Blank = leave the provider with no pinned model.
-  read -rp "Model id(s) for ${provider}, comma-separated (blank for none): " line || line=""
+  # Reached via the explicit custom-id row, or when the provider has no
+  # discoverable models (e.g. claude-code/codex without a key). Blank = leave
+  # the provider with no pinned model.
+  read -rp "Model id(s) for $(provider_display_name "$provider"), comma-separated (blank for none): " line || line=""
   [[ -n "$line" ]] || return 0
   while IFS= read -r m; do
     m=$(_trim "$m")
@@ -185,39 +229,93 @@ _setup_pick_models() {
 }
 
 # _setup_multiselect PROMPT HEADER SKIP_LABEL ROWS [PRESELECT_QUERY]
-# fzf multi-select over "value|label" ROWS, led by a skip sentinel so a bare
-# Enter (nothing marked) selects nothing — fzf otherwise returns the focused
-# row. Prints the marked values one per line (possibly none); returns non-zero
-# when fzf is unavailable so callers fall back to their free-text prompt.
+# Multi-select over "value|label" ROWS, led by a skip sentinel so a bare Enter
+# with nothing marked resolves to the empty set — fzf otherwise returns the
+# focused row. Prints the marked values one per line and returns:
+#   0 — confirmed; empty output means the user deliberately chose nothing
+#   2 — cancelled (Esc / ctrl-c); callers keep whatever is configured now
+# That 0-vs-2 split is what makes "unpin everything" reachable: collapsing both
+# to empty output leaves a replace-style editor unable to tell "clear it" from
+# "leave it alone". fzf drives it when available, the numbered picker otherwise.
 # FZF_DEFAULT_OPTS is cleared so a user's keybindings can't auto-select.
 #
 # PRESELECT_QUERY is an fzf query (matched against the *labels*, since
 # --with-nth=2 makes the label the searchable string) whose matches are marked
 # on load before the query is cleared — fzf's only way to open with rows already
-# selected. Replace-style editors use it so the current set arrives pre-marked
-# and the user unmarks what they want dropped instead of re-marking everything.
-# The skip sentinel must never match it.
+# selected. The numbered picker marks the same rows by substring-matching the
+# query's literal tail. Editors use it so the set worth keeping arrives
+# pre-marked and the gesture is unmarking what to drop. The sentinel must never
+# match it.
 _setup_multiselect() {
   local prompt="$1" header="$2" skip_label="$3" rows="$4" preselect="${5:-}"
-  _setup_has_fzf || return 1
-  local selected v
+  if ! _setup_has_fzf; then
+    _setup_multiselect_numbered "$prompt" "$header" "$skip_label" "$rows" "$preselect"
+    return $?
+  fi
+  local selected v st
   local -a preselect_opts=()
   [[ -n "$preselect" ]] &&
     preselect_opts=(--query="$preselect" --bind='load:select-all+clear-query')
   selected=$(printf '—|%s\n%s' "$skip_label" "$rows" \
     | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
-      --delimiter='|' --with-nth=2 --no-sort --tiebreak=index \
-      --height=40% --reverse --header="$header" --prompt="$prompt" \
-      ${preselect_opts[@]+"${preselect_opts[@]}"}) || selected=""
+      --delimiter='|' --with-nth=2 "${SETUP_FZF_OPTS[@]}" \
+      --header="$header" --prompt="$prompt" \
+      ${preselect_opts[@]+"${preselect_opts[@]}"})
+  st=$?
+  [[ $st -eq 0 ]] || return 2
   while IFS='|' read -r v _; do
     [[ -n "$v" && "$v" != "—" ]] && printf '%s\n' "$v"
   done <<<"$selected"
   return 0
 }
 
-# PRESELECT_QUERY for the replace-style editors: fzf's exact-match operator (')
-# against the "(current)" suffix they label already-configured rows with.
+# Numbered stand-in for _setup_multiselect on terminals without fzf: same
+# contract (0 confirmed / 2 cancelled), same sentinel, same preselection —
+# pre-marked rows show "[x]" and a bare Enter keeps exactly them, so accepting
+# the suggested set costs one keystroke here too. Prompts go to stderr because
+# stdout is the value channel.
+_setup_multiselect_numbered() {
+  local prompt="$1" header="$2" skip_label="$3" rows="$4" preselect="${5:-}"
+  # The preselect query is an fzf exact-match token ("'(current)"); its literal
+  # tail is what the labels actually contain.
+  local mark="${preselect#\'}"
+  local -a vals=("—") labels=("$skip_label") marked=("")
+  local v l i n box reply
+  while IFS='|' read -r v l; do
+    [[ -n "$v" ]] || continue
+    vals+=("$v")
+    labels+=("${l:-$v}")
+    if [[ -n "$mark" && "$l" == *"$mark"* ]]; then marked+=(1); else marked+=(""); fi
+  done <<<"$rows"
+  [[ ${#vals[@]} -gt 1 ]] || return 2
+
+  printf '%s\n' "$header" >&2
+  printf '   0) cancel — keep as-is\n' >&2
+  for i in "${!vals[@]}"; do
+    if [[ -n "${marked[$i]}" ]]; then box=x; else box=' '; fi
+    printf '  %2d) [%s] %s\n' "$((i + 1))" "$box" "${labels[$i]}" >&2
+  done
+  read -rp "${prompt}(numbers space-separated; Enter keeps [x]; 0 cancels) " reply || return 2
+
+  if [[ -z "${reply//[[:space:]]/}" ]]; then
+    for i in "${!vals[@]}"; do
+      [[ -n "${marked[$i]}" && "${vals[$i]}" != "—" ]] && printf '%s\n' "${vals[$i]}"
+    done
+    return 0
+  fi
+  for n in $reply; do [[ "$n" == 0 ]] && return 2; done
+  for n in $reply; do
+    [[ "$n" =~ ^[0-9]+$ ]] || continue
+    ((n >= 1 && n <= ${#vals[@]})) || continue
+    [[ "${vals[$((n - 1))]}" != "—" ]] && printf '%s\n' "${vals[$((n - 1))]}"
+  done
+  return 0
+}
+
+# PRESELECT_QUERY values: fzf's exact-match operator (') against the label
+# suffix each picker tags its already-good rows with.
 SETUP_PRESELECT_CURRENT="'(current)"
+SETUP_PRESELECT_RECOMMENDED="'(recommended)"
 
 # maybe_first_run_setup TOOL
 # Launch the setup wizard the first time a user runs commit/pr with nothing
@@ -244,75 +342,6 @@ maybe_first_run_setup() {
   : >"$sentinel" 2>/dev/null || true
 }
 
-# Help the user authenticate PROVIDER if it isn't ready yet. Key providers get
-# an interactive key prompt + storage choice; vertex gets project/region/account
-# assist; CLI providers get an install hint. CONF is the options.conf being
-# edited (vertex settings are written there).
-_setup_ensure_auth() {
-  local provider="$1" conf="${2:-$(user_options_path)}"
-  local label
-  label=$(provider_display_name "$provider")
-
-  if provider_ready "$provider" 2>/dev/null; then
-    printf '  %s: already authenticated.\n' "$label"
-    case "${provider%%@*}" in
-      vertex | vertex-gemini | vertex-anthropic)
-        printf '  (To change GCP projects, use "Change Vertex AI projects" in the setup menu.)\n' ;;
-    esac
-    return 0
-  fi
-
-  local meta service envvar
-  if meta=$(provider_key_meta "$provider"); then
-    read -r service envvar <<<"$meta"
-    printf '\n%s needs an API key.\n' "$label"
-    local key
-    read -rsp "  Paste key (blank to skip): " key
-    printf '\n'
-    if [[ -z "$key" ]]; then
-      printf '  Skipped — set %s later or re-run "git-ai setup".\n' "$envvar"
-      return 0
-    fi
-    printf '  Store it: 1) OS keychain  2) shell rc (plaintext)  3) skip saving\n'
-    local how
-    read -rp "  Choice [1]: " how
-    case "${how:-1}" in
-      1)
-        if store_api_key "$service" "$key"; then
-          printf '  Saved to your keychain (service: %s).\n' "$service"
-        else
-          printf '  No keychain backend found. Falling back to shell rc.\n'
-          local rc
-          rc=$(persist_key_to_rc "$envvar" "$key") &&
-            printf '  Appended export to %s — open a new shell or "source" it.\n' "$rc"
-        fi
-        ;;
-      2)
-        local rc
-        rc=$(persist_key_to_rc "$envvar" "$key") &&
-          printf '  Appended export to %s (plaintext) — open a new shell or "source" it.\n' "$rc"
-        ;;
-      *)
-        printf '  Not saved — export %s yourself to use this provider.\n' "$envvar"
-        ;;
-    esac
-    return 0
-  fi
-
-  # Non-key providers: point at the right install/auth step.
-  case "${provider%%@*}" in
-    claude-code)
-      printf '  %s: install the CLI — https://claude.ai/code\n' "$label" ;;
-    codex)
-      printf '  %s: install the CLI — https://github.com/openai/codex\n' "$label" ;;
-    # The wizard's `vertex` token lands settings in the shared [vertex] block
-    # (one auth/project setup covers both internal vertex providers).
-    vertex|vertex-gemini|vertex-anthropic)
-      _setup_vertex_assist "$provider" "$conf" ;;
-  esac
-  return 0
-}
-
 # Single-select over DATA — newline-separated "value<TAB>label" lines passed as
 # $2 (an argument, not stdin, so the numbered-fallback prompt still reads the
 # terminal). Prefers fzf (label shown, value returned); falls back to a numbered
@@ -333,8 +362,8 @@ _setup_select() {
     local i out
     out=$(for i in "${!vals[@]}"; do printf '%s\t%s\n' "$i" "${labels[$i]}"; done \
       | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf \
-        --delimiter=$'\t' --with-nth=2 --no-sort --tiebreak=index \
-        --height=40% --reverse --prompt="$prompt") || return 1
+        --delimiter=$'\t' --with-nth=2 "${SETUP_FZF_OPTS[@]}" \
+        --prompt="$prompt") || return 1
     [[ -n "$out" ]] || return 1
     printf '%s\n' "${vals[${out%%$'\t'*}]}"
     return 0
@@ -354,21 +383,25 @@ _setup_choose_provider() {
   local prompt="$1"
   shift
   [[ $# -gt 0 ]] || return 1
+  _setup_warm_ready "$@"
   local p data=""
-  for p in "$@"; do data+="${p}"$'\t'"$(provider_display_name "$p")"$'\n'; done
+  for p in "$@"; do data+="${p}"$'\t'"$(_setup_provider_label "$p")"$'\n'; done
   _setup_select "$prompt" "$data"
 }
 
 # ---------------------------------------------------------------------------
-# Config overview + in-place edit actions live in setup-edit.sh, the Vertex AI
-# project discovery/picker + auth-assist in setup-vertex.sh, and the
-# shadow-install detection in setup-shadow.sh (all kept under the repo's
-# per-file line limit). Sourced here so the full wizard surface is available
-# whether bin/git-ai or a test sources setup.sh.
+# Config overview + in-place edit actions live in setup-edit.sh, key/CLI
+# auth-assist in setup-auth.sh, the Vertex AI project discovery/picker + vertex
+# auth-assist in setup-vertex.sh, and the shadow-install detection in
+# setup-shadow.sh (all kept under the repo's per-file line limit). Sourced here
+# so the full wizard surface is available whether bin/git-ai or a test sources
+# setup.sh.
 # ---------------------------------------------------------------------------
 _SETUP_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 # shellcheck source=lib/setup-edit.sh
 source "${_SETUP_DIR}/setup-edit.sh"
+# shellcheck source=lib/setup-auth.sh
+source "${_SETUP_DIR}/setup-auth.sh"
 # shellcheck source=lib/setup-vertex.sh
 source "${_SETUP_DIR}/setup-vertex.sh"
 # shellcheck source=lib/setup-shadow.sh
@@ -560,8 +593,12 @@ _setup_manual() {
   local -a chosen=()
   local p
   while IFS= read -r p; do [[ -n "$p" ]] && chosen+=("$p"); done < <(_setup_pick_providers)
+  # Backing out of the first picker is a normal "not now", not an error — the
+  # wizard also auto-launches on first commit, where dying would fail the commit.
   if [[ ${#chosen[@]} -eq 0 ]]; then
-    die "No providers selected — nothing to configure."
+    printf 'No providers selected — nothing written.\n'
+    printf 'Run "git-ai setup" whenever you are ready (GIT_AI_NO_SETUP=1 silences the prompt).\n'
+    return 0
   fi
 
   # Build provider:model lines for the chosen providers. Wizard tokens are

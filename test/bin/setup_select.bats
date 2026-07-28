@@ -362,7 +362,8 @@ EOF
   assert_output --partial "Set vertex projects: old-proj, new-proj"
 }
 
-@test "_setup_change_vertex_projects: typed list replaces the current one" {
+# Numbered rows here are: 1) sentinel  2) a (current)  3) b (current)  4) custom.
+@test "_setup_change_vertex_projects: custom row replaces the current list" {
   printf '[vertex]\nprojects = a, b\n' >"$CONF"
   local stub; stub="$(mktemp -d)"
   printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
@@ -371,13 +372,51 @@ EOF
     export PATH="'"${stub}"':$PATH"
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
-    printf "c\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
+    printf "4\nc\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
   '
   rm -rf "$stub"
   assert_success
   assert_output --partial "Set vertex projects: c"
   run cat "$CONF"
   assert_line "projects = c"
+}
+
+@test "_setup_change_vertex_projects: cancelling keeps the current list" {
+  printf '[vertex]\nprojects = a, b\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "0\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Vertex projects unchanged: a, b"
+  run cat "$CONF"
+  assert_line "projects = a, b"
+}
+
+# A projectless vertex cannot run, so the sentinel row keeps the list rather
+# than clearing it (unlike the model editor).
+@test "_setup_change_vertex_projects: selecting only the sentinel keeps the list" {
+  printf '[vertex]\nprojects = a, b\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "1\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Vertex projects unchanged: a, b"
+  run cat "$CONF"
+  assert_line "projects = a, b"
 }
 
 @test "_setup_change_vertex_projects: blank entry keeps the current list" {
@@ -400,12 +439,22 @@ EOF
 
 # --- _setup_change_models (replace-style model editing) ---
 
-@test "_setup_change_models: typed list replaces the pinned models" {
+# Pin discovery and recommendations so the numbered rows are stable and no
+# network call is made: rows become 1) sentinel, 2..) current, custom, suggested.
+_models_env() {
+  printf '%s\n' '
+    _setup_suggest_models() { printf "%s\n" '"$1"'; }
+    recommended_model() { return 0; }
+  '
+}
+
+@test "_setup_change_models: custom row replaces the pinned models" {
   printf '[gemini-api]\ngemini-old\ngemini-keep\n' >"$CONF"
   run bash -c '
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
-    printf "gemini-new\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
+    '"$(_models_env gemini-sugg)"'
+    printf "4\ngemini-new\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
   '
   assert_success
   assert_output --partial "Set models for Gemini API: gemini-new"
@@ -415,11 +464,12 @@ EOF
   refute_line "gemini-keep"
 }
 
-@test "_setup_change_models: blank entry keeps the current pins" {
+@test "_setup_change_models: blank entry keeps the pre-marked pins" {
   printf '[gemini-api]\ngemini-old\n' >"$CONF"
   run bash -c '
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
+    '"$(_models_env gemini-sugg)"'
     printf "\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
   '
   assert_success
@@ -428,12 +478,44 @@ EOF
   assert_line "gemini-old"
 }
 
+@test "_setup_change_models: cancelling keeps the current pins" {
+  printf '[gemini-api]\ngemini-old\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    '"$(_models_env gemini-sugg)"'
+    printf "0\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
+  '
+  assert_success
+  assert_output --partial "Models unchanged: gemini-old"
+  run cat "$CONF"
+  assert_line "gemini-old"
+}
+
+# The point of the cancel/confirm split: an explicitly empty confirmation is the
+# only way to unpin everything without deleting the provider.
+@test "_setup_change_models: selecting only the sentinel unpins every model" {
+  printf '[gemini-api]\ngemini-old\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    '"$(_models_env gemini-sugg)"'
+    printf "1\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
+  '
+  assert_success
+  assert_output --partial "Unpinned every model for Gemini API"
+  run cat "$CONF"
+  assert_line "[gemini-api]"
+  refute_line "gemini-old"
+}
+
 @test "_setup_change_models: vertex replace clears a family whose models were all dropped" {
   printf '[vertex-anthropic]\nclaude-x\n\n[vertex-gemini]\ngemini-y\n' >"$CONF"
   run bash -c '
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
-    printf "gemini-z\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" vertex
+    '"$(_models_env gemini-z)"'
+    printf "5\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" vertex
   '
   assert_success
   assert_output --partial "Set models for Vertex AI: gemini-z"
@@ -488,12 +570,17 @@ EOF
   [ "$(grep -c 'Vertex AI' <<<"$output")" -eq 1 ]
 }
 
-# --- _setup_multiselect (preselect) ---
+# --- _setup_multiselect (preselect, cancel-vs-confirm) ---
+
+# fzf stub that echoes its argv and confirms with no selection.
+_stub_fzf() {
+  printf '#!/bin/sh\nprintf "%%s\\n" "$@" >&2\ncat >/dev/null\nexit 0\n' >"${1}/fzf"
+  chmod +x "${1}/fzf"
+}
 
 @test "_setup_multiselect: preselect query marks the (current) rows on load" {
   local stub; stub="$(mktemp -d)"
-  printf '#!/bin/sh\nprintf "%%s\\n" "$@" >&2\ncat >/dev/null\nexit 130\n' >"${stub}/fzf"
-  chmod +x "${stub}/fzf"
+  _stub_fzf "$stub"
   run bash -c '
     export PATH="'"${stub}"':$PATH"
     unset GIT_AI_NO_FZF
@@ -509,8 +596,7 @@ EOF
 
 @test "_setup_multiselect: no preselect query leaves the bind off" {
   local stub; stub="$(mktemp -d)"
-  printf '#!/bin/sh\nprintf "%%s\\n" "$@" >&2\ncat >/dev/null\nexit 130\n' >"${stub}/fzf"
-  chmod +x "${stub}/fzf"
+  _stub_fzf "$stub"
   run bash -c '
     export PATH="'"${stub}"':$PATH"
     unset GIT_AI_NO_FZF
@@ -521,6 +607,118 @@ EOF
   rm -rf "$stub"
   assert_success
   refute_output --partial "select-all"
+}
+
+@test "_setup_multiselect: shared fzf opts reach every picker" {
+  local stub; stub="$(mktemp -d)"
+  _stub_fzf "$stub"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    unset GIT_AI_NO_FZF
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_multiselect "p> " "h" "skip" "a|a"
+  '
+  rm -rf "$stub"
+  assert_output --partial "--cycle"
+  assert_output --partial "--border"
+  assert_output --partial "--height=40%"
+}
+
+@test "_setup_multiselect: Esc returns 2 so callers can keep the current state" {
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\ncat >/dev/null\nexit 130\n' >"${stub}/fzf"
+  chmod +x "${stub}/fzf"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    unset GIT_AI_NO_FZF
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_multiselect "p> " "h" "skip" "a|a"
+  '
+  rm -rf "$stub"
+  assert_equal "$status" 2
+  assert_output ""
+}
+
+@test "_setup_multiselect: confirming with only the sentinel returns 0 and no rows" {
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\ncat >/dev/null\nprintf "\\xe2\\x80\\x94|skip\\n"\nexit 0\n' >"${stub}/fzf"
+  chmod +x "${stub}/fzf"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    unset GIT_AI_NO_FZF
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_multiselect "p> " "h" "skip" "a|a"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output ""
+}
+
+# --- _setup_multiselect_numbered (no-fzf fallback) ---
+
+@test "_setup_multiselect_numbered: pre-marked rows show [x] and a bare Enter keeps them" {
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "\n" | GIT_AI_NO_FZF=1 _setup_multiselect_numbered "p> " "h" "skip" \
+      "a|a (current)
+b|b" "$SETUP_PRESELECT_CURRENT"
+  '
+  assert_success
+  assert_line "   2) [x] a (current)"
+  assert_line "   3) [ ] b"
+  assert_line "a"
+  refute_line "b"
+}
+
+@test "_setup_multiselect_numbered: numbers select rows and 0 cancels" {
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "3\n" | GIT_AI_NO_FZF=1 _setup_multiselect_numbered "p> " "h" "skip" "a|a
+b|b"
+  '
+  assert_success
+  assert_line "b"
+  refute_line "a"
+
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "0\n" | GIT_AI_NO_FZF=1 _setup_multiselect_numbered "p> " "h" "skip" "a|a"
+  '
+  assert_equal "$status" 2
+}
+
+# --- provider picker readiness labels ---
+
+@test "_setup_provider_label: tags providers with their readiness" {
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    provider_ready() { [ "$1" = codex ]; }
+    _setup_provider_label codex
+    _setup_provider_label openai-api
+  '
+  assert_success
+  assert_line "Codex CLI  [ready]"
+  assert_line "OpenAI API  [needs setup]"
+}
+
+@test "_setup_ready_tag: probes each provider at most once" {
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    probes=0
+    provider_ready() { probes=$((probes + 1)); return 1; }
+    _setup_warm_ready codex codex codex
+    printf "probes=%s tag=%s\n" "$probes" "$(_setup_ready_tag codex)"
+  '
+  assert_success
+  assert_output "probes=1 tag=setup"
 }
 
 # --- _setup_action_add (re-adding vertex attaches a project, keeps models) ---
@@ -655,4 +853,141 @@ SH
   assert_success
   assert_output --partial "gcloud could not list projects for: b@y.com"
   refute_output --partial "a@x.com"
+}
+
+# --- _setup_offer_account_pin (project visible only to a non-active login) ---
+
+_account_stub() { # DIR — gcloud active as a@x.com, projects split across logins
+  cat >"${1}/gcloud" <<'SH'
+#!/bin/sh
+case "$*" in
+  *"auth list --filter=status:ACTIVE"*) echo a@x.com ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "${1}/gcloud"
+}
+
+@test "_setup_offer_account_pin: offers to pin the login that can see the project" {
+  printf '[vertex]\nprojects = proj-b\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  _account_stub "$stub"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "\n" | _setup_offer_account_pin "'"$CONF"'" "proj-b'$'\t''b@y.com" proj-b
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "visible to b@y.com, but gcloud is active as a@x.com"
+  assert_output --partial "Set account = b@y.com"
+  run cat "$CONF"
+  assert_line "account = b@y.com"
+}
+
+@test "_setup_offer_account_pin: silent when the project belongs to the active login" {
+  printf '[vertex]\nprojects = proj-a\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  _account_stub "$stub"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_offer_account_pin "'"$CONF"'" "proj-a'$'\t''a@x.com" proj-a
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output ""
+}
+
+@test "_setup_offer_account_pin: silent when an account is already pinned" {
+  printf '[vertex]\nprojects = proj-b\naccount = pinned@x.com\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  _account_stub "$stub"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_offer_account_pin "'"$CONF"'" "proj-b'$'\t''b@y.com" proj-b
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output ""
+}
+
+# --- _setup_probe_key (API key validation before storing) ---
+
+_curl_code_stub() { # DIR CODE
+  printf '#!/bin/sh\nprintf "%%s" "%s"\n' "$2" >"${1}/curl"
+  chmod +x "${1}/curl"
+}
+
+@test "_setup_probe_key: a 200 accepts the key" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 200
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_probe_key anthropic-api sk-test
+  '
+  rm -rf "$stub"
+  assert_success
+}
+
+@test "_setup_probe_key: a 401 rejects the key" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 401
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_probe_key openai-api sk-bad
+  '
+  rm -rf "$stub"
+  assert_equal "$status" 1
+}
+
+@test "_setup_probe_key: a server error is indeterminate, not a rejection" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 503
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_probe_key gemini-api key
+  '
+  rm -rf "$stub"
+  assert_equal "$status" 2
+}
+
+@test "_setup_probe_key: keeps the key out of argv" {
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$@" >&2\nprintf 200\n' >"${stub}/curl"
+  chmod +x "${stub}/curl"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_probe_key gemini-api super-secret 2>&1
+  '
+  rm -rf "$stub"
+  refute_output --partial "super-secret"
+}
+
+@test "_setup_prompt_api_key: a rejected key is not stored unless confirmed" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 401
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    store_api_key() { printf "STORED\n"; }
+    printf "sk-bad\nn\n" | _setup_prompt_api_key openai-api openai-api-key OPENAI_API_KEY "OpenAI API"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "OpenAI API rejected it."
+  refute_output --partial "STORED"
 }

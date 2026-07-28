@@ -98,17 +98,20 @@ _setup_gcloud_projects() {
 
 # Picker rows ("value|label") for discoverable GCP projects, skipping any id in
 # the newline-delimited SEEN set. Rows are account-tagged only when more than
-# one login contributed — with a single account the tag is noise.
+# one login contributed — with a single account the tag is noise. SWEEP is
+# pre-fetched _setup_gcloud_projects output; callers pass it so one gcloud
+# round-trip serves both the rows and the account lookup below.
 _setup_project_rows() {
-  local seen="${1:-$'\n'}"
+  local seen="${1:-$'\n'}" sweep="${2:-}"
   local -a pairs=()
   local line p a accounts=$'\n' n=0
+  [[ -n "$sweep" ]] || sweep=$(_setup_gcloud_projects)
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     pairs+=("$line")
     a="${line#*$'\t'}"
     case "$accounts" in *$'\n'"$a"$'\n'*) ;; *) accounts+="$a"$'\n'; n=$((n + 1)) ;; esac
-  done < <(_setup_gcloud_projects)
+  done <<<"$sweep"
 
   for line in ${pairs[@]+"${pairs[@]}"}; do
     p="${line%%$'\t'*}"
@@ -125,26 +128,88 @@ _setup_project_rows() {
 
 SETUP_CUSTOM_PROJECT_ROW=$'=custom=|— type a project id… —\n'
 
-# Multi-select GCP projects for vertex providers. Prints chosen project ids, one
-# per line; empty output means "leave the current projects unchanged". Unlisted
-# ids go via the explicit custom row, which emits any projects marked alongside
-# it and then drops to the free-text prompt — a project the active gcloud login
-# can't see is the normal reason to add one, so that path must always exist.
+# The gcloud login whose project listing produced PROJECT, from a pre-fetched
+# SWEEP. Empty when the project came from a service-account credential (no
+# account to tag) or isn't in the sweep at all (typed by hand).
+_setup_account_for_project() {
+  local want="$1" sweep="$2" line
+  while IFS= read -r line; do
+    [[ "${line%%$'\t'*}" == "$want" ]] || continue
+    printf '%s' "${line#*$'\t'}"
+    return 0
+  done <<<"$sweep"
+}
+
+# The gcloud login commands run as by default, empty when gcloud is absent or
+# no login is active.
+_setup_gcloud_active_account() {
+  command -v gcloud >/dev/null 2>&1 || return 0
+  gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | head -n1
+}
+
+# _setup_offer_account_pin CONF SWEEP PROJECT...
+# Vertex mints its token from the active gcloud login unless a section names an
+# `account`, so a project only a *different* login can see fails at run time
+# with nothing in the wizard having hinted at it. _setup_vertex_assist only
+# offers `account =` for a provider that isn't ready yet, which this case isn't
+# — so offer it here, where the mismatch is actually detectable. No-op when an
+# account is already pinned or the picked projects span several logins (no
+# single right answer).
+_setup_offer_account_pin() {
+  local conf="$1" sweep="$2"
+  shift 2
+  local s p a only="" accounts=$'\n' n=0 active ans
+  for s in vertex vertex-anthropic vertex-gemini; do
+    [[ -n "$(vertex_resolve "$s" account)" ]] && return 0
+  done
+  for p in "$@"; do
+    a=$(_setup_account_for_project "$p" "$sweep")
+    [[ -n "$a" ]] || continue
+    case "$accounts" in *$'\n'"$a"$'\n'*) continue ;; esac
+    accounts+="$a"$'\n'
+    only="$a"
+    n=$((n + 1))
+  done
+  [[ $n -eq 1 ]] || return 0
+  active=$(_setup_gcloud_active_account)
+  [[ -n "$active" && "$active" != "$only" ]] || return 0
+
+  printf '\nThose projects are visible to %s, but gcloud is active as %s.\n' "$only" "$active"
+  read -rp "  Pin account = ${only} for Vertex AI? [Y/n]: " ans || ans=""
+  case "$ans" in
+    n | N | no | No) printf '  Left unset — Vertex AI will use whichever login is active.\n' ;;
+    *)
+      _conf_apply "$conf" conf_set_section_setting vertex account "$only" &&
+        printf '  Set account = %s\n' "$only"
+      ;;
+  esac
+}
+
+# Multi-select GCP projects for vertex providers, from a pre-fetched SWEEP.
+# Prints chosen project ids, one per line; empty output means "leave the current
+# projects unchanged" (cancel and a confirmed-empty pick alike — a vertex
+# provider with no project cannot run, so clearing the list is not offered).
+# Unlisted ids go via the explicit custom row, which emits any projects marked
+# alongside it and then drops to the free-text prompt — a project the active
+# gcloud login can't see is the normal reason to add one, so that path must
+# always exist.
 _setup_pick_projects() {
-  local line p rows selected want_custom=""
-  rows=$(_setup_project_rows)
+  local sweep="${1:-}" line p rows selected want_custom="" st
+  [[ -n "$sweep" ]] || sweep=$(_setup_gcloud_projects)
+  rows=$(_setup_project_rows $'\n' "$sweep")
 
   if [[ -n "$rows" ]]; then
     rows+=$'\n'"$SETUP_CUSTOM_PROJECT_ROW"
-    if selected=$(_setup_multiselect 'vertex projects> ' \
-        'Tab marks GCP project(s); Enter confirms; Esc keeps current' \
-        '— skip / keep current —' "$rows"); then
-      while IFS= read -r p; do
-        [[ -n "$p" ]] || continue
-        if [[ "$p" == '=custom=' ]]; then want_custom=1; else printf '%s\n' "$p"; fi
-      done <<<"$selected"
-      [[ -n "$want_custom" ]] || return 0
-    fi
+    selected=$(_setup_multiselect 'vertex projects> ' \
+      'Tab marks GCP project(s); Enter confirms; Esc keeps current' \
+      '— skip / keep current —' "$rows")
+    st=$?
+    [[ $st -eq 0 ]] || return 0
+    while IFS= read -r p; do
+      [[ -n "$p" ]] || continue
+      if [[ "$p" == '=custom=' ]]; then want_custom=1; else printf '%s\n' "$p"; fi
+    done <<<"$selected"
+    [[ -n "$want_custom" ]] || return 0
   fi
 
   read -rp "GCP project id(s), comma-separated (blank to keep current): " line || line=""
