@@ -97,10 +97,12 @@ class RepoPrContext:
     diff: str
     diff_stat: str
     release_context: str
-    content_id: str | None = None
     no_changes: bool = False
     churn_subjects: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Appended rather than grouped with no_changes: RepoPrContext is public, so
+    # inserting a field would re-bind every positional argument after it.
+    content_id: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=True)
