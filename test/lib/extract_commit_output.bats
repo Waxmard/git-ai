@@ -76,6 +76,37 @@ teardown() {
   assert_output "$expected"
 }
 
+@test "extract_commit_output: drops an agent Co-Authored-By trailer" {
+  printf '%s\n' '===COMMIT===' 'feat: add thing' '' 'Body.' '' 'Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'feat: add thing' '' 'Body.')
+  run extract_commit_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "extract_commit_output: drops a Generated with trailer on the fallback path" {
+  printf '%s\n' 'fix: correct the guard' '' 'Body.' '' '🤖 Generated with [Claude Code](https://claude.com/claude-code)' 'Co-Authored-By: Claude <noreply@anthropic.com>' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'fix: correct the guard' '' 'Body.')
+  run extract_commit_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "extract_commit_output: a body line about generated files survives" {
+  printf '%s\n' '===COMMIT===' 'chore: regen docs' '' 'Generated with the build script, not by hand.' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'chore: regen docs' '' 'Generated with the build script, not by hand.')
+  run extract_commit_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "extract_commit_output: a response that is only a trailer passes through" {
+  printf '%s\n' 'Co-Authored-By: Claude <noreply@anthropic.com>' > "$TEST_TMP/in.txt"
+  run extract_commit_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "Co-Authored-By: Claude <noreply@anthropic.com>"
+}
+
 @test "extract_commit_output: falls back to an indented conventional subject" {
   printf '%s\n' 'Reasoning:' '  fix: correct the guard' '' 'Body.' > "$TEST_TMP/in.txt"
   expected=$(printf '%s\n' 'fix: correct the guard' '' 'Body.')

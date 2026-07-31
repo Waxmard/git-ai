@@ -157,6 +157,23 @@ strip_fences() {
 # asked for. Mirrors python/git_ai/_generate.py:_CLOSING_MARKER_RE.
 export GIT_AI_CLOSING_MARKER_RE='={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}'
 
+# Drop trailing agent self-attribution lines from stdin. Agent CLIs (claude -p,
+# codex exec) carry a system prompt of their own instructing them to sign
+# commits with Co-Authored-By: and PR bodies with a "Generated with [...]" line;
+# that outranks the git-ai prompt, so the trailer is stripped after the fact.
+# Passes the input through unchanged when the trailers are all there is. Mirrors
+# python/git_ai/_generate.py:_drop_attribution_trailers.
+drop_attribution_trailers() {
+  perl -0777 -ne '
+    my $orig = $_;
+    my @l = split /\n/, $_, -1;
+    while (@l && ($l[-1] !~ /\S/ || $l[-1] =~ /^\s*(?:co-authored-by:|\W*generated with \[)/i)) {
+      pop @l;
+    }
+    print @l ? join("\n", @l) . "\n" : $orig;
+  '
+}
+
 # Slice title/body out of sentinel-delimited PR output read from stdin. The PR
 # prompts wrap their answer in ===TITLE=== / ===BODY=== line markers so any
 # preamble, reasoning, or char-count chatter outside the markers is discarded;
@@ -180,7 +197,7 @@ extract_pr_output() {
       }
     }
     print;
-  '
+  ' | drop_attribution_trailers
 }
 
 # Slice the commit message out of a model response read from stdin, discarding
@@ -210,7 +227,7 @@ extract_commit_output() {
       next;
     }
     print;
-  '
+  ' | drop_attribution_trailers
 }
 
 # Print $1 with leading/trailing whitespace stripped.

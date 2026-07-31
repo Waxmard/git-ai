@@ -170,6 +170,29 @@ def _parse_response(raw: str) -> str:
     return text
 
 
+_ATTRIBUTION_TRAILER_RE = re.compile(
+    r"^(?:co-authored-by:|\W*generated with \[)", re.IGNORECASE
+)
+
+
+def _drop_attribution_trailers(text: str) -> str:
+    """Drop trailing agent self-attribution lines from generated output.
+
+    Agent CLIs (``claude -p``, ``codex exec``) carry a system prompt of their
+    own instructing them to sign commits with ``Co-Authored-By:`` and PR bodies
+    with a ``Generated with [...]`` line; that outranks anything the git-ai
+    prompt says, so the trailer is stripped after the fact instead. Returns
+    ``text`` unchanged when the trailers are all there is.
+    """
+    lines = text.split("\n")
+    while lines and (
+        not lines[-1].strip() or _ATTRIBUTION_TRAILER_RE.match(lines[-1].strip())
+    ):
+        lines.pop()
+    stripped = "\n".join(lines)
+    return stripped if stripped.strip() else text
+
+
 _PR_TITLE_MARKER = "===TITLE==="
 _PR_BODY_MARKER = "===BODY==="
 
@@ -247,18 +270,18 @@ def _extract_commit_message(text: str) -> str:
 
 
 def parse_commit_response(raw: str) -> str:
-    """Strip fences and unwrap the ``===COMMIT===`` marker.
+    """Strip fences, unwrap the ``===COMMIT===`` marker, drop agent trailers.
 
     Falls back to the fence-stripped text when the marker is absent. Raises if
     the response cleans to empty.
     """
-    return _extract_commit_message(_parse_response(raw))
+    return _drop_attribution_trailers(_extract_commit_message(_parse_response(raw)))
 
 
 def parse_mr_response(raw: str) -> str:
-    """Strip fences and unwrap the ``===TITLE===`` / ``===BODY===`` markers.
+    """Strip fences, unwrap ``===TITLE===`` / ``===BODY===``, drop agent trailers.
 
     Falls back to the fence-stripped text when the markers are absent. Raises
     if the response cleans to empty.
     """
-    return _extract_pr_sections(_parse_response(raw))
+    return _drop_attribution_trailers(_extract_pr_sections(_parse_response(raw)))

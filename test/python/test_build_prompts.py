@@ -228,6 +228,28 @@ def test_parse_commit_response_passes_through_unclassifiable_text() -> None:
     assert parse_commit_response("just some text") == "just some text"
 
 
+def test_parse_commit_response_drops_agent_attribution_trailer() -> None:
+    raw = (
+        "===COMMIT===\nfeat: add thing\n\nBody.\n\n"
+        "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+        "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+    )
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
+def test_parse_commit_response_keeps_a_body_line_about_generated_files() -> None:
+    raw = "===COMMIT===\nchore: regen docs\n\nGenerated with the build script."
+    assert (
+        parse_commit_response(raw)
+        == "chore: regen docs\n\nGenerated with the build script."
+    )
+
+
+def test_parse_commit_response_keeps_a_trailer_only_response() -> None:
+    raw = "Co-Authored-By: Claude <noreply@anthropic.com>"
+    assert parse_commit_response(raw) == raw
+
+
 def test_parse_commit_response_rejects_empty() -> None:
     with pytest.raises(RuntimeError, match="empty response"):
         parse_commit_response("")
@@ -316,6 +338,14 @@ def test_build_mr_prompt_respects_release_context_override() -> None:
 def test_parse_mr_response_strips_fences() -> None:
     raw = "```\nfeat: title\n\n### Features\n- x\n```"
     assert parse_mr_response(raw) == "feat: title\n\n### Features\n- x"
+
+
+def test_parse_mr_response_drops_agent_attribution_trailer() -> None:
+    raw = (
+        "===TITLE===\nfeat: title\n===BODY===\n- x\n\n"
+        "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+    )
+    assert parse_mr_response(raw) == "feat: title\n\n- x"
 
 
 def test_parse_mr_response_rejects_empty() -> None:
