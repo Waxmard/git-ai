@@ -210,6 +210,33 @@ def prune_pr_cache(git_dir: str | Path) -> None:
             shutil.rmtree(entry, ignore_errors=True)
 
 
+def _rewritten_cache_check(
+    repo_path: Path,
+    git_dir: str,
+    *,
+    base_ref: str | None,
+    base_branch: str,
+    current_branch: str | None,
+    effective_existing: str | None,
+) -> tuple[str | None, str, bool]:
+    """Return (content_id, warning, whether the rewrite preserved the content)."""
+    content_id = branch_content_id(repo_path, base_ref) if base_ref else None
+    unchanged = bool(
+        content_id
+        and effective_existing
+        and current_branch
+        and content_id == load_cached_content_id(git_dir, current_branch, base_branch)
+    )
+    warning = (
+        "branch was rewritten (rebase/amend) but its content is unchanged — "
+        "reusing cached output."
+        if unchanged
+        else "branch history was rewritten (rebase/amend) since the last run; "
+        "regenerating from the full branch diff."
+    )
+    return content_id, warning, unchanged
+
+
 def _resolve_cache_state(
     repo_path: Path,
     git_dir: str,
@@ -305,23 +332,21 @@ def prepare_repo_pr_context(
     else:
         diff_ref = input_base
 
-    content_id = branch_content_id(repo_path, base_ref) if base_ref else None
+    # Fingerprinting diffs the whole branch, so it stays off the paths that
+    # return without regenerating: it's needed only to compare against a
+    # rewritten cache, and to stamp a context the caller will save.
+    content_id: str | None = None
     warnings: list[str] = []
     if history_rewritten:
-        rewritten_unchanged = bool(
-            content_id
-            and effective_existing
-            and current_branch
-            and content_id
-            == load_cached_content_id(git_dir, current_branch, base_branch)
+        content_id, warning, rewritten_unchanged = _rewritten_cache_check(
+            repo_path,
+            git_dir,
+            base_ref=base_ref,
+            base_branch=base_branch,
+            current_branch=current_branch,
+            effective_existing=effective_existing,
         )
-        warnings.append(
-            "branch was rewritten (rebase/amend) but its content is unchanged — "
-            "reusing cached output."
-            if rewritten_unchanged
-            else "branch history was rewritten (rebase/amend) since the last run; "
-            "regenerating from the full branch diff."
-        )
+        warnings.append(warning)
         if rewritten_unchanged:
             return RepoPrContext(
                 base_branch=base_branch,
@@ -375,6 +400,8 @@ def prepare_repo_pr_context(
     churn_subjects = get_branch_churn_subjects(
         repo_path, churn_base, classify_base=diff_ref
     )
+    if content_id is None and base_ref:
+        content_id = branch_content_id(repo_path, base_ref)
     if current_branch is None:
         warnings.append("detached HEAD: PR caching is disabled for this run.")
     # An incremental update (input_base = a HEAD SHA) has no base relationship.

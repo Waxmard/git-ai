@@ -100,10 +100,12 @@ def _candidate_base_names(repo_path: str | Path) -> list[str]:
     return names
 
 
-def _count_range(repo_path: str | Path, rng: str) -> int | None:
+def _count_range(
+    repo_path: str | Path, rng: str, *, no_merges: bool = False
+) -> int | None:
     """Count commits in a ``A..B`` range. None on git failure."""
     result = subprocess.run(
-        ["git", "rev-list", "--count", rng],
+        ["git", "rev-list", "--count", *(["--no-merges"] if no_merges else []), rng],
         cwd=str(repo_path),
         capture_output=True,
         text=True,
@@ -408,7 +410,9 @@ def branch_content_id(
     None (no git failure surfaced) on an empty range, a range over
     ``max_commits``, or any git error — callers treat it as "no match".
     """
-    count = _count_range(repo_path, f"{base_ref}..HEAD")
+    # Counted --no-merges to match the log the fingerprint hashes, so a
+    # merge-heavy branch doesn't trip the cap on commits that never contribute.
+    count = _count_range(repo_path, f"{base_ref}..HEAD", no_merges=True)
     if not count or count > max_commits:
         return None
     log = subprocess.run(

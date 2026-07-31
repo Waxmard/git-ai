@@ -679,3 +679,17 @@ def test_branch_content_id_none_over_cap_and_on_empty_range(tmp_path: Path) -> N
 
     assert branch_content_id(repo, "main", max_commits=1) is None
     assert branch_content_id(repo, "feature") is None
+
+
+def test_branch_content_id_cap_ignores_merge_commits(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    _checkout(repo, "main")
+    _commit_files(repo, {"other.txt": "x\n"}, "chore: main moves")
+    _checkout(repo, "feature")
+    subprocess.run(
+        ["git", "merge", "--no-ff", "-m", "merge main", "main"], cwd=repo, check=True
+    )
+
+    # Two real commits plus a merge: the merge must not count toward the cap.
+    assert branch_content_id(repo, "main", max_commits=2) is not None

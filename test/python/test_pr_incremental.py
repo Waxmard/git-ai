@@ -576,3 +576,24 @@ def test_prune_pr_cache_ages_out_entries_without_a_branch_name(
     prune_pr_cache(git_dir)
 
     assert load_cached_pr(git_dir, "feature/test", "main") is None
+
+
+def test_prepare_skips_fingerprint_on_unchanged_head(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+    _seed_cache(repo)
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    # HEAD matches the cached SHA: nothing to regenerate, so the whole-branch
+    # fingerprint is never computed.
+    assert ctx.no_changes is True
+    assert ctx.content_id is None
+
+
+def test_prepare_stamps_fingerprint_when_regenerating(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    assert ctx.no_changes is False
+    assert ctx.content_id is not None
