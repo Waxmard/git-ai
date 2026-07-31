@@ -764,6 +764,71 @@ def test_branch_content_id_changes_on_reresolved_merge(tmp_path: Path) -> None:
     assert second != first
 
 
+def test_branch_content_id_distinguishes_edits_in_identical_functions(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    # The target sits >3 lines below the def, so -U3 context can't see which
+    # function it is in — only the hunk header's section heading can.
+    body = "".join(f"    v{n} = {n}\n" for n in range(8))
+    source = f"def first():\n{body}\ndef second():\n{body}"
+    _commit_files(repo, {"m.py": source}, "chore: init")
+    _checkout(repo, "-b", "feature")
+
+    def _edit_in(fn: str) -> str | None:
+        marker = f"def {fn}():\n{body}"
+        edited = marker.replace("    v4 = 4\n", "    v4 = 99\n")
+        (repo / "m.py").write_text(source.replace(marker, edited), encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "fix: bump y"], cwd=repo, check=True)
+        return branch_content_id(repo, "main")
+
+    in_first = _edit_in("first")
+    subprocess.run(["git", "reset", "--hard", "main"], cwd=repo, check=True)
+    in_second = _edit_in("second")
+
+    # Identical edit, identical surrounding context — only the hunk header's
+    # section heading tells the two apart.
+    assert in_first is not None
+    assert in_second != in_first
+
+
+def test_branch_content_id_handles_non_utf8_file(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"keep.txt": "keep\n"}, "chore: init")
+    _checkout(repo, "-b", "feature")
+    (repo / "l.txt").write_bytes(b"caf\xe9 latin1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "feat: latin1"], cwd=repo, check=True)
+    before = branch_content_id(repo, "main")
+
+    (repo / "l.txt").write_bytes(b"caf\xe8 latin1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "--amend", "--no-edit"], cwd=repo, check=True)
+
+    # Undecodable bytes must neither crash nor collapse to one replacement char.
+    assert before is not None
+    assert branch_content_id(repo, "main") != before
+
+
+def test_get_diff_handles_non_utf8_file(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    (repo / "l.txt").write_bytes(b"caf\xe9 latin1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "feat: latin1"], cwd=repo, check=True)
+
+    assert "l.txt" in get_diff(repo, "HEAD~1", three_dot=False)
+
+
 def test_branch_content_id_none_over_cap_and_on_empty_range(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _content_id_repo(repo)

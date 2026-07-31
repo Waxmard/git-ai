@@ -411,7 +411,7 @@ def resolve_commit_base(
 
 
 _INDEX_LINE_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+")
-_HUNK_HEADER_RE = re.compile(r"^@@ .* @@")
+_HUNK_HEADER_RE = re.compile(r"^@@ -[0-9,]+ \+[0-9,]+ @@")
 
 
 def _normalize_diff_position(diff: str) -> str:
@@ -420,15 +420,17 @@ def _normalize_diff_position(diff: str) -> str:
     Both move when a branch is rebased onto a newer base even though the change
     itself is identical. Everything else is kept byte-for-byte — including the
     whitespace inside ``+``/``-`` lines, which ``git patch-id`` discards and an
-    indentation-only edit depends on. Erasing the hunk header also erases where
-    a change sits, which is why the diff is taken with context lines: they pin
-    the position without pinning the line numbers.
+    indentation-only edit depends on, and the hunk header's trailing section
+    heading, which names the enclosing function and so distinguishes the same
+    edit made in two identically-shaped places. Erasing the line numbers still
+    erases some of where a change sits, which is why the diff is taken with
+    context lines: they pin the position without pinning the numbers.
     """
     out = []
     for line in diff.split("\n"):
         if _INDEX_LINE_RE.match(line):
             continue
-        out.append("@@" if _HUNK_HEADER_RE.match(line) else line)
+        out.append(_HUNK_HEADER_RE.sub("@@", line, count=1))
     return "\n".join(out)
 
 
@@ -458,6 +460,7 @@ def branch_content_id(
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        errors="surrogateescape",
         check=False,
     )
     if diff.returncode != 0:
@@ -474,12 +477,16 @@ def branch_content_id(
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        errors="surrogateescape",
         check=False,
     )
     if messages.returncode != 0:
         return None
     payload = _normalize_diff_position(diff.stdout) + "\0" + messages.stdout
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    # surrogateescape both ways: git calls any NUL-free file text, so a latin-1
+    # source file puts undecodable bytes in the diff. Round-tripping them keeps
+    # the fingerprint lossless where a replacement char would collide.
+    return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
 
 
 def get_branch_commit_subjects(
@@ -535,6 +542,7 @@ def _blame_introducers(
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:
