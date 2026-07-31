@@ -65,6 +65,7 @@ def _cmd_save(args: argparse.Namespace) -> int:
         args.base_branch,
         output,
         args.head_sha,
+        args.content_id,
     )
     return 0
 
@@ -125,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     save.add_argument("--base-branch", required=True)
     save.add_argument("--output-file", required=True)
     save.add_argument("--head-sha")
+    save.add_argument("--content-id")
     save.set_defaults(func=_cmd_save)
 
     build = sub.add_parser("build-input")

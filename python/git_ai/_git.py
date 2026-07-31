@@ -29,11 +29,15 @@ DEFAULT_RELEASE_CONTEXT = (
 
 
 def _git(repo_path: str | Path, *args: str) -> str:
+    # errors="replace": git calls any NUL-free file text, so a latin-1 source
+    # file puts undecodable bytes in the diff. Mangling them beats crashing —
+    # the LLM can't read them either.
     result = subprocess.run(
         ["git", *args],
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:

@@ -115,6 +115,8 @@ git-ai mr [...]   # alias for pr
 - Auto-detects the base branch from the remote default (falls back to `main`)
 - Use `--base` to override (e.g. `--base dev`)
 - Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
+- A rebase or amend that leaves the branch's content unchanged reuses the cached text without an LLM call; one that carries new work (or rewords a commit) regenerates from the full branch diff
+- Cache entries for branches you've since deleted are pruned automatically
 - Use `--fresh` to ignore the saved output and regenerate from scratch
 - Use `--from-sha` to override the saved HEAD and regenerate only from commits after a specific prior generated commit
 - Uses your configured default (from `git-ai setup`) or the interactive picker; pass an auth method to override
@@ -217,10 +219,11 @@ else:
             "main",
             pr_text,
             ctx.head_sha,
+            ctx.content_id,
         )
 ```
 
-`prepare_repo_pr_context` reuses `.git/pr-cache/` automatically, sets `no_changes=True` when `HEAD` matches the cached SHA (so callers can skip the LLM entirely), and narrows the `diff`/`commit_log` to commits after the last generated `HEAD` when possible. Pass `fresh=True` to bypass the cache for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
+`prepare_repo_pr_context` reuses `.git/pr-cache/` automatically, sets `no_changes=True` when `HEAD` matches the cached SHA — or when a rebase/amend rewrote the branch without changing `ctx.content_id`, its diff-and-message content fingerprint — so callers can skip the LLM entirely, and narrows the `diff`/`commit_log` to commits after the last generated `HEAD` when possible. Pass `fresh=True` to bypass the cache for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
 
 Data-mode is stateless. To get the same efficiency in remote consumers, persist the prior PR text + last generated head SHA yourself, fetch the incremental diff/log since that SHA from your SCM, and pass them to `build_mr_prompt(diff=..., commit_log=..., existing_pr=...)`.
 

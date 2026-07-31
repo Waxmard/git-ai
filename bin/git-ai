@@ -63,6 +63,7 @@ save_cached_pr() {
   local base_branch="$3"
   local output="$4"
   local head_sha="${5:-}"
+  local content_id="${6:-}"
   local output_file
   output_file=$(mktemp) || return 1
   printf '%s\n' "$output" >"$output_file"
@@ -75,6 +76,9 @@ save_cached_pr() {
   )
   if [[ -n "$head_sha" ]]; then
     save_cmd+=(--head-sha "$head_sha")
+  fi
+  if [[ -n "$content_id" ]]; then
+    save_cmd+=(--content-id "$content_id")
   fi
   "${save_cmd[@]}" || {
       rm -f "$output_file"
@@ -382,7 +386,7 @@ cmd_pr() {
     }
   printf '%s\n' "$PREP_OUTPUT" >"$PREP_FILE"
   # Variables set by sourced prep file (BASE_BRANCH/INPUT_BASE consumed but not referenced directly)
-  local CURRENT_BRANCH HEAD_SHA EXISTING_PR COMMIT_LOG DIFF DIFF_STAT RELEASE_CONTEXT NO_CHANGES CHURN_SUBJECTS WARNINGS
+  local CURRENT_BRANCH HEAD_SHA EXISTING_PR COMMIT_LOG DIFF DIFF_STAT RELEASE_CONTEXT CONTENT_ID NO_CHANGES CHURN_SUBJECTS WARNINGS
   # shellcheck disable=SC1090
   source "$PREP_FILE"
   rm -f "$PREP_FILE"
@@ -450,7 +454,7 @@ PY
     echo "git-ai: single conventional commit — using it verbatim (no LLM call)" >&2
     save_last_message pr "$INPUT"
     if [[ -n "$CURRENT_BRANCH" ]]; then
-      save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$INPUT" "$HEAD_SHA" ||
+      save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$INPUT" "$HEAD_SHA" "${CONTENT_ID:-}" ||
         die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
     fi
     render_pr_output "${EXISTING_PR:-}" "$INPUT"
@@ -474,7 +478,7 @@ PY
   OUTPUT=$(extract_pr_output <<<"$OUTPUT")
   save_last_message pr "$OUTPUT"
   if [[ -n "$CURRENT_BRANCH" ]]; then
-    save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" ||
+    save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" "${CONTENT_ID:-}" ||
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
   render_pr_output "${EXISTING_PR:-}" "$OUTPUT"
