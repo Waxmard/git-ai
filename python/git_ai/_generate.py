@@ -170,6 +170,42 @@ def _parse_response(raw: str) -> str:
     return text
 
 
+_ATTRIBUTION_TRAILER_RE = re.compile(
+    r"^(?:co-authored-by:|\W*generated with \[)", re.IGNORECASE
+)
+_CLOSING_MARKER_RE = re.compile(r"^={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}$")
+
+
+def _drop_trailing_noise(text: str) -> str:
+    """Drop trailing closing markers and agent self-attribution lines.
+
+    Agent CLIs (``claude -p``, ``codex exec``) carry a system prompt of their
+    own instructing them to sign commits with ``Co-Authored-By:`` and PR bodies
+    with a ``Generated with [...]`` line; that outranks anything the git-ai
+    prompt says, so the trailer is stripped after the fact instead. Markers are
+    any ``===WORD===`` line, not just the ones the prompt asks for: models
+    routinely close a section with an invented ``===END===``.
+
+    Both kinds go in one pass because they interleave — an agent that signs its
+    work below its own ``===END===`` strands the marker if the two run as
+    separate passes.
+    """
+    lines = text.split("\n")
+    while lines and (
+        not lines[-1].strip()
+        or _ATTRIBUTION_TRAILER_RE.match(lines[-1].strip())
+        or _CLOSING_MARKER_RE.match(lines[-1].strip())
+    ):
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _drop_trailing_noise_safe(text: str) -> str:
+    """``_drop_trailing_noise``, keeping ``text`` when noise is all there is."""
+    stripped = _drop_trailing_noise(text)
+    return stripped if stripped.strip() else text
+
+
 _PR_TITLE_MARKER = "===TITLE==="
 _PR_BODY_MARKER = "===BODY==="
 
@@ -179,24 +215,6 @@ def _marker_index(lines: list[str], marker: str) -> int:
         if line.strip() == marker:
             return i
     return -1
-
-
-_CLOSING_MARKER_RE = re.compile(r"^={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}$")
-
-
-def _drop_trailing_markers(text: str) -> str:
-    """Drop trailing sentinel lines a model emitted as a closing delimiter.
-
-    Matches any ``===WORD===`` line, not just the markers the prompt asks for:
-    models routinely close a ``===COMMIT===`` section with an invented
-    ``===END===`` that would otherwise land in the commit body.
-    """
-    lines = text.split("\n")
-    while lines and (
-        not lines[-1].strip() or _CLOSING_MARKER_RE.match(lines[-1].strip())
-    ):
-        lines.pop()
-    return "\n".join(lines)
 
 
 def _extract_pr_sections(text: str) -> str:
@@ -214,7 +232,7 @@ def _extract_pr_sections(text: str) -> str:
     title = "\n".join(lines[t_idx + 1 : b_idx]).strip()
     if not title:
         return text
-    body = _drop_trailing_markers("\n".join(lines[b_idx + 1 :])).strip()
+    body = _drop_trailing_noise("\n".join(lines[b_idx + 1 :])).strip()
     return f"{title}\n\n{body}" if body else title
 
 
@@ -237,28 +255,28 @@ def _extract_commit_message(text: str) -> str:
     lines = text.split("\n")
     idx = _marker_index(lines, _COMMIT_MARKER)
     if idx >= 0:
-        after = _drop_trailing_markers("\n".join(lines[idx + 1 :])).strip()
+        after = _drop_trailing_noise("\n".join(lines[idx + 1 :])).strip()
         if after:
             return after
     for i, line in enumerate(lines):
         if _COMMIT_SUBJECT_RE.match(line.strip()):
-            return _drop_trailing_markers("\n".join(lines[i:])).strip()
+            return _drop_trailing_noise("\n".join(lines[i:])).strip()
     return text
 
 
 def parse_commit_response(raw: str) -> str:
-    """Strip fences and unwrap the ``===COMMIT===`` marker.
+    """Strip fences, unwrap the ``===COMMIT===`` marker, drop agent trailers.
 
     Falls back to the fence-stripped text when the marker is absent. Raises if
     the response cleans to empty.
     """
-    return _extract_commit_message(_parse_response(raw))
+    return _drop_trailing_noise_safe(_extract_commit_message(_parse_response(raw)))
 
 
 def parse_mr_response(raw: str) -> str:
-    """Strip fences and unwrap the ``===TITLE===`` / ``===BODY===`` markers.
+    """Strip fences, unwrap ``===TITLE===`` / ``===BODY===``, drop agent trailers.
 
     Falls back to the fence-stripped text when the markers are absent. Raises
     if the response cleans to empty.
     """
-    return _extract_pr_sections(_parse_response(raw))
+    return _drop_trailing_noise_safe(_extract_pr_sections(_parse_response(raw)))

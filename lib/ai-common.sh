@@ -151,11 +151,31 @@ strip_fences() {
   '
 }
 
-# Shape of a ===WORD=== sentinel line, passed into the perl extractors below
-# through the environment. Trailing lines matching it are dropped whatever the
-# word is: models routinely close a section with an invented ===END=== no prompt
-# asked for. Mirrors python/git_ai/_generate.py:_CLOSING_MARKER_RE.
-export GIT_AI_CLOSING_MARKER_RE='={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}'
+# Shape of a droppable trailing line, passed into the perl extractors below
+# through the environment: an agent self-attribution trailer, or a ===WORD===
+# sentinel whatever the word is (models routinely close a section with an
+# invented ===END=== no prompt asked for). One shape rather than two passes
+# because they interleave — an agent signing below its own ===END=== strands the
+# marker otherwise. Mirrors python/git_ai/_generate.py:_drop_trailing_noise.
+export GIT_AI_TRAILING_NOISE_RE='(?i:co-authored-by:|\W*generated with \[).*|={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}'
+
+# Drop trailing sentinel and agent self-attribution lines from stdin. Agent CLIs
+# (claude -p, codex exec) carry a system prompt of their own instructing them to
+# sign commits with Co-Authored-By: and PR bodies with a "Generated with [...]"
+# line; that outranks the git-ai prompt, so the trailer is stripped after the
+# fact. Passes the input through unchanged when the noise is all there is.
+# Mirrors python/git_ai/_generate.py:_drop_trailing_noise_safe.
+drop_trailing_noise() {
+  perl -0777 -ne '
+    my $orig = $_;
+    my $noise = qr/^[ \t]*(?:$ENV{GIT_AI_TRAILING_NOISE_RE})[ \t]*$/;
+    my @l = split /\n/, $_, -1;
+    while (@l && ($l[-1] !~ /\S/ || $l[-1] =~ $noise)) {
+      pop @l;
+    }
+    print @l ? join("\n", @l) . "\n" : $orig;
+  '
+}
 
 # Slice title/body out of sentinel-delimited PR output read from stdin. The PR
 # prompts wrap their answer in ===TITLE=== / ===BODY=== line markers so any
@@ -165,10 +185,7 @@ export GIT_AI_CLOSING_MARKER_RE='={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}'
 # python/git_ai/_generate.py:_extract_pr_sections.
 extract_pr_output() {
   perl -0777 -ne '
-    # ${...} braces are required: a bare $re followed by [ \t] parses as an
-    # array subscript, not interpolation.
-    my $re = qr/$ENV{GIT_AI_CLOSING_MARKER_RE}/;
-    my $marker = qr/(?:\A|\n)[ \t]*${re}[ \t]*\z/;
+    my $marker = qr/(?:\A|\n)[ \t]*(?:$ENV{GIT_AI_TRAILING_NOISE_RE})[ \t]*\z/;
     if (/^===TITLE===[ \t]*\n(.*?)\n===BODY===[ \t]*\n(.*)\z/ms) {
       my ($t, $b) = ($1, $2);
       $t =~ s/\A\s+//; $t =~ s/\s+\z//;
@@ -180,7 +197,7 @@ extract_pr_output() {
       }
     }
     print;
-  '
+  ' | drop_trailing_noise
 }
 
 # Slice the commit message out of a model response read from stdin, discarding
@@ -192,10 +209,7 @@ extract_pr_output() {
 # python/git_ai/_generate.py:_extract_commit_message.
 extract_commit_output() {
   perl -0777 -ne '
-    # ${...} braces are required: a bare $re followed by [ \t] parses as an
-    # array subscript, not interpolation.
-    my $re = qr/$ENV{GIT_AI_CLOSING_MARKER_RE}/;
-    my $marker = qr/(?:\A|\n)[ \t]*${re}[ \t]*\z/;
+    my $marker = qr/(?:\A|\n)[ \t]*(?:$ENV{GIT_AI_TRAILING_NOISE_RE})[ \t]*\z/;
     if (/^===COMMIT===[ \t]*\n(.*)\z/ms) {
       my $m = $1;
       $m =~ s/\A\s+//; $m =~ s/\s+\z//;
@@ -210,7 +224,7 @@ extract_commit_output() {
       next;
     }
     print;
-  '
+  ' | drop_trailing_noise
 }
 
 # Print $1 with leading/trailing whitespace stripped.
