@@ -86,3 +86,35 @@ teardown() {
   assert_success
   assert_output '`a` and `b`'
 }
+
+@test "strip_fences: inner fenced block survives" {
+  printf '%s\n' '===TITLE===' 'fix: thing' '===BODY===' '## Verification' '' '```bash' 'npm test' '```' '' 'All pass.' > "$TEST_TMP/input.txt"
+  expected=$(printf '%s\n' '===TITLE===' 'fix: thing' '===BODY===' '## Verification' '' '```bash' 'npm test' '```' '' 'All pass.')
+  run strip_fences < "${TEST_TMP}/input.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "strip_fences: unwraps outer fence around an inner block" {
+  printf '%s\n' '```markdown' '## Verification' '' '```bash' 'npm test' '```' '```' > "$TEST_TMP/input.txt"
+  expected=$(printf '%s\n' '## Verification' '' '```bash' 'npm test' '```')
+  run strip_fences < "${TEST_TMP}/input.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "strip_fences: lone trailing fence is not a wrapper" {
+  printf '%s\n' '## Verification' '' '```bash' 'npm test' '```' > "$TEST_TMP/input.txt"
+  expected=$(printf '%s\n' '## Verification' '' '```bash' 'npm test' '```')
+  run strip_fences < "${TEST_TMP}/input.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "strip_fences: lone leading fence is not a wrapper" {
+  printf '%s\n' '```bash' 'npm test' '```' '' 'All suites should pass.' > "$TEST_TMP/input.txt"
+  expected=$(printf '%s\n' '```bash' 'npm test' '```' '' 'All suites should pass.')
+  run strip_fences < "${TEST_TMP}/input.txt"
+  assert_success
+  assert_output "$expected"
+}

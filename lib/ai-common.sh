@@ -141,13 +141,17 @@ check_diff_size_or_die() {
   exit 1
 }
 
+# Unwraps only a fence around the WHOLE response — fenced blocks inside a PR
+# body (verification commands, deployment steps) are content and must survive.
+# Mirrors python/git_ai/_generate.py:strip_fences.
 strip_fences() {
-  perl -0pe '
-    s/^[ \t]*```.*\n//mg;
-    s/^[ \t]*`+[ \t]*\n//mg;
-    s/\A(?:[ \t]*\n)+//;
+  perl -0777 -pe '
+    s/\A\s+//;
+    s/\s+\z/\n/;
+    s/\A[ \t]*`{3,}[^`\n]*\n(.*)\n[ \t]*`{3,}[ \t]*\n\z/$1\n/s;
+    s/\A\s+//;
     s/\A[ \t]*(`+)([^`\n]+)\1[ \t]*$/$2/m;
-    s/(?:\n[ \t]*)+\z/\n/s;
+    s/\s+\z/\n/;
   '
 }
 

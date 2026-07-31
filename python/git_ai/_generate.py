@@ -58,12 +58,27 @@ def _load_prompt(name: str) -> str:
     return (_PROMPTS_DIR / name).read_text(encoding="utf-8").rstrip()
 
 
+_FENCE_OPEN_RE = re.compile(r"[ \t]*`{3,}[^`]*")
+_FENCE_CLOSE_RE = re.compile(r"[ \t]*`{3,}[ \t]*")
+
+
 def strip_fences(text: str) -> str:
-    text = re.sub(r"^[ \t]*```.*\n", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^[ \t]*`+[ \t]*$\n?", "", text, flags=re.MULTILINE)
-    text = text.strip()
+    """Unwrap a fence only when it wraps the entire response.
+
+    Fenced blocks *inside* a PR body are content — verification commands,
+    deployment steps — so only a fence that opens the first line and closes the
+    last is treated as the model wrapping its whole answer.
+    """
+    lines = text.strip().split("\n")
+    if (
+        len(lines) >= 2
+        and _FENCE_OPEN_RE.fullmatch(lines[0])
+        and _FENCE_CLOSE_RE.fullmatch(lines[-1])
+    ):
+        lines = lines[1:-1]
     # Unwrap a subject wrapped in an inline code span ("`feat: add x`"). Only a
     # whole-line single span, so code spans inside a body survive.
+    text = "\n".join(lines).strip()
     lines = text.split("\n")
     if lines:
         m = re.fullmatch(r"[ \t]*(`+)([^`]+)\1[ \t]*", lines[0])

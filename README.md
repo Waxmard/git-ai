@@ -113,7 +113,7 @@ git-ai mr [...]   # alias for pr
 ```
 
 - Reads the commit log and diff against the base branch
-- Produces a Conventional Commits title + markdown body with a `### Test Plan` section
+- Produces a Conventional Commits title + a markdown body structured by purpose (`## Overview`/`## Problem` → `## Change` → `## Verification`), scaled to the size of the change — a one-concern PR gets a few sentences and no headings at all
 - Auto-detects the base branch from the remote default (falls back to `main`)
 - Use `--base` to override (e.g. `--base dev`)
 - Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
