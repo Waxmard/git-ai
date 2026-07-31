@@ -204,6 +204,19 @@ def _base_name_from_pr_cache(
     return best[1] if best else None
 
 
+def _shorten_ref(refname: str) -> str | None:
+    """`refs/heads/x` → `x`, `refs/remotes/origin/x` → `origin/x`, else None.
+
+    Done by hand rather than with ``refname:short``, which disambiguates against
+    same-named tags (`refs/heads/release` → `heads/release` when a `release` tag
+    exists) and so stops matching branch names from elsewhere.
+    """
+    for prefix in ("refs/heads/", "refs/remotes/"):
+        if refname.startswith(prefix):
+            return refname.removeprefix(prefix)
+    return None
+
+
 def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list[str]:
     """Local + origin branch short-refs, newest first, minus the current branch."""
     result = subprocess.run(
@@ -211,7 +224,7 @@ def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list
             "git",
             "for-each-ref",
             "--sort=-committerdate",
-            "--format=%(refname:short)",
+            "--format=%(refname)",
             "refs/heads",
             "refs/remotes/origin",
         ],
@@ -228,7 +241,7 @@ def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list
         exclude.add(f"origin/{current_branch}")
     refs: list[str] = []
     for line in result.stdout.splitlines():
-        ref = line.strip()
+        ref = _shorten_ref(line.strip())
         if not ref or ref in exclude or ref.endswith("/HEAD"):
             continue
         refs.append(ref)
@@ -294,7 +307,7 @@ def _branch_ahead_behind(
             "git",
             "for-each-ref",
             "--sort=-committerdate",
-            "--format=%(refname:short)\t%(ahead-behind:HEAD)",
+            "--format=%(refname)\t%(ahead-behind:HEAD)",
             "refs/heads",
             "refs/remotes/origin",
         ],
@@ -311,8 +324,8 @@ def _branch_ahead_behind(
         exclude.add(f"origin/{current_branch}")
     rows: list[tuple[str, int, int]] = []
     for line in result.stdout.splitlines():
-        ref, _, counts = line.partition("\t")
-        ref = ref.strip()
+        refname, _, counts = line.partition("\t")
+        ref = _shorten_ref(refname.strip())
         if not ref or ref in exclude or ref.endswith("/HEAD"):
             continue
         parts = counts.split()

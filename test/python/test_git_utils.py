@@ -17,7 +17,12 @@ from git_ai import (
 )
 from git_ai._commit_cli import _emit_branch_context
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
-from git_ai._git_branch import base_warnings, branch_content_id
+from git_ai._git_branch import (
+    _branch_ahead_behind,
+    _list_branch_refs,
+    base_warnings,
+    branch_content_id,
+)
 from git_ai._pr_incremental import branch_cache_dir
 
 _ALL_CONVENTIONAL = """\
@@ -434,6 +439,24 @@ def test_resolve_commit_base_detects_stacked_parent(tmp_path: Path) -> None:
 
     # A stacked branch should target its immediate parent, not main.
     assert resolve_commit_base(repo) == "feature-a"
+
+
+def test_branch_refs_name_branches_with_a_same_named_tag(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "release")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+    subprocess.run(["git", "tag", "release"], cwd=repo, check=True)
+
+    # The tag must not stop the current branch from excluding itself.
+    assert _list_branch_refs(repo, "release") == ["main"]
+    rows = _branch_ahead_behind(repo, "release")
+    assert rows is not None
+    assert [row[0] for row in rows] == ["main"]
 
 
 def test_resolve_commit_base_stacked_parent_after_parent_advances(

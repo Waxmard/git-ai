@@ -586,6 +586,18 @@ def test_prune_pr_cache_drops_entries_for_deleted_branches(tmp_path: Path) -> No
     assert load_cached_pr(git_dir, "feature/gone", "main") is None
 
 
+def test_prune_pr_cache_keeps_branch_with_a_same_named_tag(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+    git_dir = get_git_dir(repo)
+    _git(repo, "branch", "release")
+    _git(repo, "tag", "release")
+    save_cached_pr(git_dir, "release", "main", "live text", "sha1")
+
+    prune_pr_cache(git_dir)
+
+    assert load_cached_pr(git_dir, "release", "main") == "live text"
+
+
 def test_prune_pr_cache_ages_out_entries_without_a_branch_name(
     tmp_path: Path,
 ) -> None:

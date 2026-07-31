@@ -190,7 +190,7 @@ def prune_pr_cache(git_dir: str | Path) -> None:
             "--git-dir",
             str(git_dir),
             "for-each-ref",
-            "--format=%(refname:short)",
+            "--format=%(refname)",
             "refs/heads",
         ],
         capture_output=True,
@@ -199,7 +199,13 @@ def prune_pr_cache(git_dir: str | Path) -> None:
     )
     if result.returncode != 0:
         return
-    live = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    # Not `refname:short`: it disambiguates against same-named tags, printing
+    # `heads/release`, which never matches the recorded `branch-name`.
+    live = {
+        line.strip().removeprefix("refs/heads/")
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("refs/heads/")
+    }
     cutoff = time.time() - _LEGACY_CACHE_MAX_AGE_DAYS * 86400
     try:
         entries = list(root.iterdir())
