@@ -150,6 +150,13 @@ def save_cached_pr(
     head_sha: str | None = None,
     content_id: str | None = None,
 ) -> None:
+    """Write ``output`` and its provenance to the branch's cache entry.
+
+    A ``content_id`` of None means the fingerprint was unavailable for this
+    output (branch over the commit cap, git failure) — the previous one is
+    deleted rather than kept, since a stale id paired with newer text is what
+    would let a later rewrite back onto that content reuse the wrong PR.
+    """
     cache_dir = branch_cache_dir(git_dir, branch_name, base_branch)
     cache_dir.mkdir(parents=True, exist_ok=True)
     branch_cache_path(git_dir, branch_name, base_branch).write_text(
@@ -159,8 +166,11 @@ def save_cached_pr(
     (cache_dir / "branch-name").write_text(f"{branch_name}\n", encoding="utf-8")
     if head_sha:
         (cache_dir / "last-head-sha").write_text(f"{head_sha}\n", encoding="utf-8")
+    content_id_path = cache_dir / "last-content-id"
     if content_id:
-        (cache_dir / "last-content-id").write_text(f"{content_id}\n", encoding="utf-8")
+        content_id_path.write_text(f"{content_id}\n", encoding="utf-8")
+    else:
+        content_id_path.unlink(missing_ok=True)
 
 
 def prune_pr_cache(git_dir: str | Path) -> None:
@@ -348,6 +358,19 @@ def prepare_repo_pr_context(
         )
         warnings.append(warning)
         if rewritten_unchanged:
+            # Re-stamp the cache onto the rewritten HEAD. The caller returns
+            # here without saving anything, so leaving the pre-rebase SHA
+            # behind would make every later run re-fingerprint the whole
+            # branch and re-warn instead of taking the cheap ancestor path.
+            if current_branch and effective_existing:
+                save_cached_pr(
+                    git_dir,
+                    current_branch,
+                    base_branch,
+                    effective_existing,
+                    head_sha,
+                    content_id,
+                )
             return RepoPrContext(
                 base_branch=base_branch,
                 current_branch=current_branch,

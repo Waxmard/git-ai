@@ -494,6 +494,33 @@ def test_prepare_reuses_cache_after_content_preserving_rebase(tmp_path: Path) ->
     assert any("content is unchanged" in w for w in ctx.warnings)
 
 
+def test_save_cached_pr_clears_a_stale_content_id(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+    git_dir = get_git_dir(repo)
+    save_cached_pr(git_dir, "feature/test", "main", "first", "sha1", "fingerprint")
+
+    save_cached_pr(git_dir, "feature/test", "main", "second", "sha2", None)
+
+    assert load_cached_content_id(git_dir, "feature/test", "main") is None
+
+
+def test_prepare_advances_cached_sha_after_unchanged_rebase(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+    _seed_cache(repo)
+    _move_main_and_rebase(repo)
+
+    prepare_repo_pr_context(repo, base_branch="main")
+
+    # Cache now tracks the rebased HEAD, so the next run takes the cheap
+    # exact-SHA path instead of re-fingerprinting and re-warning.
+    assert load_cached_pr_sha(get_git_dir(repo), "feature/test", "main") == _git(
+        repo, "rev-parse", "HEAD"
+    )
+    again = prepare_repo_pr_context(repo, base_branch="main")
+    assert again.no_changes is True
+    assert again.warnings == []
+
+
 def test_prepare_regenerates_when_rebase_carries_new_work(tmp_path: Path) -> None:
     repo = _rebase_repo(tmp_path)
     _seed_cache(repo)

@@ -397,36 +397,65 @@ def resolve_commit_base(
     return _nearest_fork_parent(repo_path, branch)
 
 
+_INDEX_LINE_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+")
+_HUNK_HEADER_RE = re.compile(r"^@@ .* @@")
+
+
+def _normalize_diff_position(diff: str) -> str:
+    """Erase a diff's line numbers and blob ids, keeping its text verbatim.
+
+    Both move when a branch is rebased onto a newer base even though the change
+    itself is identical. Everything else is kept byte-for-byte — including the
+    whitespace inside ``+``/``-`` lines, which ``git patch-id`` discards and an
+    indentation-only edit depends on. Erasing the hunk header also erases where
+    a change sits, which is why the diff is taken with context lines: they pin
+    the position without pinning the line numbers.
+    """
+    out = []
+    for line in diff.split("\n"):
+        if _INDEX_LINE_RE.match(line):
+            continue
+        out.append("@@" if _HUNK_HEADER_RE.match(line) else line)
+    return "\n".join(out)
+
+
 def branch_content_id(
     repo_path: str | Path, base_ref: str, *, max_commits: int = _MAX_CONTENT_ID_COMMITS
 ) -> str | None:
-    """Fingerprint the content of ``base_ref..HEAD``, or None when unavailable.
+    """Fingerprint the branch's content against ``base_ref``, or None if unavailable.
 
-    Combines the range's patch-ids with its commit subjects, so a rebase or
-    amend that preserves both yields the same id even though every SHA
-    changed. ``--stable`` zeroes line numbers and is order-independent, which
-    is what makes the id survive a rebase onto a moved base.
+    Hashes the position-normalized three-dot diff together with the branch's
+    full commit messages, so a rebase or amend that preserves what the branch
+    does and says yields the same id even though every SHA changed. Hashing the
+    net diff rather than a per-commit ``git patch-id`` set is what catches
+    whitespace-only edits and merge conflict resolutions; hashing whole
+    messages rather than subjects catches a body-only amend, which the PR
+    prompt reads.
 
     None (no git failure surfaced) on an empty range, a range over
     ``max_commits``, or any git error — callers treat it as "no match".
     """
-    # Counted --no-merges to match the log the fingerprint hashes, so a
-    # merge-heavy branch doesn't trip the cap on commits that never contribute.
+    # Counted --no-merges so a merge-heavy branch doesn't trip the cap on
+    # commits that carry no message of their own.
     count = _count_range(repo_path, f"{base_ref}..HEAD", no_merges=True)
     if not count or count > max_commits:
         return None
-    log = subprocess.run(
+    diff = subprocess.run(
+        ["git", "diff", "--no-color", "--no-ext-diff", "-U3", f"{base_ref}...HEAD"],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if diff.returncode != 0:
+        return None
+    messages = subprocess.run(
         [
             "git",
             "log",
             "--no-merges",
             "--no-color",
-            "-p",
-            "-U0",
-            # `commit <sha>` is the header patch-id splits patches on; the
-            # message body is omitted so a commit quoting a diff can't corrupt
-            # the stream.
-            "--format=commit %H",
+            "--format=%B%x00",
             f"{base_ref}..HEAD",
         ],
         cwd=str(repo_path),
@@ -434,23 +463,9 @@ def branch_content_id(
         text=True,
         check=False,
     )
-    if log.returncode != 0:
+    if messages.returncode != 0:
         return None
-    patch = subprocess.run(
-        ["git", "patch-id", "--stable"],
-        cwd=str(repo_path),
-        input=log.stdout,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if patch.returncode != 0:
-        return None
-    patch_ids = sorted(
-        line.split(" ", 1)[0] for line in patch.stdout.splitlines() if line.strip()
-    )
-    subjects = get_branch_commit_subjects(repo_path, base_ref, limit=max_commits)
-    payload = "\n".join(patch_ids) + "\0" + subjects
+    payload = _normalize_diff_position(diff.stdout) + "\0" + messages.stdout
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

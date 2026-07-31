@@ -92,6 +92,14 @@ teardown() {
   assert_output "$expected"
 }
 
+@test "extract_commit_output: drops an attribution trailer below an ===END=== marker" {
+  printf '%s\n' '===COMMIT===' 'feat: add thing' '' 'Body.' '===END===' 'Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'feat: add thing' '' 'Body.')
+  run extract_commit_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
 @test "extract_commit_output: a body line about generated files survives" {
   printf '%s\n' '===COMMIT===' 'chore: regen docs' '' 'Generated with the build script, not by hand.' > "$TEST_TMP/in.txt"
   expected=$(printf '%s\n' 'chore: regen docs' '' 'Generated with the build script, not by hand.')

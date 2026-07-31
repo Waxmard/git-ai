@@ -673,6 +673,74 @@ def test_branch_content_id_changes_on_reword(tmp_path: Path) -> None:
     assert branch_content_id(repo, "main") != before
 
 
+def test_branch_content_id_changes_on_whitespace_only_edit(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"m.py": "def f():\n    pass\n"}, "chore: init")
+    _checkout(repo, "-b", "feature")
+    _commit_files(
+        repo, {"m.py": "def f():\n    pass\n\ndef g():\n    return 1\n"}, "feat: add g"
+    )
+    before = branch_content_id(repo, "main")
+
+    (repo / "m.py").write_text(
+        "def f():\n    pass\n\n    def g():\n        return 1\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "--amend", "--no-edit"], cwd=repo, check=True)
+
+    assert before is not None
+    assert branch_content_id(repo, "main") != before
+
+
+def test_branch_content_id_changes_on_body_only_amend(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    before = branch_content_id(repo, "main")
+
+    subprocess.run(
+        ["git", "commit", "--amend", "-m", "fix: extend f", "-m", "Explains why."],
+        cwd=repo,
+        check=True,
+    )
+
+    assert branch_content_id(repo, "main") != before
+
+
+def test_branch_content_id_changes_on_reresolved_merge(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"f.txt": "a\n"}, "chore: init")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.txt": "a\nfeature\n"}, "feat: branch edit")
+    pre_merge = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _checkout(repo, "main")
+    _commit_files(repo, {"f.txt": "a\nmain\n"}, "fix: base edit")
+
+    def _merge_resolving_to(resolution: str) -> str | None:
+        _checkout(repo, "feature")
+        subprocess.run(["git", "merge", "--no-ff", "main"], cwd=repo, check=False)
+        (repo / "f.txt").write_text(resolution, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "--no-edit"], cwd=repo, check=True)
+        return branch_content_id(repo, "main")
+
+    first = _merge_resolving_to("a\nfeature\nmain\n")
+    subprocess.run(["git", "reset", "--hard", pre_merge], cwd=repo, check=True)
+    second = _merge_resolving_to("a\nmain\nfeature\n")
+
+    assert first is not None
+    assert second != first
+
+
 def test_branch_content_id_none_over_cap_and_on_empty_range(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _content_id_repo(repo)

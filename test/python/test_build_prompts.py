@@ -237,6 +237,14 @@ def test_parse_commit_response_drops_agent_attribution_trailer() -> None:
     assert parse_commit_response(raw) == "feat: add thing\n\nBody."
 
 
+def test_parse_commit_response_drops_attribution_below_an_end_marker() -> None:
+    raw = (
+        "===COMMIT===\nfeat: add thing\n\nBody.\n===END===\n"
+        "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+    )
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
 def test_parse_commit_response_keeps_a_body_line_about_generated_files() -> None:
     raw = "===COMMIT===\nchore: regen docs\n\nGenerated with the build script."
     assert (
@@ -343,6 +351,14 @@ def test_parse_mr_response_strips_fences() -> None:
 def test_parse_mr_response_drops_agent_attribution_trailer() -> None:
     raw = (
         "===TITLE===\nfeat: title\n===BODY===\n- x\n\n"
+        "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+    )
+    assert parse_mr_response(raw) == "feat: title\n\n- x"
+
+
+def test_parse_mr_response_drops_attribution_below_an_end_marker() -> None:
+    raw = (
+        "===TITLE===\nfeat: title\n===BODY===\n- x\n===END===\n\n"
         "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
     )
     assert parse_mr_response(raw) == "feat: title\n\n- x"

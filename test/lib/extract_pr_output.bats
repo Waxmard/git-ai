@@ -87,6 +87,14 @@ teardown() {
   assert_output "$expected"
 }
 
+@test "extract_pr_output: drops an attribution trailer below an ===END=== marker" {
+  printf '%s\n' '===TITLE===' 'feat: title' '===BODY===' '- x' '===END===' '' '🤖 Generated with [Claude Code](https://claude.com/claude-code)' > "$TEST_TMP/in.txt"
+  expected=$(printf '%s\n' 'feat: title' '' '- x')
+  run extract_pr_output < "${TEST_TMP}/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
 @test "extract_pr_output: passes through when the body is only a closing marker" {
   printf '%s\n' '===TITLE===' 'feat: title' '===BODY===' '===BODY===' > "$TEST_TMP/in.txt"
   run extract_pr_output < "${TEST_TMP}/in.txt"

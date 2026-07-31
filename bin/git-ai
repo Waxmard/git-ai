@@ -399,12 +399,6 @@ cmd_pr() {
 
   if [[ "$NO_CHANGES" == "true" ]]; then
     echo "git-ai: no new commits since last generation, using cached output (use --fresh to regenerate)" >&2
-    # Re-save so a rewritten branch's cache tracks the new HEAD, letting the
-    # next run take the cheap ancestor path instead of re-fingerprinting.
-    if [[ -n "$CURRENT_BRANCH" ]]; then
-      save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$EXISTING_PR" "$HEAD_SHA" "${CONTENT_ID:-}" ||
-        die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
-    fi
     printf '%s\n' "$EXISTING_PR"
     return 0
   fi

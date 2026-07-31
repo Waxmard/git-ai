@@ -225,7 +225,7 @@ else:
         )
 ```
 
-`prepare_repo_pr_context` reuses `.git/pr-cache/` automatically, sets `no_changes=True` when `HEAD` matches the cached SHA — or when a rebase/amend rewrote the branch without changing `ctx.content_id`, its patch-id-based content fingerprint — so callers can skip the LLM entirely, and narrows the `diff`/`commit_log` to commits after the last generated `HEAD` when possible. Pass `fresh=True` to bypass the cache for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
+`prepare_repo_pr_context` reuses `.git/pr-cache/` automatically, sets `no_changes=True` when `HEAD` matches the cached SHA — or when a rebase/amend rewrote the branch without changing `ctx.content_id`, its diff-and-message content fingerprint — so callers can skip the LLM entirely, and narrows the `diff`/`commit_log` to commits after the last generated `HEAD` when possible. Pass `fresh=True` to bypass the cache for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
 
 Data-mode is stateless. To get the same efficiency in remote consumers, persist the prior PR text + last generated head SHA yourself, fetch the incremental diff/log since that SHA from your SCM, and pass them to `build_mr_prompt(diff=..., commit_log=..., existing_pr=...)`.
 
