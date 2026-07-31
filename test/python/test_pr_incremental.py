@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -10,12 +12,15 @@ from git_ai import (
     build_mr_prompt,
     get_git_dir,
     get_head_sha,
+    load_cached_content_id,
     load_cached_pr,
     load_cached_pr_sha,
     parse_mr_response,
     prepare_repo_pr_context,
+    prune_pr_cache,
     save_cached_pr,
 )
+from git_ai._pr_incremental import branch_cache_dir
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -454,3 +459,120 @@ def test_prepare_no_warnings_on_clean_tree(tmp_path: Path) -> None:
 
     ctx = prepare_repo_pr_context(repo, base_branch="main")
     assert ctx.warnings == []
+
+
+def _rebase_repo(tmp_path: Path) -> Path:
+    repo = _make_repo(tmp_path)
+    _commit(repo, "f.txt", "a\nb\n", "feat: add f")
+    _commit(repo, "f.txt", "a\nb\nc\n", "fix: extend f")
+    return repo
+
+
+def _seed_cache(repo: Path, text: str = "feat: cached title\n\ncached body") -> None:
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+    save_cached_pr(
+        get_git_dir(repo), "feature/test", "main", text, ctx.head_sha, ctx.content_id
+    )
+
+
+def _move_main_and_rebase(repo: Path) -> None:
+    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True)
+    _commit(repo, "other.txt", "x\n", "chore: main moves")
+    subprocess.run(["git", "checkout", "feature/test"], cwd=repo, check=True)
+    subprocess.run(["git", "rebase", "main"], cwd=repo, check=True)
+
+
+def test_prepare_reuses_cache_after_content_preserving_rebase(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+    _seed_cache(repo)
+    _move_main_and_rebase(repo)
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    assert ctx.no_changes is True
+    assert ctx.existing_pr == "feat: cached title\n\ncached body"
+    assert any("content is unchanged" in w for w in ctx.warnings)
+
+
+def test_prepare_regenerates_when_rebase_carries_new_work(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+    _seed_cache(repo)
+    _move_main_and_rebase(repo)
+    _commit(repo, "f.txt", "a\nb\nc\nd\n", "feat: more work")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    assert ctx.no_changes is False
+    assert ctx.existing_pr == "feat: cached title\n\ncached body"
+    # Falls back to the full branch diff: the pre-rebase commits are gone.
+    assert ctx.input_base == "main"
+    assert "feat: add f" in ctx.commit_log
+    assert any("history was rewritten" in w for w in ctx.warnings)
+
+
+def test_prepare_regenerates_after_reword_only_rewrite(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+    _seed_cache(repo)
+    subprocess.run(
+        ["git", "commit", "--amend", "-m", "fix: extend f, reworded"],
+        cwd=repo,
+        check=True,
+    )
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    assert ctx.no_changes is False
+    assert any("history was rewritten" in w for w in ctx.warnings)
+
+
+def test_prepare_previous_head_sha_error_names_rebase(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+    stale_sha = _git(repo, "rev-parse", "HEAD")
+    subprocess.run(
+        ["git", "commit", "--amend", "-m", "fix: extend f, reworded"],
+        cwd=repo,
+        check=True,
+    )
+
+    with pytest.raises(ValueError, match="rebase or amend"):
+        prepare_repo_pr_context(repo, base_branch="main", previous_head_sha=stale_sha)
+
+
+def test_save_cached_pr_round_trips_content_id(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    git_dir = get_git_dir(repo)
+
+    save_cached_pr(git_dir, "feature/test", "main", "text", "abc123", "fingerprint")
+
+    assert load_cached_content_id(git_dir, "feature/test", "main") == "fingerprint"
+
+
+def test_prune_pr_cache_drops_entries_for_deleted_branches(tmp_path: Path) -> None:
+    repo = _rebase_repo(tmp_path)
+    git_dir = get_git_dir(repo)
+    save_cached_pr(git_dir, "feature/test", "main", "live text", "sha1")
+    save_cached_pr(git_dir, "feature/gone", "main", "dead text", "sha2")
+
+    prune_pr_cache(git_dir)
+
+    assert load_cached_pr(git_dir, "feature/test", "main") == "live text"
+    assert load_cached_pr(git_dir, "feature/gone", "main") is None
+
+
+def test_prune_pr_cache_ages_out_entries_without_a_branch_name(
+    tmp_path: Path,
+) -> None:
+    repo = _rebase_repo(tmp_path)
+    git_dir = get_git_dir(repo)
+    save_cached_pr(git_dir, "feature/test", "main", "legacy text", "sha1")
+    legacy_dir = branch_cache_dir(git_dir, "feature/test", "main")
+    (legacy_dir / "branch-name").unlink()
+
+    prune_pr_cache(git_dir)
+    assert load_cached_pr(git_dir, "feature/test", "main") == "legacy text"
+
+    aged = time.time() - 91 * 86400
+    os.utime(legacy_dir, (aged, aged))
+    prune_pr_cache(git_dir)
+
+    assert load_cached_pr(git_dir, "feature/test", "main") is None

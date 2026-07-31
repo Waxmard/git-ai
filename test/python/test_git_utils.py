@@ -17,7 +17,7 @@ from git_ai import (
 )
 from git_ai._commit_cli import _emit_branch_context
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
-from git_ai._git_branch import base_warnings
+from git_ai._git_branch import base_warnings, branch_content_id
 from git_ai._pr_incremental import branch_cache_dir
 
 _ALL_CONVENTIONAL = """\
@@ -624,3 +624,58 @@ def test_base_warnings_no_fork_warning_when_detached(tmp_path: Path) -> None:
     # Detached HEAD: "branch looks forked from X" must not fire.
     warnings = base_warnings(repo, "main", None)
     assert not any("forked from" in w for w in warnings)
+
+
+def _content_id_repo(repo: Path) -> None:
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"base.txt": "base\n"}, "chore: init")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.txt": "a\nb\n"}, "feat: add f")
+    _commit_files(repo, {"f.txt": "a\nb\nc\n"}, "fix: extend f")
+
+
+def test_branch_content_id_survives_rebase_onto_moved_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    before = branch_content_id(repo, "main")
+
+    _checkout(repo, "main")
+    _commit_files(repo, {"other.txt": "x\n"}, "chore: main moves")
+    _checkout(repo, "feature")
+    subprocess.run(["git", "rebase", "main"], cwd=repo, check=True)
+
+    assert before is not None
+    assert branch_content_id(repo, "main") == before
+
+
+def test_branch_content_id_changes_on_new_work(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    before = branch_content_id(repo, "main")
+
+    _commit_files(repo, {"f.txt": "a\nb\nc\nd\n"}, "feat: more work")
+
+    assert branch_content_id(repo, "main") != before
+
+
+def test_branch_content_id_changes_on_reword(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    before = branch_content_id(repo, "main")
+
+    subprocess.run(
+        ["git", "commit", "--amend", "-m", "fix: extend f, reworded"],
+        cwd=repo,
+        check=True,
+    )
+
+    assert branch_content_id(repo, "main") != before
+
+
+def test_branch_content_id_none_over_cap_and_on_empty_range(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+
+    assert branch_content_id(repo, "main", max_commits=1) is None
+    assert branch_content_id(repo, "feature") is None

@@ -102,3 +102,16 @@ teardown() {
   run load_cached_pr_sha "$GIT_DIR" "feature/new" "main"
   assert_output "new-sha"
 }
+
+@test "save_cached_pr: round-trips content id" {
+  save_cached_pr "$GIT_DIR" "feature/new" "main" "output" "abc123" "content-fingerprint"
+  run cat "$(dirname "$(branch_cache_path "$GIT_DIR" "feature/new" "main")")/last-content-id"
+  assert_success
+  assert_output "content-fingerprint"
+}
+
+@test "save_cached_pr: records the branch name for pruning" {
+  save_cached_pr "$GIT_DIR" "feature/new" "main" "output"
+  run cat "$(dirname "$(branch_cache_path "$GIT_DIR" "feature/new" "main")")/branch-name"
+  assert_output "feature/new"
+}

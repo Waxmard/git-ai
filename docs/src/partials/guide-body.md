@@ -30,11 +30,15 @@ git-ai provides LLM-powered git workflow tools (`git-ai commit`, `git-ai pr`) th
 
 ## PR caching
 
-`git-ai pr` caches its output per `(branch, base)` pair under `.git/pr-cache/<key>/` (`last-output` + `last-head-sha`).
+`git-ai pr` caches its output per `(branch, base)` pair under `.git/pr-cache/<key>/` (`last-output` + `last-head-sha` + `last-content-id` + `branch-name`).
 
 - If HEAD SHA matches the cached SHA, the cached title/body is reused and no LLM call is made.
 - If new commits exist since the cache, the cached text is fed to the update-prompt variant (`pr-two-pass-update.txt` / `pr-fallback-update.txt`) so existing wording is preserved.
 - `--fresh` bypasses the cache entirely and regenerates from scratch.
+
+**Rewritten history (rebase / amend / force-push)** — a rewrite makes the cached SHA a non-ancestor of HEAD, so the incremental base is gone and the branch is re-described from the full three-dot diff against the base (the cached text still rides along as `<existing_pr>`). To keep the common "target moved, branch rebased" case free, `_git_branch.py:branch_content_id` fingerprints `base..HEAD` as `sha256(sorted patch-ids + commit subjects)` — `git patch-id --stable` zeroes line numbers, so the id survives a rebase onto a moved base. A rewrite whose fingerprint matches `last-content-id` short-circuits to `no_changes=True` (cached output, no LLM call); subjects are in the fingerprint so a reword-only rewrite still regenerates. Both outcomes surface as a warning. The fingerprint is skipped (and the fast path with it) on branches over 200 commits. A base branch replaced with unrelated history is a different case: no merge-base, which is a hard error naming force-push as the likely cause.
+
+**Cache pruning** — `prepare_repo_pr_context` calls `prune_pr_cache` once per run: entries whose recorded `branch-name` is no longer in `refs/heads` are deleted, and pre-`branch-name` entries age out after 90 days. Best-effort — an unreadable branch list skips pruning entirely rather than deleting on unknown. `save_cached_pr` never prunes, so a caller can cache a branch that has no local ref.
 
 **Intra-branch refinement folding** — the two-pass draft groups commits by conventional type, but a follow-up `fix`/`refactor`/`perf`/`docs` commit that only touches code added earlier in the *same* branch is invisible from the base branch's net diff (which shows only the final feature). `_git_branch.py:get_branch_churn_subjects` flags such "churn" commits via hunk-level `git blame` of each parent (every pre-image line it edits or deletes was introduced branch-locally; pure additions never count). `prepare_repo_pr_context` threads them through `build_mr_prompt_input` → `_pr_draft.analyze`, which pulls them into a trailing `### Intra-branch refinements` block the prompts fold into the feature they refine rather than emitting standalone sections. Best-effort: a git failure or a branch over 50 commits yields none, falling back to plain type-grouping.
 
