@@ -17,7 +17,12 @@ from git_ai import (
 )
 from git_ai._commit_cli import _emit_branch_context
 from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
-from git_ai._git_branch import base_warnings
+from git_ai._git_branch import (
+    _branch_ahead_behind,
+    _list_branch_refs,
+    base_warnings,
+    branch_content_id,
+)
 from git_ai._pr_incremental import branch_cache_dir
 
 _ALL_CONVENTIONAL = """\
@@ -436,6 +441,24 @@ def test_resolve_commit_base_detects_stacked_parent(tmp_path: Path) -> None:
     assert resolve_commit_base(repo) == "feature-a"
 
 
+def test_branch_refs_name_branches_with_a_same_named_tag(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "release")
+    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
+    subprocess.run(["git", "tag", "release"], cwd=repo, check=True)
+
+    # The tag must not stop the current branch from excluding itself.
+    assert _list_branch_refs(repo, "release") == ["main"]
+    rows = _branch_ahead_behind(repo, "release")
+    assert rows is not None
+    assert [row[0] for row in rows] == ["main"]
+
+
 def test_resolve_commit_base_stacked_parent_after_parent_advances(
     tmp_path: Path,
 ) -> None:
@@ -624,3 +647,205 @@ def test_base_warnings_no_fork_warning_when_detached(tmp_path: Path) -> None:
     # Detached HEAD: "branch looks forked from X" must not fire.
     warnings = base_warnings(repo, "main", None)
     assert not any("forked from" in w for w in warnings)
+
+
+def _content_id_repo(repo: Path) -> None:
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"base.txt": "base\n"}, "chore: init")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.txt": "a\nb\n"}, "feat: add f")
+    _commit_files(repo, {"f.txt": "a\nb\nc\n"}, "fix: extend f")
+
+
+def test_branch_content_id_survives_rebase_onto_moved_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    before = branch_content_id(repo, "main")
+
+    _checkout(repo, "main")
+    _commit_files(repo, {"other.txt": "x\n"}, "chore: main moves")
+    _checkout(repo, "feature")
+    subprocess.run(["git", "rebase", "main"], cwd=repo, check=True)
+
+    assert before is not None
+    assert branch_content_id(repo, "main") == before
+
+
+def test_branch_content_id_changes_on_new_work(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    before = branch_content_id(repo, "main")
+
+    _commit_files(repo, {"f.txt": "a\nb\nc\nd\n"}, "feat: more work")
+
+    assert branch_content_id(repo, "main") != before
+
+
+def test_branch_content_id_changes_on_reword(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    before = branch_content_id(repo, "main")
+
+    subprocess.run(
+        ["git", "commit", "--amend", "-m", "fix: extend f, reworded"],
+        cwd=repo,
+        check=True,
+    )
+
+    assert branch_content_id(repo, "main") != before
+
+
+def test_branch_content_id_changes_on_whitespace_only_edit(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"m.py": "def f():\n    pass\n"}, "chore: init")
+    _checkout(repo, "-b", "feature")
+    _commit_files(
+        repo, {"m.py": "def f():\n    pass\n\ndef g():\n    return 1\n"}, "feat: add g"
+    )
+    before = branch_content_id(repo, "main")
+
+    (repo / "m.py").write_text(
+        "def f():\n    pass\n\n    def g():\n        return 1\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "--amend", "--no-edit"], cwd=repo, check=True)
+
+    assert before is not None
+    assert branch_content_id(repo, "main") != before
+
+
+def test_branch_content_id_changes_on_body_only_amend(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    before = branch_content_id(repo, "main")
+
+    subprocess.run(
+        ["git", "commit", "--amend", "-m", "fix: extend f", "-m", "Explains why."],
+        cwd=repo,
+        check=True,
+    )
+
+    assert branch_content_id(repo, "main") != before
+
+
+def test_branch_content_id_changes_on_reresolved_merge(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"f.txt": "a\n"}, "chore: init")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.txt": "a\nfeature\n"}, "feat: branch edit")
+    pre_merge = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _checkout(repo, "main")
+    _commit_files(repo, {"f.txt": "a\nmain\n"}, "fix: base edit")
+
+    def _merge_resolving_to(resolution: str) -> str | None:
+        _checkout(repo, "feature")
+        subprocess.run(["git", "merge", "--no-ff", "main"], cwd=repo, check=False)
+        (repo / "f.txt").write_text(resolution, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "--no-edit"], cwd=repo, check=True)
+        return branch_content_id(repo, "main")
+
+    first = _merge_resolving_to("a\nfeature\nmain\n")
+    subprocess.run(["git", "reset", "--hard", pre_merge], cwd=repo, check=True)
+    second = _merge_resolving_to("a\nmain\nfeature\n")
+
+    assert first is not None
+    assert second != first
+
+
+def test_branch_content_id_distinguishes_edits_in_identical_functions(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    # The target sits >3 lines below the def, so -U3 context can't see which
+    # function it is in — only the hunk header's section heading can.
+    body = "".join(f"    v{n} = {n}\n" for n in range(8))
+    source = f"def first():\n{body}\ndef second():\n{body}"
+    _commit_files(repo, {"m.py": source}, "chore: init")
+    _checkout(repo, "-b", "feature")
+
+    def _edit_in(fn: str) -> str | None:
+        marker = f"def {fn}():\n{body}"
+        edited = marker.replace("    v4 = 4\n", "    v4 = 99\n")
+        (repo / "m.py").write_text(source.replace(marker, edited), encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "fix: bump y"], cwd=repo, check=True)
+        return branch_content_id(repo, "main")
+
+    in_first = _edit_in("first")
+    subprocess.run(["git", "reset", "--hard", "main"], cwd=repo, check=True)
+    in_second = _edit_in("second")
+
+    # Identical edit, identical surrounding context — only the hunk header's
+    # section heading tells the two apart.
+    assert in_first is not None
+    assert in_second != in_first
+
+
+def test_branch_content_id_handles_non_utf8_file(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"keep.txt": "keep\n"}, "chore: init")
+    _checkout(repo, "-b", "feature")
+    (repo / "l.txt").write_bytes(b"caf\xe9 latin1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "feat: latin1"], cwd=repo, check=True)
+    before = branch_content_id(repo, "main")
+
+    (repo / "l.txt").write_bytes(b"caf\xe8 latin1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "--amend", "--no-edit"], cwd=repo, check=True)
+
+    # Undecodable bytes must neither crash nor collapse to one replacement char.
+    assert before is not None
+    assert branch_content_id(repo, "main") != before
+
+
+def test_get_diff_handles_non_utf8_file(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    (repo / "l.txt").write_bytes(b"caf\xe9 latin1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "feat: latin1"], cwd=repo, check=True)
+
+    assert "l.txt" in get_diff(repo, "HEAD~1", three_dot=False)
+
+
+def test_branch_content_id_none_over_cap_and_on_empty_range(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+
+    assert branch_content_id(repo, "main", max_commits=1) is None
+    assert branch_content_id(repo, "feature") is None
+
+
+def test_branch_content_id_cap_ignores_merge_commits(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _content_id_repo(repo)
+    _checkout(repo, "main")
+    _commit_files(repo, {"other.txt": "x\n"}, "chore: main moves")
+    _checkout(repo, "feature")
+    subprocess.run(
+        ["git", "merge", "--no-ff", "-m", "merge main", "main"], cwd=repo, check=True
+    )
+
+    # Two real commits plus a merge: the merge must not count toward the cap.
+    assert branch_content_id(repo, "main", max_commits=2) is not None

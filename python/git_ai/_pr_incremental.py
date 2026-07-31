@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib
 import json
+import shutil
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,6 +32,7 @@ if TYPE_CHECKING:
     from ._git_branch import (
         _best_base_ref,
         base_warnings,
+        branch_content_id,
         get_branch_churn_subjects,
     )
     from ._ignore import load_ignore_patterns
@@ -40,6 +43,7 @@ elif __package__ in (None, ""):
     check_git_repo = _git.check_git_repo
     _best_base_ref = _git_branch._best_base_ref
     base_warnings = _git_branch.base_warnings
+    branch_content_id = _git_branch.branch_content_id
     get_branch_churn_subjects = _git_branch.get_branch_churn_subjects
     get_commit_log = _git.get_commit_log
     get_current_branch = _git.get_current_branch
@@ -72,9 +76,14 @@ else:
     from ._git_branch import (
         _best_base_ref,
         base_warnings,
+        branch_content_id,
         get_branch_churn_subjects,
     )
     from ._ignore import load_ignore_patterns
+
+# Cache dirs written before `branch-name` existed can't be tied to a branch, so
+# they age out instead.
+_LEGACY_CACHE_MAX_AGE_DAYS = 90
 
 
 @dataclass
@@ -91,6 +100,9 @@ class RepoPrContext:
     no_changes: bool = False
     churn_subjects: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Appended rather than grouped with no_changes: RepoPrContext is public, so
+    # inserting a field would re-bind every positional argument after it.
+    content_id: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=True)
@@ -123,20 +135,169 @@ def load_cached_pr_sha(
     return path.read_text(encoding="utf-8").strip() or None
 
 
+def load_cached_content_id(
+    git_dir: str | Path, branch_name: str, base_branch: str
+) -> str | None:
+    path = branch_cache_dir(git_dir, branch_name, base_branch) / "last-content-id"
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8").strip() or None
+
+
 def save_cached_pr(
     git_dir: str | Path,
     branch_name: str,
     base_branch: str,
     output: str,
     head_sha: str | None = None,
+    content_id: str | None = None,
 ) -> None:
+    """Write ``output`` and its provenance to the branch's cache entry.
+
+    A ``content_id`` of None means the fingerprint was unavailable for this
+    output (branch over the commit cap, git failure) — the previous one is
+    deleted rather than kept, since a stale id paired with newer text is what
+    would let a later rewrite back onto that content reuse the wrong PR.
+    """
     cache_dir = branch_cache_dir(git_dir, branch_name, base_branch)
     cache_dir.mkdir(parents=True, exist_ok=True)
     branch_cache_path(git_dir, branch_name, base_branch).write_text(
         f"{output}\n", encoding="utf-8"
     )
+    # The cache key is a hash, so the branch is unrecoverable without this.
+    (cache_dir / "branch-name").write_text(f"{branch_name}\n", encoding="utf-8")
     if head_sha:
         (cache_dir / "last-head-sha").write_text(f"{head_sha}\n", encoding="utf-8")
+    content_id_path = cache_dir / "last-content-id"
+    if content_id:
+        content_id_path.write_text(f"{content_id}\n", encoding="utf-8")
+    else:
+        content_id_path.unlink(missing_ok=True)
+
+
+def prune_pr_cache(git_dir: str | Path) -> None:
+    """Drop cache entries for branches that no longer exist. Best-effort.
+
+    Skips entirely when the branch list can't be read — deleting on an unknown
+    ref set would wipe live entries. Cached PR text is regenerable, so a wrong
+    keep costs nothing and a wrong delete costs one LLM call. Writers don't call
+    this: ``save_cached_pr`` is free to cache a branch that has no local ref.
+    """
+    root = Path(git_dir) / "pr-cache"
+    if not root.is_dir():
+        return
+    result = subprocess.run(
+        [
+            "git",
+            "--git-dir",
+            str(git_dir),
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return
+    # Not `refname:short`: it disambiguates against same-named tags, printing
+    # `heads/release`, which never matches the recorded `branch-name`.
+    live = {
+        line.strip().removeprefix("refs/heads/")
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("refs/heads/")
+    }
+    cutoff = time.time() - _LEGACY_CACHE_MAX_AGE_DAYS * 86400
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        name_file = entry / "branch-name"
+        try:
+            if name_file.is_file():
+                stale = name_file.read_text(encoding="utf-8").strip() not in live
+            else:
+                stale = entry.stat().st_mtime < cutoff
+        except OSError:
+            continue
+        if stale:
+            shutil.rmtree(entry, ignore_errors=True)
+
+
+def _rewritten_cache_check(
+    repo_path: Path,
+    git_dir: str,
+    *,
+    base_ref: str | None,
+    base_branch: str,
+    current_branch: str | None,
+    effective_existing: str | None,
+) -> tuple[str | None, str, bool]:
+    """Return (content_id, warning, whether the rewrite preserved the content)."""
+    content_id = branch_content_id(repo_path, base_ref) if base_ref else None
+    unchanged = bool(
+        content_id
+        and effective_existing
+        and current_branch
+        and content_id == load_cached_content_id(git_dir, current_branch, base_branch)
+    )
+    warning = (
+        "branch was rewritten (rebase/amend) but its content is unchanged — "
+        "reusing cached output."
+        if unchanged
+        else "branch history was rewritten (rebase/amend) since the last run; "
+        "regenerating from the full branch diff."
+    )
+    return content_id, warning, unchanged
+
+
+def _resolve_cache_state(
+    repo_path: Path,
+    git_dir: str,
+    *,
+    base_branch: str,
+    current_branch: str | None,
+    existing_pr: str | None,
+    previous_head_sha: str | None,
+    fresh: bool,
+) -> tuple[str | None, str, bool]:
+    """Return the PR text to refine, the diff base, and whether HEAD was rewritten.
+
+    A cached SHA that is no longer an ancestor of HEAD means a rebase, amend or
+    reset replaced the branch: the incremental base is gone, so the caller
+    falls back to the base branch.
+    """
+    cached_pr: str | None = None
+    cached_sha: str | None = None
+    if not fresh and current_branch:
+        cached_pr = load_cached_pr(git_dir, current_branch, base_branch)
+        cached_sha = load_cached_pr_sha(git_dir, current_branch, base_branch)
+    effective_existing = existing_pr if existing_pr is not None else cached_pr
+
+    if previous_head_sha:
+        if not git_ref_exists(repo_path, previous_head_sha):
+            raise ValueError(
+                f"previous_head_sha {previous_head_sha!r} not found in repo"
+            )
+        if not git_is_ancestor(repo_path, previous_head_sha, "HEAD"):
+            raise ValueError(
+                f"previous_head_sha {previous_head_sha!r} is not an ancestor of HEAD "
+                f"— a rebase or amend since then rewrote it. Re-run without "
+                f"previous_head_sha to describe the whole branch, or with fresh=True "
+                f"to also drop the cached wording."
+            )
+        return effective_existing, previous_head_sha, False
+    if cached_sha:
+        if git_ref_exists(repo_path, cached_sha) and git_is_ancestor(
+            repo_path, cached_sha, "HEAD"
+        ):
+            return effective_existing, cached_sha, False
+        return effective_existing, base_branch, True
+    return effective_existing, base_branch, False
 
 
 def prepare_repo_pr_context(
@@ -156,32 +317,17 @@ def prepare_repo_pr_context(
     current_branch = get_current_branch(repo_path)
     git_dir = get_git_dir(repo_path)
     head_sha = get_head_sha(repo_path)
+    prune_pr_cache(git_dir)
 
-    cached_pr: str | None = None
-    cached_sha: str | None = None
-    if not fresh and current_branch:
-        cached_pr = load_cached_pr(git_dir, current_branch, base_branch)
-        cached_sha = load_cached_pr_sha(git_dir, current_branch, base_branch)
-
-    effective_existing = existing_pr if existing_pr is not None else cached_pr
-
-    input_base = base_branch
-    if previous_head_sha:
-        if not git_ref_exists(repo_path, previous_head_sha):
-            raise ValueError(
-                f"previous_head_sha {previous_head_sha!r} not found in repo"
-            )
-        if not git_is_ancestor(repo_path, previous_head_sha, "HEAD"):
-            raise ValueError(
-                f"previous_head_sha {previous_head_sha!r} is not an ancestor of HEAD"
-            )
-        input_base = previous_head_sha
-    elif (
-        cached_sha
-        and git_ref_exists(repo_path, cached_sha)
-        and git_is_ancestor(repo_path, cached_sha, "HEAD")
-    ):
-        input_base = cached_sha
+    effective_existing, input_base, history_rewritten = _resolve_cache_state(
+        repo_path,
+        git_dir,
+        base_branch=base_branch,
+        current_branch=current_branch,
+        existing_pr=existing_pr,
+        previous_head_sha=previous_head_sha,
+        fresh=fresh,
+    )
 
     # Prefer origin/<base> over a local branch that may lag: a stale local base
     # leaks already-merged commits into the diff and log, so the PR describes
@@ -204,6 +350,50 @@ def prepare_repo_pr_context(
     else:
         diff_ref = input_base
 
+    # Fingerprinting diffs the whole branch, so it stays off the paths that
+    # return without regenerating: it's needed only to compare against a
+    # rewritten cache, and to stamp a context the caller will save.
+    content_id: str | None = None
+    warnings: list[str] = []
+    if history_rewritten:
+        content_id, warning, rewritten_unchanged = _rewritten_cache_check(
+            repo_path,
+            git_dir,
+            base_ref=base_ref,
+            base_branch=base_branch,
+            current_branch=current_branch,
+            effective_existing=effective_existing,
+        )
+        warnings.append(warning)
+        if rewritten_unchanged:
+            # Re-stamp the cache onto the rewritten HEAD. The caller returns
+            # here without saving anything, so leaving the pre-rebase SHA
+            # behind would make every later run re-fingerprint the whole
+            # branch and re-warn instead of taking the cheap ancestor path.
+            if current_branch and effective_existing:
+                save_cached_pr(
+                    git_dir,
+                    current_branch,
+                    base_branch,
+                    effective_existing,
+                    head_sha,
+                    content_id,
+                )
+            return RepoPrContext(
+                base_branch=base_branch,
+                current_branch=current_branch,
+                head_sha=head_sha,
+                input_base=input_base,
+                existing_pr=effective_existing,
+                commit_log="",
+                diff="",
+                diff_stat="",
+                release_context=get_mr_release_context(repo_path),
+                content_id=content_id,
+                no_changes=True,
+                warnings=warnings,
+            )
+
     commit_log = get_commit_log(repo_path, diff_ref)
     if input_base != base_branch and effective_existing and not commit_log.strip():
         return RepoPrContext(
@@ -216,6 +406,7 @@ def prepare_repo_pr_context(
             diff="",
             diff_stat="",
             release_context=get_mr_release_context(repo_path),
+            content_id=content_id,
             no_changes=True,
         )
 
@@ -240,7 +431,8 @@ def prepare_repo_pr_context(
     churn_subjects = get_branch_churn_subjects(
         repo_path, churn_base, classify_base=diff_ref
     )
-    warnings: list[str] = []
+    if content_id is None and base_ref:
+        content_id = branch_content_id(repo_path, base_ref)
     if current_branch is None:
         warnings.append("detached HEAD: PR caching is disabled for this run.")
     # An incremental update (input_base = a HEAD SHA) has no base relationship.
@@ -260,6 +452,7 @@ def prepare_repo_pr_context(
             repo_path, diff_ref, three_dot=three_dot, exclude_patterns=stat_patterns
         ),
         release_context=get_mr_release_context(repo_path),
+        content_id=content_id,
         churn_subjects=churn_subjects,
         warnings=warnings,
     )

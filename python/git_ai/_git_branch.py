@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 from collections.abc import Callable
@@ -40,6 +41,10 @@ _MAX_ENUMERATED_BRANCHES = 50
 # Each churn-classified commit costs a `git show` plus a `git blame` per
 # modified file; over the cap, churn detection is skipped entirely.
 _MAX_CHURN_COMMITS = 50
+
+# The content fingerprint diffs the whole branch; over the cap the rebase
+# fast path is skipped rather than paying for a huge `git log -p`.
+_MAX_CONTENT_ID_COMMITS = 200
 
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+")
 _PORCELAIN_SHA_RE = re.compile(r"^([0-9a-f]{40}) ")
@@ -95,10 +100,12 @@ def _candidate_base_names(repo_path: str | Path) -> list[str]:
     return names
 
 
-def _count_range(repo_path: str | Path, rng: str) -> int | None:
+def _count_range(
+    repo_path: str | Path, rng: str, *, no_merges: bool = False
+) -> int | None:
     """Count commits in a ``A..B`` range. None on git failure."""
     result = subprocess.run(
-        ["git", "rev-list", "--count", rng],
+        ["git", "rev-list", "--count", *(["--no-merges"] if no_merges else []), rng],
         cwd=str(repo_path),
         capture_output=True,
         text=True,
@@ -197,6 +204,19 @@ def _base_name_from_pr_cache(
     return best[1] if best else None
 
 
+def _shorten_ref(refname: str) -> str | None:
+    """`refs/heads/x` → `x`, `refs/remotes/origin/x` → `origin/x`, else None.
+
+    Done by hand rather than with ``refname:short``, which disambiguates against
+    same-named tags (`refs/heads/release` → `heads/release` when a `release` tag
+    exists) and so stops matching branch names from elsewhere.
+    """
+    for prefix in ("refs/heads/", "refs/remotes/"):
+        if refname.startswith(prefix):
+            return refname.removeprefix(prefix)
+    return None
+
+
 def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list[str]:
     """Local + origin branch short-refs, newest first, minus the current branch."""
     result = subprocess.run(
@@ -204,7 +224,7 @@ def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list
             "git",
             "for-each-ref",
             "--sort=-committerdate",
-            "--format=%(refname:short)",
+            "--format=%(refname)",
             "refs/heads",
             "refs/remotes/origin",
         ],
@@ -221,7 +241,7 @@ def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list
         exclude.add(f"origin/{current_branch}")
     refs: list[str] = []
     for line in result.stdout.splitlines():
-        ref = line.strip()
+        ref = _shorten_ref(line.strip())
         if not ref or ref in exclude or ref.endswith("/HEAD"):
             continue
         refs.append(ref)
@@ -287,7 +307,7 @@ def _branch_ahead_behind(
             "git",
             "for-each-ref",
             "--sort=-committerdate",
-            "--format=%(refname:short)\t%(ahead-behind:HEAD)",
+            "--format=%(refname)\t%(ahead-behind:HEAD)",
             "refs/heads",
             "refs/remotes/origin",
         ],
@@ -304,8 +324,8 @@ def _branch_ahead_behind(
         exclude.add(f"origin/{current_branch}")
     rows: list[tuple[str, int, int]] = []
     for line in result.stdout.splitlines():
-        ref, _, counts = line.partition("\t")
-        ref = ref.strip()
+        refname, _, counts = line.partition("\t")
+        ref = _shorten_ref(refname.strip())
         if not ref or ref in exclude or ref.endswith("/HEAD"):
             continue
         parts = counts.split()
@@ -390,6 +410,85 @@ def resolve_commit_base(
     return _nearest_fork_parent(repo_path, branch)
 
 
+_INDEX_LINE_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+")
+_HUNK_HEADER_RE = re.compile(r"^@@ -[0-9,]+ \+[0-9,]+ @@")
+
+
+def _normalize_diff_position(diff: str) -> str:
+    """Erase a diff's line numbers and blob ids, keeping its text verbatim.
+
+    Both move when a branch is rebased onto a newer base even though the change
+    itself is identical. Everything else is kept byte-for-byte — including the
+    whitespace inside ``+``/``-`` lines, which ``git patch-id`` discards and an
+    indentation-only edit depends on, and the hunk header's trailing section
+    heading, which names the enclosing function and so distinguishes the same
+    edit made in two identically-shaped places. Erasing the line numbers still
+    erases some of where a change sits, which is why the diff is taken with
+    context lines: they pin the position without pinning the numbers.
+    """
+    out = []
+    for line in diff.split("\n"):
+        if _INDEX_LINE_RE.match(line):
+            continue
+        out.append(_HUNK_HEADER_RE.sub("@@", line, count=1))
+    return "\n".join(out)
+
+
+def branch_content_id(
+    repo_path: str | Path, base_ref: str, *, max_commits: int = _MAX_CONTENT_ID_COMMITS
+) -> str | None:
+    """Fingerprint the branch's content against ``base_ref``, or None if unavailable.
+
+    Hashes the position-normalized three-dot diff together with the branch's
+    full commit messages, so a rebase or amend that preserves what the branch
+    does and says yields the same id even though every SHA changed. Hashing the
+    net diff rather than a per-commit ``git patch-id`` set is what catches
+    whitespace-only edits and merge conflict resolutions; hashing whole
+    messages rather than subjects catches a body-only amend, which the PR
+    prompt reads.
+
+    None (no git failure surfaced) on an empty range, a range over
+    ``max_commits``, or any git error — callers treat it as "no match".
+    """
+    # Counted --no-merges so a merge-heavy branch doesn't trip the cap on
+    # commits that carry no message of their own.
+    count = _count_range(repo_path, f"{base_ref}..HEAD", no_merges=True)
+    if not count or count > max_commits:
+        return None
+    diff = subprocess.run(
+        ["git", "diff", "--no-color", "--no-ext-diff", "-U3", f"{base_ref}...HEAD"],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        errors="surrogateescape",
+        check=False,
+    )
+    if diff.returncode != 0:
+        return None
+    messages = subprocess.run(
+        [
+            "git",
+            "log",
+            "--no-merges",
+            "--no-color",
+            "--format=%B%x00",
+            f"{base_ref}..HEAD",
+        ],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        errors="surrogateescape",
+        check=False,
+    )
+    if messages.returncode != 0:
+        return None
+    payload = _normalize_diff_position(diff.stdout) + "\0" + messages.stdout
+    # surrogateescape both ways: git calls any NUL-free file text, so a latin-1
+    # source file puts undecodable bytes in the diff. Round-tripping them keeps
+    # the fingerprint lossless where a replacement char would collide.
+    return hashlib.sha256(payload.encode("utf-8", "surrogateescape")).hexdigest()
+
+
 def get_branch_commit_subjects(
     repo_path: str | Path, base_ref: str, *, limit: int = 30
 ) -> str:
@@ -443,6 +542,7 @@ def _blame_introducers(
         cwd=str(repo_path),
         capture_output=True,
         text=True,
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:

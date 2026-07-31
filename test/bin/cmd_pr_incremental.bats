@@ -77,3 +77,42 @@ teardown() {
   assert_failure
   assert_output --partial "failed to prepare PR context"
 }
+
+@test "cmd_pr: reuses cached output after a content-preserving rebase" {
+  run cmd_pr codex gpt-5.4-mini --base main
+  assert_success
+
+  git checkout -q main
+  echo "x" > other.txt
+  git add other.txt
+  git commit -q -m "chore: main moves"
+  git checkout -q feature/test
+  git rebase -q main
+
+  run_provider() { printf 'SECOND_CALL'; }
+  run cmd_pr codex gpt-5.4-mini --base main
+
+  assert_success
+  assert_output --partial "add second"
+  refute_output --partial "SECOND_CALL"
+}
+
+@test "cmd_pr: regenerates when a rebase carries new work" {
+  run cmd_pr codex gpt-5.4-mini --base main
+  assert_success
+
+  git checkout -q main
+  echo "x" > other.txt
+  git add other.txt
+  git commit -q -m "chore: main moves"
+  git checkout -q feature/test
+  git rebase -q main
+  echo "three" > three.txt
+  git add three.txt
+  git commit -q -m "feat: add third"
+
+  run cmd_pr codex gpt-5.4-mini --base main
+
+  assert_success
+  assert_output --partial "add third"
+}
