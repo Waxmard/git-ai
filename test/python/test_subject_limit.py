@@ -96,3 +96,39 @@ def test_custom_limit() -> None:
         "feat: add the model picker and wire the cache", limit=40
     )
     assert result.message == "feat: add the model picker"
+
+
+def test_separator_inside_a_code_reference_is_skipped() -> None:
+    subject = (
+        "fix: keep configuration for parse(foo, bar) intact while validating subjects"
+    )
+    result = enforce_subject_limit(subject)
+    assert result.message == subject
+    assert result.over_limit
+
+
+def test_separator_inside_backticks_is_skipped() -> None:
+    subject = (
+        "fix: keep `parse(foo, bar)` output intact while validating generated subjects"
+    )
+    result = enforce_subject_limit(subject)
+    assert result.message == subject
+    assert result.over_limit
+
+
+def test_break_outside_a_code_reference_still_wins() -> None:
+    result = enforce_subject_limit(
+        "feat: add parse(a, b) support and wire the cache into the discovery layer"
+    )
+    assert result.message == "feat: add parse(a, b) support"
+    assert result.dropped == "and wire the cache into the discovery layer"
+
+
+def test_unclosed_bracket_suppresses_later_breaks() -> None:
+    subject = (
+        "fix: handle the unclosed paren case (foo, bar while validating "
+        "the subject line"
+    )
+    result = enforce_subject_limit(subject)
+    assert result.message == subject
+    assert result.over_limit

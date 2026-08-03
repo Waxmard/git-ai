@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import textwrap
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -299,6 +300,29 @@ class SubjectTrim(NamedTuple):
     over_limit: bool
 
 
+def _clause_break_positions(subject: str, start: int) -> Iterator[int]:
+    """Yield indices in ``subject`` at or after ``start`` that may hold a break.
+
+    Skips anything nested in brackets or a backtick span: a separator inside a
+    code reference (``parse(foo, bar)``) is punctuation, not a clause boundary,
+    and cutting there leaves a mangled half-identifier. An unclosed bracket or
+    backtick suppresses every later position, which degrades to the untouched
+    ``over_limit`` path rather than a bad trim.
+    """
+    depth = 0
+    in_code = False
+    for i, ch in enumerate(subject):
+        if ch == "`":
+            in_code = not in_code
+        elif not in_code:
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth = max(0, depth - 1)
+        if i >= start and depth == 0 and not in_code:
+            yield i
+
+
 def enforce_subject_limit(message: str, limit: int = SUBJECT_LIMIT) -> SubjectTrim:
     """Shorten an over-long commit subject at a clause boundary.
 
@@ -317,7 +341,7 @@ def enforce_subject_limit(message: str, limit: int = SUBJECT_LIMIT) -> SubjectTr
 
     prefix = _COMMIT_PREFIX_RE.match(subject)
     best = ""
-    for i in range(prefix.end() if prefix else 0, length):
+    for i in _clause_break_positions(subject, prefix.end() if prefix else 0):
         if not any(subject.startswith(sep, i) for sep in _CLAUSE_SEPARATORS):
             continue
         head = subject[:i].rstrip(" ,;")

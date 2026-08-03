@@ -277,8 +277,20 @@ enforce_subject_limit() {
     start=${#BASH_REMATCH[0]}
   fi
   local -a seps=(" and " " plus " ", " "; ")
-  local best="" head sep i
-  for ((i = start; i < len; i++)); do
+  local best="" head sep i ch depth=0 in_code=0
+  for ((i = 0; i < len; i++)); do
+    # A separator nested in brackets or a backtick span is punctuation inside a
+    # code reference, not a clause boundary; cutting there mangles the token.
+    ch="${subject:i:1}"
+    if [[ "$ch" == '`' ]]; then
+      in_code=$((1 - in_code))
+    elif ((in_code == 0)); then
+      case "$ch" in
+        '(' | '[' | '{') depth=$((depth + 1)) ;;
+        ')' | ']' | '}') ((depth > 0)) && depth=$((depth - 1)) ;;
+      esac
+    fi
+    ((i >= start && depth == 0 && in_code == 0)) || continue
     for sep in "${seps[@]}"; do
       [[ "${subject:i:${#sep}}" == "$sep" ]] || continue
       head="${subject:0:i}"

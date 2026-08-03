@@ -62,3 +62,30 @@ setup() {
   assert_equal "$GIT_AI_SUBJECT_MESSAGE" 'fix: handle the em—dash case and tidy up the whitespace scanner paths2'
   assert_equal "$GIT_AI_SUBJECT_NOTE" ""
 }
+
+@test "enforce_subject_limit: a separator inside a code reference is skipped" {
+  local subject='fix: keep configuration for parse(foo, bar) intact while validating subjects'
+  enforce_subject_limit "$subject"
+  assert_equal "$GIT_AI_SUBJECT_MESSAGE" "$subject"
+  [[ "$GIT_AI_SUBJECT_NOTE" == "subject is 76 chars"* ]]
+}
+
+@test "enforce_subject_limit: a separator inside backticks is skipped" {
+  local subject='fix: keep `parse(foo, bar)` output intact while validating generated subjects'
+  enforce_subject_limit "$subject"
+  assert_equal "$GIT_AI_SUBJECT_MESSAGE" "$subject"
+  [[ "$GIT_AI_SUBJECT_NOTE" == "subject is 77 chars"* ]]
+}
+
+@test "enforce_subject_limit: a break outside a code reference still wins" {
+  enforce_subject_limit 'feat: add parse(a, b) support and wire the cache into the discovery layer'
+  assert_equal "$GIT_AI_SUBJECT_MESSAGE" 'feat: add parse(a, b) support'
+  assert_equal "$GIT_AI_SUBJECT_NOTE" 'trimmed: dropped "and wire the cache into the discovery layer" (was 73 chars, limit 70)'
+}
+
+@test "enforce_subject_limit: an unclosed bracket suppresses later breaks" {
+  local subject='fix: handle the unclosed paren case (foo, bar while validating the subject line'
+  enforce_subject_limit "$subject"
+  assert_equal "$GIT_AI_SUBJECT_MESSAGE" "$subject"
+  [[ "$GIT_AI_SUBJECT_NOTE" == "subject is 79 chars"* ]]
+}
