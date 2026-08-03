@@ -132,3 +132,19 @@ def test_unclosed_bracket_suppresses_later_breaks() -> None:
     result = enforce_subject_limit(subject)
     assert result.message == subject
     assert result.over_limit
+
+
+def test_double_backtick_span_holds_its_separator() -> None:
+    subject = (
+        "fix: keep output from ``configuration and parser`` intact while validating"
+    )
+    result = enforce_subject_limit(subject)
+    assert result.message == subject
+    assert result.over_limit
+
+
+def test_break_after_a_closed_double_backtick_span_still_wins() -> None:
+    result = enforce_subject_limit(
+        "fix: keep ``configuration and parser`` output and tidy the subject scanner"
+    )
+    assert result.message == "fix: keep ``configuration and parser`` output"

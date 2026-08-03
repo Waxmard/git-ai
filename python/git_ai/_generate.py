@@ -303,24 +303,35 @@ class SubjectTrim(NamedTuple):
 def _clause_break_positions(subject: str, start: int) -> Iterator[int]:
     """Yield indices in ``subject`` at or after ``start`` that may hold a break.
 
-    Skips anything nested in brackets or a backtick span: a separator inside a
-    code reference (``parse(foo, bar)``) is punctuation, not a clause boundary,
-    and cutting there leaves a mangled half-identifier. An unclosed bracket or
-    backtick suppresses every later position, which degrades to the untouched
-    ``over_limit`` path rather than a bad trim.
+    Skips anything nested in brackets or a code span: a separator inside a code
+    reference (``parse(foo, bar)``) is punctuation, not a clause boundary, and
+    cutting there leaves a mangled half-identifier. Code spans follow CommonMark
+    — a run of backticks closes only on a run of the same length — so a span
+    opened with two backticks can hold a literal backtick without ending early.
+    An unclosed bracket or span suppresses every later position, which degrades
+    to the untouched ``over_limit`` path rather than a bad trim.
     """
     depth = 0
-    in_code = False
-    for i, ch in enumerate(subject):
+    code_run = 0
+    i = 0
+    while i < len(subject):
+        ch = subject[i]
         if ch == "`":
-            in_code = not in_code
-        elif not in_code:
+            run = len(subject[i:]) - len(subject[i:].lstrip("`"))
+            if code_run == 0:
+                code_run = run
+            elif run == code_run:
+                code_run = 0
+            i += run
+            continue
+        if code_run == 0:
             if ch in "([{":
                 depth += 1
             elif ch in ")]}":
                 depth = max(0, depth - 1)
-        if i >= start and depth == 0 and not in_code:
-            yield i
+            if i >= start and depth == 0:
+                yield i
+        i += 1
 
 
 def enforce_subject_limit(message: str, limit: int = SUBJECT_LIMIT) -> SubjectTrim:

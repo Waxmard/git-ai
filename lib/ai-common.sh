@@ -277,26 +277,39 @@ enforce_subject_limit() {
     start=${#BASH_REMATCH[0]}
   fi
   local -a seps=(" and " " plus " ", " "; ")
-  local best="" head sep i ch depth=0 in_code=0
-  for ((i = 0; i < len; i++)); do
-    # A separator nested in brackets or a backtick span is punctuation inside a
-    # code reference, not a clause boundary; cutting there mangles the token.
+  local best="" head sep i=0 ch run depth=0 code_run=0
+  while ((i < len)); do
+    # A separator nested in brackets or a code span is punctuation inside a code
+    # reference, not a clause boundary; cutting there mangles the token. Spans
+    # close on a backtick run of the same length (CommonMark), so a ``span`` can
+    # hold a literal backtick without ending early.
     ch="${subject:i:1}"
     if [[ "$ch" == '`' ]]; then
-      in_code=$((1 - in_code))
-    elif ((in_code == 0)); then
+      run=1
+      while ((i + run < len)) && [[ "${subject:i+run:1}" == '`' ]]; do run=$((run + 1)); done
+      if ((code_run == 0)); then
+        code_run=$run
+      elif ((run == code_run)); then
+        code_run=0
+      fi
+      i=$((i + run))
+      continue
+    fi
+    if ((code_run == 0)); then
       case "$ch" in
         '(' | '[' | '{') depth=$((depth + 1)) ;;
         ')' | ']' | '}') ((depth > 0)) && depth=$((depth - 1)) ;;
       esac
+      if ((i >= start && depth == 0)); then
+        for sep in "${seps[@]}"; do
+          [[ "${subject:i:${#sep}}" == "$sep" ]] || continue
+          head="${subject:0:i}"
+          while [[ "$head" == *[,\;\ ] ]]; do head="${head%?}"; done
+          ((${#head} >= GIT_AI_SUBJECT_MIN && ${#head} <= GIT_AI_SUBJECT_LIMIT && ${#head} > ${#best})) && best="$head"
+        done
+      fi
     fi
-    ((i >= start && depth == 0 && in_code == 0)) || continue
-    for sep in "${seps[@]}"; do
-      [[ "${subject:i:${#sep}}" == "$sep" ]] || continue
-      head="${subject:0:i}"
-      while [[ "$head" == *[,\;\ ] ]]; do head="${head%?}"; done
-      ((${#head} >= GIT_AI_SUBJECT_MIN && ${#head} <= GIT_AI_SUBJECT_LIMIT && ${#head} > ${#best})) && best="$head"
-    done
+    i=$((i + 1))
   done
 
   if [[ -z "$best" ]]; then

@@ -89,3 +89,15 @@ setup() {
   assert_equal "$GIT_AI_SUBJECT_MESSAGE" "$subject"
   [[ "$GIT_AI_SUBJECT_NOTE" == "subject is 79 chars"* ]]
 }
+
+@test "enforce_subject_limit: a double-backtick span holds its separator" {
+  local subject='fix: keep output from ``configuration and parser`` intact while validating'
+  enforce_subject_limit "$subject"
+  assert_equal "$GIT_AI_SUBJECT_MESSAGE" "$subject"
+  [[ "$GIT_AI_SUBJECT_NOTE" == "subject is 74 chars"* ]]
+}
+
+@test "enforce_subject_limit: a break after a closed double-backtick span still wins" {
+  enforce_subject_limit 'fix: keep ``configuration and parser`` output and tidy the subject scanner'
+  assert_equal "$GIT_AI_SUBJECT_MESSAGE" 'fix: keep ``configuration and parser`` output'
+}
