@@ -74,6 +74,45 @@ def test_fenced_block_untouched() -> None:
     assert result == f"feat: x\n\n{block}"
 
 
+def test_multi_stanza_fenced_block_untouched() -> None:
+    block = (
+        "```bash\n"
+        "echo one\n"
+        "\n"
+        "echo an interior stanza that carries no fence marker of its very own\n"
+        "echo three\n"
+        "\n"
+        "echo done\n"
+        "```"
+    )
+    result = wrap_commit_body(f"feat: x\n\n{block}")
+    assert result == f"feat: x\n\n{block}"
+
+
+def test_nested_fenced_block_untouched() -> None:
+    block = (
+        "````markdown\n"
+        "```text\n"
+        "first\n"
+        "\n"
+        "line one of the interior stanza\n"
+        "line two of the interior stanza\n"
+        "\n"
+        "third\n"
+        "```\n"
+        "````"
+    )
+    result = wrap_commit_body(f"feat: x\n\n{block}")
+    assert result == f"feat: x\n\n{block}"
+
+
+def test_prose_after_fenced_block_still_wraps() -> None:
+    message = f"feat: x\n\n```\ncode a\n\ncode b\n```\n\n{LONG}"
+    result = wrap_commit_body(message)
+    assert "```\ncode a\n\ncode b\n```" in result
+    assert max(len(ln) for ln in _body_lines(result)) <= BODY_WRAP_WIDTH
+
+
 def test_trailing_trailer_block_untouched() -> None:
     trailer = (
         "Reviewed-by: A Person <averylongaddress@example.com>, B Person <b@example.com>"

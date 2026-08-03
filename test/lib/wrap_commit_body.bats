@@ -94,6 +94,35 @@ max_body_width() {
   assert_output "$expected"
 }
 
+@test "wrap_commit_body: multi-stanza fenced block untouched" {
+  printf '%s\n\n%s\n%s\n\n%s\n%s\n\n%s\n%s\n' 'feat: x' '```bash' 'echo one' \
+    'echo an interior stanza that carries no fence marker of its very own' 'echo three' \
+    'echo done' '```' > "$TEST_TMP/in.txt"
+  expected=$(cat "$TEST_TMP/in.txt")
+  run wrap_commit_body < "$TEST_TMP/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "wrap_commit_body: nested fenced block untouched" {
+  printf '%s\n\n%s\n%s\n%s\n\n%s\n%s\n\n%s\n%s\n%s\n' 'feat: x' '````markdown' '```text' 'first' \
+    'line one of the interior stanza' 'line two of the interior stanza' \
+    'third' '```' '````' > "$TEST_TMP/in.txt"
+  expected=$(cat "$TEST_TMP/in.txt")
+  run wrap_commit_body < "$TEST_TMP/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "wrap_commit_body: prose after a fenced block still wraps" {
+  printf '%s\n\n%s\n%s\n\n%s\n%s\n\n%s\n' 'feat: x' '```' 'code a' 'code b' '```' "$LONG" > "$TEST_TMP/in.txt"
+  run wrap_commit_body < "$TEST_TMP/in.txt"
+  assert_success
+  assert_line 'code b'
+  width=$(printf '%s\n' "$output" | max_body_width)
+  assert [ "$width" -le 72 ]
+}
+
 @test "wrap_commit_body: trailing trailer block untouched" {
   trailer='Reviewed-by: A Person <averylongaddress@example.com>, B Person <b@example.com>'
   printf '%s\n\n%s\n\n%s\n' 'feat: x' "$LONG" "$trailer" > "$TEST_TMP/in.txt"

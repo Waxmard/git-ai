@@ -35,6 +35,13 @@ teardown() {
   assert_output "ls"
 }
 
+@test "strip_fences: removes fence with no trailing newline" {
+  printf '%s\n%s\n%s' '```' 'hello' '```' > "$TEST_TMP/input.txt"
+  run strip_fences < "${TEST_TMP}/input.txt"
+  assert_success
+  assert_output "hello"
+}
+
 @test "strip_fences: passes through plain text unchanged" {
   printf '%s\n' 'plain text' > "$TEST_TMP/input.txt"
   run strip_fences < "${TEST_TMP}/input.txt"

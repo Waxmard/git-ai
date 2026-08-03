@@ -333,6 +333,29 @@ BODY_WRAP_WIDTH = 72
 _PARAGRAPH_BREAK_RE = re.compile(r"(\n[ \t]*\n)")
 _LIST_ITEM_RE = re.compile(r"(?:[-*+]|\d+[.)]) ")
 _TRAILER_LINE_RE = re.compile(r"[A-Za-z][A-Za-z0-9-]*:(?: \S.*)?")
+_FENCE_DELIM_RE = re.compile(r"[ \t]*(`{3,})(.*)")
+
+
+def _fence_state(lines: list[str], open_len: int) -> int:
+    """Track fence nesting across ``lines``, returning the open delimiter length.
+
+    Zero means "not inside a fence". Follows CommonMark: a fence closes only on
+    a backtick-only run at least as long as the one that opened it, so a
+    four-backtick block can hold a three-backtick example without either the
+    inner opener or its closer ending the outer block, and an opener's info
+    string may not contain a backtick.
+    """
+    for ln in lines:
+        m = _FENCE_DELIM_RE.fullmatch(ln)
+        if not m:
+            continue
+        run, rest = len(m.group(1)), m.group(2)
+        if open_len:
+            if run >= open_len and not rest.strip():
+                open_len = 0
+        elif "`" not in rest:
+            open_len = run
+    return open_len
 
 
 def _reflowable(lines: list[str], is_last: bool) -> bool:
@@ -366,12 +389,17 @@ def wrap_commit_body(message: str, width: int = BODY_WRAP_WIDTH) -> str:
     content = [i for i, b in enumerate(blocks) if i % 2 == 0 and b.strip()]
     last = content[-1] if content else -1
     out = []
+    fence = 0
     for i, block in enumerate(blocks):
         if i % 2 or not block.strip():
             out.append(block)
             continue
         lines = block.split("\n")
-        if not _reflowable(lines, i == last):
+        # A fenced block can span blank lines, which puts an interior stanza in
+        # its own paragraph with no fence marker of its own to spot it by.
+        reflow = not fence and _reflowable(lines, i == last)
+        fence = _fence_state(lines, fence)
+        if not reflow:
             out.append(block)
             continue
         out.append(

@@ -147,11 +147,13 @@ check_diff_size_or_die() {
 strip_fences() {
   perl -0777 -pe '
     s/\A\s+//;
-    s/\s+\z/\n/;
+    # \s* not \s+: a provider that emits no trailing newline still has to reach
+    # the closing-fence match below, which anchors on one.
+    s/\s*\z/\n/ if /\S/;
     s/\A[ \t]*`{3,}[^`\n]*\n(.*)\n[ \t]*`{3,}[ \t]*\n\z/$1\n/s;
     s/\A\s+//;
     s/\A[ \t]*(`+)([^`\n]+)\1[ \t]*$/$2/m;
-    s/\s+\z/\n/;
+    s/\s*\z/\n/ if /\S/;
   '
 }
 
@@ -298,10 +300,23 @@ wrap_commit_body() {
     my $last = -1;
     for my $i (0 .. $#blocks) { $last = $i if $i % 2 == 0 && $blocks[$i] =~ /\S/; }
     my $out = "";
+    my $in_fence = 0;
     for my $i (0 .. $#blocks) {
       my $block = $blocks[$i];
       if ($i % 2 || $block !~ /\S/) { $out .= $block; next; }
       my @lines = split /\n/, $block, -1;
+      my $was_in_fence = $in_fence;
+      # A fenced block can span blank lines, which puts an interior stanza in its
+      # own paragraph with no fence marker of its own to spot it by. $in_fence
+      # holds the open delimiter length: per CommonMark a fence closes only on a
+      # backtick-only run at least that long, so a four-backtick block can hold a
+      # three-backtick example, and an opener info string may hold no backtick.
+      for my $ln (@lines) {
+        next unless $ln =~ /\A[ \t]*(`{3,})(.*)\z/;
+        my ($run, $rest) = (length($1), $2);
+        if ($in_fence) { $in_fence = 0 if $run >= $in_fence && $rest !~ /\S/; }
+        elsif (index($rest, "`") < 0) { $in_fence = $run; }
+      }
       # Only the final paragraph gets the trailer exemption: git reads trailers
       # from the last block, and mid-body prose routinely opens "Verified: ...".
       my $trailer = ($i == $last);
@@ -310,7 +325,7 @@ wrap_commit_body() {
       for my $ln (@lines) {
         $plain = 0 if $ln !~ /\A\S/ || $ln =~ /\A(?:[-*+]|\d+[.)]) / || index($ln, "```") >= 0;
       }
-      if ($trailer || !$plain) { $out .= $block; next; }
+      if ($was_in_fence || $trailer || !$plain) { $out .= $block; next; }
       my @words = grep { length } split /\s+/, join(" ", @lines);
       my ($cur, @wrapped) = ("");
       for my $word (@words) {
