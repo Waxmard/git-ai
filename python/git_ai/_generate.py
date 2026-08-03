@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import textwrap
 from pathlib import Path
 from typing import NamedTuple
 
@@ -326,6 +327,62 @@ def enforce_subject_limit(message: str, limit: int = SUBJECT_LIMIT) -> SubjectTr
         return SubjectTrim(message, "", length, True)
     dropped = subject[len(best) :].strip(" ,;")
     return SubjectTrim(best + newline + rest, dropped, length, False)
+
+
+BODY_WRAP_WIDTH = 72
+_PARAGRAPH_BREAK_RE = re.compile(r"(\n[ \t]*\n)")
+_LIST_ITEM_RE = re.compile(r"(?:[-*+]|\d+[.)]) ")
+_TRAILER_LINE_RE = re.compile(r"[A-Za-z][A-Za-z0-9-]*:(?: \S.*)?")
+
+
+def _reflowable(lines: list[str], is_last: bool) -> bool:
+    # Only the final paragraph gets the trailer exemption: git reads trailers
+    # from the last block, and mid-body prose routinely opens "Verified: ...",
+    # which is ordinary text that should still wrap.
+    if is_last and all(_TRAILER_LINE_RE.fullmatch(ln) for ln in lines):
+        return False
+    return all(
+        ln[:1].strip() and not _LIST_ITEM_RE.match(ln) and "```" not in ln
+        for ln in lines
+    )
+
+
+def wrap_commit_body(message: str, width: int = BODY_WRAP_WIDTH) -> str:
+    """Hard-wrap the prose paragraphs of a commit body at ``width`` columns.
+
+    git renders commit bodies verbatim, so an unwrapped paragraph is a single
+    long line in ``git log``; models wrap inconsistently, so it is done here.
+    Reflow is confined to plain prose — indented lines, list items, fenced
+    blocks, and a trailing trailer block keep their line structure, which is
+    load-bearing. The subject is never touched (see ``enforce_subject_limit``).
+    """
+    subject, newline, body = message.partition("\n")
+    if not newline:
+        return message
+    core = body.lstrip("\n")
+    lead = len(body) - len(core)
+    tail = len(core) - len(core.rstrip("\n"))
+    blocks = _PARAGRAPH_BREAK_RE.split(core[: len(core) - tail])
+    content = [i for i, b in enumerate(blocks) if i % 2 == 0 and b.strip()]
+    last = content[-1] if content else -1
+    out = []
+    for i, block in enumerate(blocks):
+        if i % 2 or not block.strip():
+            out.append(block)
+            continue
+        lines = block.split("\n")
+        if not _reflowable(lines, i == last):
+            out.append(block)
+            continue
+        out.append(
+            textwrap.fill(
+                " ".join(lines),
+                width=width,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+        )
+    return subject + newline + "\n" * lead + "".join(out) + "\n" * tail
 
 
 def parse_commit_response(raw: str) -> str:

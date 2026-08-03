@@ -274,7 +274,7 @@ cmd_commit() {
 ${STAGED_DIFF}
 </diff>"
 
-  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL" | extract_commit_output) || exit $?
+  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL" | extract_commit_output | wrap_commit_body) || exit $?
   [[ -n "$(_trim "$generated")" ]] ||
     die "${PROVIDER} returned an empty commit message; retry or try another provider"
   enforce_subject_limit "$generated"

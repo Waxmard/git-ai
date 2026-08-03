@@ -1,6 +1,7 @@
 """Provider-agnostic prompt/styling toolkit for LLM-powered git workflows."""
 
 from ._generate import (
+    BODY_WRAP_WIDTH,
     SUBJECT_LIMIT,
     SubjectTrim,
     build_commit_prompt,
@@ -9,6 +10,7 @@ from ._generate import (
     parse_commit_response,
     parse_mr_response,
     strip_fences,
+    wrap_commit_body,
 )
 from ._git import (
     check_git_repo,
@@ -45,6 +47,7 @@ from ._pr_incremental import (
 from ._pr_render import render_pr_diff, summarize_pr_changes
 
 __all__ = [
+    "BODY_WRAP_WIDTH",
     "SUBJECT_LIMIT",
     "RepoPrContext",
     "SubjectTrim",
@@ -82,4 +85,5 @@ __all__ = [
     "save_cached_pr",
     "strip_fences",
     "summarize_pr_changes",
+    "wrap_commit_body",
 ]

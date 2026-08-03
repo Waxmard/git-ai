@@ -45,11 +45,17 @@ def test_pr_prompts_forbid_type_headings() -> None:
         )
 
 
-def test_pr_prompts_forbid_unverifiable_claims() -> None:
-    for name in PROMPT_FILES[1:]:
+def test_all_prompts_forbid_unverifiable_claims() -> None:
+    for name in PROMPT_FILES:
         text = _load_prompt(name)
         assert "never include line numbers" in text, f"{name} allows line numbers"
         assert "you have executed nothing" in text, f"{name} missing no-execution guard"
+
+
+def test_commit_prompt_requires_prose_body() -> None:
+    text = _load_prompt("commit.txt")
+    assert "no bullets" in text
+    assert "no markdown headings" in text
 
 
 def test_update_prompts_mention_existing_pr() -> None:

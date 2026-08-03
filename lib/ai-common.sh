@@ -277,6 +277,54 @@ enforce_subject_limit() {
   GIT_AI_SUBJECT_NOTE="trimmed: dropped \"${dropped}\" (was ${len} chars, limit ${GIT_AI_SUBJECT_LIMIT})"
 }
 
+export GIT_AI_BODY_WRAP=72
+
+# Hard-wrap the prose paragraphs of a commit message read from stdin. git renders
+# bodies verbatim, so an unwrapped paragraph is one long line in git log; models
+# wrap inconsistently, so it is done here. Indented lines, list items, fenced
+# blocks, and a trailing trailer block keep their line structure. The subject is
+# never touched. Mirrors python/git_ai/_generate.py:wrap_commit_body.
+wrap_commit_body() {
+  # -CSD decodes stdin as UTF-8 so length() counts characters, matching Python's
+  # str: byte-counting wraps two columns early on any line holding an em-dash.
+  perl -CSD -0777 -ne '
+    no warnings "utf8";
+    my $w = $ENV{GIT_AI_BODY_WRAP} || 72;
+    unless (/\A([^\n]*\n)(.*)\z/s) { print; next; }
+    my ($subject, $body) = ($1, $2);
+    $body =~ s/\A(\n*)//; my $lead = $1;
+    $body =~ s/(\n*)\z//; my $tail = $1;
+    my @blocks = split /(\n[ \t]*\n)/, $body, -1;
+    my $last = -1;
+    for my $i (0 .. $#blocks) { $last = $i if $i % 2 == 0 && $blocks[$i] =~ /\S/; }
+    my $out = "";
+    for my $i (0 .. $#blocks) {
+      my $block = $blocks[$i];
+      if ($i % 2 || $block !~ /\S/) { $out .= $block; next; }
+      my @lines = split /\n/, $block, -1;
+      # Only the final paragraph gets the trailer exemption: git reads trailers
+      # from the last block, and mid-body prose routinely opens "Verified: ...".
+      my $trailer = ($i == $last);
+      for my $ln (@lines) { $trailer = 0 unless $ln =~ /\A[A-Za-z][A-Za-z0-9-]*:(?: \S.*)?\z/; }
+      my $plain = 1;
+      for my $ln (@lines) {
+        $plain = 0 if $ln !~ /\A\S/ || $ln =~ /\A(?:[-*+]|\d+[.)]) / || index($ln, "```") >= 0;
+      }
+      if ($trailer || !$plain) { $out .= $block; next; }
+      my @words = grep { length } split /\s+/, join(" ", @lines);
+      my ($cur, @wrapped) = ("");
+      for my $word (@words) {
+        if (!length $cur) { $cur = $word }
+        elsif (length($cur) + 1 + length($word) <= $w) { $cur .= " $word" }
+        else { push @wrapped, $cur; $cur = $word }
+      }
+      push @wrapped, $cur if length $cur;
+      $out .= join("\n", @wrapped);
+    }
+    print $subject . $lead . $out . $tail;
+  '
+}
+
 # Print $1 with leading/trailing whitespace stripped.
 _trim() {
   local s="$1"
