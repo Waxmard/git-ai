@@ -106,6 +106,38 @@ def test_nested_fenced_block_untouched() -> None:
     assert result == f"feat: x\n\n{block}"
 
 
+def test_tilde_fenced_block_untouched() -> None:
+    block = (
+        "~~~text\n"
+        "first line of the tilde block\n"
+        "\n"
+        "line one of the interior stanza\n"
+        "line two of the interior stanza\n"
+        "\n"
+        "third\n"
+        "~~~"
+    )
+    result = wrap_commit_body(f"feat: x\n\n{block}")
+    assert result == f"feat: x\n\n{block}"
+
+
+def test_backtick_fence_nested_in_tilde_fence_untouched() -> None:
+    block = (
+        "~~~markdown\n"
+        "```text\n"
+        "first\n"
+        "\n"
+        "line one of the interior stanza\n"
+        "line two of the interior stanza\n"
+        "\n"
+        "third\n"
+        "```\n"
+        "~~~"
+    )
+    result = wrap_commit_body(f"feat: x\n\n{block}")
+    assert result == f"feat: x\n\n{block}"
+
+
 def test_prose_after_fenced_block_still_wraps() -> None:
     message = f"feat: x\n\n```\ncode a\n\ncode b\n```\n\n{LONG}"
     result = wrap_commit_body(message)

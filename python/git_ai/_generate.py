@@ -333,29 +333,33 @@ BODY_WRAP_WIDTH = 72
 _PARAGRAPH_BREAK_RE = re.compile(r"(\n[ \t]*\n)")
 _LIST_ITEM_RE = re.compile(r"(?:[-*+]|\d+[.)]) ")
 _TRAILER_LINE_RE = re.compile(r"[A-Za-z][A-Za-z0-9-]*:(?: \S.*)?")
-_FENCE_DELIM_RE = re.compile(r"[ \t]*(`{3,})(.*)")
+_FENCE_DELIM_RE = re.compile(r"[ \t]*((`|~)\2{2,})(.*)")
+_FENCE_ANY_RE = re.compile(r"`{3,}|~{3,}")
 
 
-def _fence_state(lines: list[str], open_len: int) -> int:
-    """Track fence nesting across ``lines``, returning the open delimiter length.
+def _fence_state(
+    lines: list[str], fence: tuple[str, int] | None
+) -> tuple[str, int] | None:
+    """Track fence nesting across ``lines``, returning the open delimiter.
 
-    Zero means "not inside a fence". Follows CommonMark: a fence closes only on
-    a backtick-only run at least as long as the one that opened it, so a
-    four-backtick block can hold a three-backtick example without either the
-    inner opener or its closer ending the outer block, and an opener's info
-    string may not contain a backtick.
+    ``None`` means "not inside a fence"; otherwise (character, run length).
+    Follows CommonMark: a fence closes only on a run of the *same* character at
+    least as long as the one that opened it, so a four-backtick block can hold a
+    three-backtick example without either the inner opener or its closer ending
+    the outer block. Only a backtick opener's info string is restricted (it may
+    not contain a backtick); a tilde opener's is free-form.
     """
     for ln in lines:
         m = _FENCE_DELIM_RE.fullmatch(ln)
         if not m:
             continue
-        run, rest = len(m.group(1)), m.group(2)
-        if open_len:
-            if run >= open_len and not rest.strip():
-                open_len = 0
-        elif "`" not in rest:
-            open_len = run
-    return open_len
+        run, char, rest = m.group(1), m.group(2), m.group(3)
+        if fence:
+            if char == fence[0] and len(run) >= fence[1] and not rest.strip():
+                fence = None
+        elif char == "~" or "`" not in rest:
+            fence = (char, len(run))
+    return fence
 
 
 def _reflowable(lines: list[str], is_last: bool) -> bool:
@@ -365,7 +369,7 @@ def _reflowable(lines: list[str], is_last: bool) -> bool:
     if is_last and all(_TRAILER_LINE_RE.fullmatch(ln) for ln in lines):
         return False
     return all(
-        ln[:1].strip() and not _LIST_ITEM_RE.match(ln) and "```" not in ln
+        ln[:1].strip() and not _LIST_ITEM_RE.match(ln) and not _FENCE_ANY_RE.search(ln)
         for ln in lines
     )
 
@@ -389,7 +393,7 @@ def wrap_commit_body(message: str, width: int = BODY_WRAP_WIDTH) -> str:
     content = [i for i, b in enumerate(blocks) if i % 2 == 0 and b.strip()]
     last = content[-1] if content else -1
     out = []
-    fence = 0
+    fence: tuple[str, int] | None = None
     for i, block in enumerate(blocks):
         if i % 2 or not block.strip():
             out.append(block)

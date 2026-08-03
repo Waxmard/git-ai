@@ -300,22 +300,23 @@ wrap_commit_body() {
     my $last = -1;
     for my $i (0 .. $#blocks) { $last = $i if $i % 2 == 0 && $blocks[$i] =~ /\S/; }
     my $out = "";
-    my $in_fence = 0;
+    my ($fchar, $flen) = ("", 0);
     for my $i (0 .. $#blocks) {
       my $block = $blocks[$i];
       if ($i % 2 || $block !~ /\S/) { $out .= $block; next; }
       my @lines = split /\n/, $block, -1;
-      my $was_in_fence = $in_fence;
+      my $was_fenced = $flen;
       # A fenced block can span blank lines, which puts an interior stanza in its
-      # own paragraph with no fence marker of its own to spot it by. $in_fence
-      # holds the open delimiter length: per CommonMark a fence closes only on a
-      # backtick-only run at least that long, so a four-backtick block can hold a
-      # three-backtick example, and an opener info string may hold no backtick.
+      # own paragraph with no fence marker of its own to spot it by. $fchar/$flen
+      # hold the open delimiter: per CommonMark a fence closes only on a run of
+      # the same character at least that long, so a four-backtick block can hold
+      # a three-backtick example. Only a backtick opener bars a backtick in its
+      # info string; a tilde opener info string is free-form.
       for my $ln (@lines) {
-        next unless $ln =~ /\A[ \t]*(`{3,})(.*)\z/;
-        my ($run, $rest) = (length($1), $2);
-        if ($in_fence) { $in_fence = 0 if $run >= $in_fence && $rest !~ /\S/; }
-        elsif (index($rest, "`") < 0) { $in_fence = $run; }
+        next unless $ln =~ /\A[ \t]*((`|~)\2{2,})(.*)\z/;
+        my ($run, $ch, $rest) = (length($1), $2, $3);
+        if ($flen) { ($fchar, $flen) = ("", 0) if $ch eq $fchar && $run >= $flen && $rest !~ /\S/; }
+        elsif ($ch eq "~" || index($rest, "`") < 0) { ($fchar, $flen) = ($ch, $run); }
       }
       # Only the final paragraph gets the trailer exemption: git reads trailers
       # from the last block, and mid-body prose routinely opens "Verified: ...".
@@ -323,9 +324,9 @@ wrap_commit_body() {
       for my $ln (@lines) { $trailer = 0 unless $ln =~ /\A[A-Za-z][A-Za-z0-9-]*:(?: \S.*)?\z/; }
       my $plain = 1;
       for my $ln (@lines) {
-        $plain = 0 if $ln !~ /\A\S/ || $ln =~ /\A(?:[-*+]|\d+[.)]) / || index($ln, "```") >= 0;
+        $plain = 0 if $ln !~ /\A\S/ || $ln =~ /\A(?:[-*+]|\d+[.)]) / || $ln =~ /`{3,}|~{3,}/;
       }
-      if ($was_in_fence || $trailer || !$plain) { $out .= $block; next; }
+      if ($was_fenced || $trailer || !$plain) { $out .= $block; next; }
       my @words = grep { length } split /\s+/, join(" ", @lines);
       my ($cur, @wrapped) = ("");
       for my $word (@words) {

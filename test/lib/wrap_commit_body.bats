@@ -114,6 +114,26 @@ max_body_width() {
   assert_output "$expected"
 }
 
+@test "wrap_commit_body: tilde fenced block untouched" {
+  printf '%s\n\n%s\n%s\n\n%s\n%s\n\n%s\n%s\n' 'feat: x' '~~~text' 'first line of the tilde block' \
+    'line one of the interior stanza' 'line two of the interior stanza' \
+    'third' '~~~' > "$TEST_TMP/in.txt"
+  expected=$(cat "$TEST_TMP/in.txt")
+  run wrap_commit_body < "$TEST_TMP/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
+@test "wrap_commit_body: backtick fence nested in a tilde fence untouched" {
+  printf '%s\n\n%s\n%s\n%s\n\n%s\n%s\n\n%s\n%s\n%s\n' 'feat: x' '~~~markdown' '```text' 'first' \
+    'line one of the interior stanza' 'line two of the interior stanza' \
+    'third' '```' '~~~' > "$TEST_TMP/in.txt"
+  expected=$(cat "$TEST_TMP/in.txt")
+  run wrap_commit_body < "$TEST_TMP/in.txt"
+  assert_success
+  assert_output "$expected"
+}
+
 @test "wrap_commit_body: prose after a fenced block still wraps" {
   printf '%s\n\n%s\n%s\n\n%s\n%s\n\n%s\n' 'feat: x' '```' 'code a' 'code b' '```' "$LONG" > "$TEST_TMP/in.txt"
   run wrap_commit_body < "$TEST_TMP/in.txt"
