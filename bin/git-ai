@@ -452,19 +452,6 @@ PY
 )
   rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
 
-  # "verbatim": the branch is a single Conventional-Commits commit, so its
-  # message already IS the best PR summary — use it directly and skip the LLM.
-  if [[ "$PROMPT_NAME" == "verbatim" ]]; then
-    echo "git-ai: single conventional commit — using it verbatim (no LLM call)" >&2
-    save_last_message pr "$INPUT"
-    if [[ -n "$CURRENT_BRANCH" ]]; then
-      save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$INPUT" "$HEAD_SHA" "${CONTENT_ID:-}" ||
-        die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
-    fi
-    render_pr_output "${EXISTING_PR:-}" "$INPUT"
-    return 0
-  fi
-
   case "$PROMPT_NAME" in
     pr-two-pass.txt) PROMPT="$PROMPT_TWO_PASS" ;;
     pr-fallback.txt) PROMPT="$PROMPT_FALLBACK" ;;
