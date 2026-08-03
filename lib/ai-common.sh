@@ -231,6 +231,52 @@ extract_commit_output() {
   ' | drop_trailing_noise
 }
 
+GIT_AI_SUBJECT_LIMIT=70
+GIT_AI_SUBJECT_MIN=24
+
+# Shorten an over-long commit subject at a clause boundary, setting
+# GIT_AI_SUBJECT_MESSAGE to the result and GIT_AI_SUBJECT_NOTE to a one-line
+# note for the caller to surface (empty when the subject already fits). Globals
+# rather than stdout because a command substitution would swallow the note.
+# Mirrors python/git_ai/_generate.py:enforce_subject_limit.
+# shellcheck disable=SC2034  # both globals are read by bin/git-ai:cmd_commit
+enforce_subject_limit() {
+  local msg="$1"
+  GIT_AI_SUBJECT_MESSAGE="$msg"
+  GIT_AI_SUBJECT_NOTE=""
+  local subject="${msg%%$'\n'*}" rest=""
+  [[ "$msg" == *$'\n'* ]] && rest=$'\n'"${msg#*$'\n'}"
+  local len=${#subject}
+  ((len <= GIT_AI_SUBJECT_LIMIT)) && return 0
+
+  # Skip separators inside the Conventional Commits prefix so a multi-word
+  # scope can't be cut in half.
+  local start=0
+  if [[ "$subject" =~ ^(feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)(\([^\)]*\))?!?:\  ]]; then
+    start=${#BASH_REMATCH[0]}
+  fi
+  local -a seps=(" and " " plus " ", " "; ")
+  local best="" head sep i
+  for ((i = start; i < len; i++)); do
+    for sep in "${seps[@]}"; do
+      [[ "${subject:i:${#sep}}" == "$sep" ]] || continue
+      head="${subject:0:i}"
+      while [[ "$head" == *[,\;\ ] ]]; do head="${head%?}"; done
+      ((${#head} >= GIT_AI_SUBJECT_MIN && ${#head} <= GIT_AI_SUBJECT_LIMIT && ${#head} > ${#best})) && best="$head"
+    done
+  done
+
+  if [[ -z "$best" ]]; then
+    GIT_AI_SUBJECT_NOTE="subject is ${len} chars (limit ${GIT_AI_SUBJECT_LIMIT}) - no clean clause break; shorten this line"
+    return 0
+  fi
+  local dropped="${subject:${#best}}"
+  while [[ "$dropped" == [,\;\ ]* ]]; do dropped="${dropped#?}"; done
+  while [[ "$dropped" == *[,\;\ ] ]]; do dropped="${dropped%?}"; done
+  GIT_AI_SUBJECT_MESSAGE="${best}${rest}"
+  GIT_AI_SUBJECT_NOTE="trimmed: dropped \"${dropped}\" (was ${len} chars, limit ${GIT_AI_SUBJECT_LIMIT})"
+}
+
 # Print $1 with leading/trailing whitespace stripped.
 _trim() {
   local s="$1"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 from ._git import (
     DEFAULT_RELEASE_CONTEXT,
@@ -252,10 +253,9 @@ def _extract_pr_sections(text: str) -> str:
 
 
 _COMMIT_MARKER = "===COMMIT==="
-_COMMIT_SUBJECT_RE = re.compile(
-    r"^(?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)"
-    r"(?:\([^)]*\))?!?: \S"
-)
+_COMMIT_TYPES = "feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert"
+_COMMIT_PREFIX_RE = re.compile(rf"^(?:{_COMMIT_TYPES})(?:\([^)]*\))?!?: ")
+_COMMIT_SUBJECT_RE = re.compile(rf"^(?:{_COMMIT_TYPES})(?:\([^)]*\))?!?: \S")
 
 
 def _extract_commit_message(text: str) -> str:
@@ -277,6 +277,55 @@ def _extract_commit_message(text: str) -> str:
         if _COMMIT_SUBJECT_RE.match(line.strip()):
             return _drop_trailing_noise("\n".join(lines[i:])).strip()
     return text
+
+
+SUBJECT_LIMIT = 70
+_MIN_TRIMMED_SUBJECT = 24
+_CLAUSE_SEPARATORS = (" and ", " plus ", ", ", "; ")
+
+
+class SubjectTrim(NamedTuple):
+    """Result of ``enforce_subject_limit``.
+
+    ``dropped`` is the clause removed from the subject, empty when nothing was
+    trimmed; ``over_limit`` says whether the subject still exceeds the limit,
+    which is how a caller knows to warn.
+    """
+
+    message: str
+    dropped: str
+    subject_length: int
+    over_limit: bool
+
+
+def enforce_subject_limit(message: str, limit: int = SUBJECT_LIMIT) -> SubjectTrim:
+    """Shorten an over-long commit subject at a clause boundary.
+
+    Long subjects are near-always two clauses joined by ``and`` / ``,`` / ``;``,
+    so cutting at the last such break under ``limit`` leaves a whole,
+    grammatical subject and the dropped detail is already covered by the body.
+    A subject with no usable break is returned untouched with ``over_limit``
+    set — a mid-word truncation reads worse than an over-long subject, so the
+    caller warns instead. Separators inside the Conventional Commits prefix are
+    skipped so a multi-word scope can't be cut in half.
+    """
+    subject, newline, rest = message.partition("\n")
+    length = len(subject)
+    if length <= limit:
+        return SubjectTrim(message, "", length, False)
+
+    prefix = _COMMIT_PREFIX_RE.match(subject)
+    best = ""
+    for i in range(prefix.end() if prefix else 0, length):
+        if not any(subject.startswith(sep, i) for sep in _CLAUSE_SEPARATORS):
+            continue
+        head = subject[:i].rstrip(" ,;")
+        if _MIN_TRIMMED_SUBJECT <= len(head) <= limit and len(head) > len(best):
+            best = head
+    if not best:
+        return SubjectTrim(message, "", length, True)
+    dropped = subject[len(best) :].strip(" ,;")
+    return SubjectTrim(best + newline + rest, dropped, length, False)
 
 
 def parse_commit_response(raw: str) -> str:

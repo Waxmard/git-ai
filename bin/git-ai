@@ -112,7 +112,7 @@ _file_mtime() {
 # An emptied-and-saved buffer also aborts, matching native git.
 # ---------------------------------------------------------------------------
 _commit_prompt_and_run() {
-  local msg="$1"
+  local msg="$1" note="${2:-}"
   if [[ -t 1 ]]; then
     local tmpfile editor comment_char
     tmpfile=$(mktemp /tmp/git-ai-commit.XXXXXX)
@@ -124,6 +124,7 @@ _commit_prompt_and_run() {
     [[ -z "$comment_char" || "$comment_char" == "auto" ]] && comment_char='#'
     {
       printf '%s\n' "$msg"
+      [[ -n "$note" ]] && printf '\n%s %s\n' "$comment_char" "$note"
       printf '\n%s Save and close (e.g. :wq) to commit this message.\n' "$comment_char"
       printf '%s Quit WITHOUT saving (e.g. :q or :q!) to abort — nothing is committed.\n' "$comment_char"
       printf '%s Lines starting with %s are ignored.\n' "$comment_char" "$comment_char"
@@ -155,6 +156,7 @@ _commit_prompt_and_run() {
     trap - EXIT INT TERM
     return "$commit_status"
   else
+    [[ -n "$note" ]] && printf 'git-ai: %s\n' "$note" >&2
     printf '%s\n' "$msg"
   fi
 }
@@ -275,8 +277,10 @@ ${STAGED_DIFF}
   generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL" | extract_commit_output) || exit $?
   [[ -n "$(_trim "$generated")" ]] ||
     die "${PROVIDER} returned an empty commit message; retry or try another provider"
+  enforce_subject_limit "$generated"
+  generated="$GIT_AI_SUBJECT_MESSAGE"
   save_last_message commit "$generated"
-  _commit_prompt_and_run "$generated"
+  _commit_prompt_and_run "$generated" "$GIT_AI_SUBJECT_NOTE"
 }
 
 cmd_pr() {

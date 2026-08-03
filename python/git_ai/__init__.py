@@ -1,8 +1,11 @@
 """Provider-agnostic prompt/styling toolkit for LLM-powered git workflows."""
 
 from ._generate import (
+    SUBJECT_LIMIT,
+    SubjectTrim,
     build_commit_prompt,
     build_mr_prompt,
+    enforce_subject_limit,
     parse_commit_response,
     parse_mr_response,
     strip_fences,
@@ -42,12 +45,15 @@ from ._pr_incremental import (
 from ._pr_render import render_pr_diff, summarize_pr_changes
 
 __all__ = [
+    "SUBJECT_LIMIT",
     "RepoPrContext",
+    "SubjectTrim",
     "branch_content_id",
     "build_commit_prompt",
     "build_mr_prompt",
     "check_git_repo",
     "derive_diff_stat",
+    "enforce_subject_limit",
     "format_branch_context",
     "format_commit_log",
     "format_repo_guidance",
