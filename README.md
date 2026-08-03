@@ -169,6 +169,20 @@ raw = my_llm(system, user)               # your call: SDK, agent framework, REST
 commit_msg = git_ai.parse_commit_response(raw)
 ```
 
+`parse_commit_response` only parses — fences off, `===COMMIT===` marker unwrapped, agent trailers dropped. The two formatting rules the `git-ai` CLI enforces deterministically are separate calls, so a library consumer opts into them:
+
+```python
+msg = git_ai.wrap_commit_body(commit_msg)          # hard-wrap prose at BODY_WRAP_WIDTH (72)
+trim = git_ai.enforce_subject_limit(msg)           # cut the subject to SUBJECT_LIMIT (70)
+commit_msg = trim.message
+if trim.over_limit:
+    warn(f"subject is {trim.subject_length} chars with no clean clause break")
+elif trim.dropped:
+    warn(f'trimmed: dropped "{trim.dropped}"')
+```
+
+They stay separate because `enforce_subject_limit` returns a `SubjectTrim`, not a string: a subject with no usable clause break is returned untouched, and the caller is expected to surface that rather than ship an over-long subject silently.
+
 **MR/PR description** (data-mode — no local checkout, e.g. fetched from the GitHub/GitLab API):
 
 ```python

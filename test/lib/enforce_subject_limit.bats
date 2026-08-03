@@ -56,3 +56,9 @@ setup() {
   assert_equal "$GIT_AI_SUBJECT_MESSAGE" 'feat: restructure PR body prompts around purpose sections'
   assert_equal "$GIT_AI_SUBJECT_NOTE" ""
 }
+
+@test "enforce_subject_limit: a non-UTF-8 locale still counts characters" {
+  LC_ALL=C enforce_subject_limit 'fix: handle the em—dash case and tidy up the whitespace scanner paths2'
+  assert_equal "$GIT_AI_SUBJECT_MESSAGE" 'fix: handle the em—dash case and tidy up the whitespace scanner paths2'
+  assert_equal "$GIT_AI_SUBJECT_NOTE" ""
+}

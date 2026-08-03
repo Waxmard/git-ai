@@ -236,6 +236,23 @@ extract_commit_output() {
 GIT_AI_SUBJECT_LIMIT=70
 GIT_AI_SUBJECT_MIN=24
 
+# Name a UTF-8 locale this system actually has, cached in GIT_AI_UTF8_CTYPE
+# (empty when there is none). Callers that measure string length need one:
+# bash counts ${#var} in the current charset, so under a non-UTF-8 LC_CTYPE an
+# em-dash is three characters and the limit lands short of python's len().
+_utf8_ctype() {
+  [[ -n "${GIT_AI_UTF8_CTYPE+x}" ]] && return 0
+  local cand avail
+  avail=$'\n'"$(locale -a 2>/dev/null)"$'\n'
+  GIT_AI_UTF8_CTYPE=""
+  for cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8 UTF-8; do
+    if [[ "$avail" == *$'\n'"$cand"$'\n'* ]]; then
+      GIT_AI_UTF8_CTYPE="$cand"
+      return 0
+    fi
+  done
+}
+
 # Shorten an over-long commit subject at a clause boundary, setting
 # GIT_AI_SUBJECT_MESSAGE to the result and GIT_AI_SUBJECT_NOTE to a one-line
 # note for the caller to surface (empty when the subject already fits). Globals
@@ -244,6 +261,8 @@ GIT_AI_SUBJECT_MIN=24
 # shellcheck disable=SC2034  # both globals are read by bin/git-ai:cmd_commit
 enforce_subject_limit() {
   local msg="$1"
+  _utf8_ctype
+  local LC_ALL="${GIT_AI_UTF8_CTYPE:-${LC_ALL:-}}" LC_CTYPE="${GIT_AI_UTF8_CTYPE:-${LC_CTYPE:-}}"
   GIT_AI_SUBJECT_MESSAGE="$msg"
   GIT_AI_SUBJECT_NOTE=""
   local subject="${msg%%$'\n'*}" rest=""
