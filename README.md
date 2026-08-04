@@ -193,6 +193,9 @@ system, user = git_ai.build_mr_prompt(
     diff=diff_text,
     commit_log=log,
     existing_pr=current_pr_body or None,
+    # "since_existing" (default): diff covers only the commits added since
+    # current_pr_body was written. Pass "branch" only when it spans the whole MR.
+    diff_scope="since_existing",
 )
 raw = my_llm(system, user)
 pr_text = git_ai.parse_mr_response(raw)
@@ -201,7 +204,9 @@ pr_text = git_ai.parse_mr_response(raw)
 delta = git_ai.render_pr_diff(current_pr_body, pr_text, color=False) or None
 ```
 
-`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used. Model selection, retries, auth, and error handling are the caller's responsibility (inside `my_llm`).
+`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used.
+
+`diff_scope` matters only alongside `existing_pr`, and it is the one argument worth getting right: it declares what `diff` and `commit_log` span, and the update prompt is written to match. Under `"branch"` the model may prune content the branch no longer contains — so declaring it while passing an incremental diff makes it rewrite away everything `existing_pr` covers but the diff omits. The default is `"since_existing"`, whose failure mode is only a stale sentence left unpruned. Model selection, retries, auth, and error handling are the caller's responsibility (inside `my_llm`).
 
 **Repo-mode** (reads staged diff / `base..HEAD` from a local checkout):
 
@@ -226,6 +231,7 @@ else:
         diff_stat=ctx.diff_stat,
         release_context=ctx.release_context,
         existing_pr=ctx.existing_pr,
+        diff_scope=ctx.diff_scope,
     )
     pr_text = git_ai.parse_mr_response(my_llm(system, user))
     if ctx.current_branch:
@@ -239,9 +245,9 @@ else:
         )
 ```
 
-`prepare_repo_pr_context` reuses `.git/pr-cache/` automatically, sets `no_changes=True` when `HEAD` matches the cached SHA — or when a rebase/amend rewrote the branch without changing `ctx.content_id`, its diff-and-message content fingerprint — so callers can skip the LLM entirely, and narrows the `diff`/`commit_log` to commits after the last generated `HEAD` when possible. Pass `fresh=True` to bypass the cache for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
+`prepare_repo_pr_context` reuses `.git/pr-cache/` automatically, sets `no_changes=True` when `HEAD` matches the cached SHA — or when a rebase/amend rewrote the branch without changing `ctx.content_id`, its diff-and-message content fingerprint — so callers can skip the LLM entirely, and narrows the `diff`/`commit_log` to commits after the last generated `HEAD` when possible — reporting which it did as `ctx.diff_scope`, to forward straight to `build_mr_prompt`. Pass `fresh=True` to bypass the cache for one call, or `previous_head_sha=` to override the cached incremental base explicitly.
 
-Data-mode is stateless. To get the same efficiency in remote consumers, persist the prior PR text + last generated head SHA yourself, fetch the incremental diff/log since that SHA from your SCM, and pass them to `build_mr_prompt(diff=..., commit_log=..., existing_pr=...)`.
+Data-mode is stateless. To get the same efficiency in remote consumers, persist the prior PR text + last generated head SHA yourself, fetch the incremental diff/log since that SHA from your SCM, and pass them to `build_mr_prompt(diff=..., commit_log=..., existing_pr=..., diff_scope="since_existing")`.
 
 **Async / agent-framework example** — the prompt builders are pure, so anything goes inside the LLM call. Pass `system` and `user` to whatever your SDK expects (Anthropic `system=` + `messages=[{"role": "user", ...}]`, OpenAI/Gemini message lists, ADK agent `instruction` + input, etc.):
 

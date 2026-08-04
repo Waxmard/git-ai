@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from ._git import (
@@ -35,6 +35,10 @@ else:
     from ._pr_draft import analyze
 
 
+DiffScope = Literal["branch", "since_existing"]
+DIFF_SCOPES: tuple[DiffScope, ...] = ("branch", "since_existing")
+
+
 def build_mr_prompt_input(
     *,
     diff: str,
@@ -44,15 +48,20 @@ def build_mr_prompt_input(
     existing_pr: str | None = None,
     churn_subjects: set[str] | None = None,
     repo_guidance: str | None = None,
+    diff_scope: DiffScope = "since_existing",
 ) -> tuple[str, str]:
     """Return (prompt_filename, user_input) for MR generation.
 
     ``churn_subjects`` reach the two-pass draft so those commits fold into the
     feature they refine instead of becoming standalone sections.
     ``repo_guidance`` leads the input as an authoritative block.
+    ``diff_scope`` picks the update prompt that matches what ``diff`` spans; see
+    :func:`git_ai.build_mr_prompt`.
     """
     if not diff.strip():
         raise ValueError("diff is empty")
+    if diff_scope not in DIFF_SCOPES:
+        raise ValueError(f"diff_scope must be one of {DIFF_SCOPES}, got {diff_scope!r}")
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
     if diff_stat is None:
@@ -61,11 +70,12 @@ def build_mr_prompt_input(
     log = commit_log or ""
     conventional_count, total_count = count_conventional_commits(log)
     two_pass = total_count > 0 and conventional_count * 2 >= total_count
+    scope_suffix = "" if diff_scope == "branch" else "-incremental"
 
     if two_pass:
         draft = analyze(_to_rs_delimited_log(log), churn_subjects).draft_body
         if existing_pr:
-            prompt_name = "pr-two-pass-update.txt"
+            prompt_name = f"pr-two-pass-update{scope_suffix}.txt"
             user_input = (
                 f"<existing_pr>\n{existing_pr}\n</existing_pr>\n\n"
                 f"<draft>\n{draft}\n</draft>\n"
@@ -83,7 +93,7 @@ def build_mr_prompt_input(
             for line in log.splitlines()
         )
         if existing_pr:
-            prompt_name = "pr-fallback-update.txt"
+            prompt_name = f"pr-fallback-update{scope_suffix}.txt"
             user_input = (
                 f"<existing_pr>\n{existing_pr}\n</existing_pr>\n\n"
                 f"<commit_log>\n{clean_log}\n</commit_log>\n"

@@ -1,0 +1,1 @@
+<draft> and <changed_files> cover the whole branch as it now stands, not only the commits added since <existing_pr> was written — read them as the current state of the branch rather than as a list of additions, and add only what <existing_pr> does not already cover.
