@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
-# The parse/wrap/subject-limit rules live only in Python now; these assert the
-# shell reaches them and hands back the right bytes. Rule coverage itself is in
-# test/python/ (test_commit_cli_format.py, test_subject_limit.py, ...).
+# The parse/wrap/subject-limit and .git-ai-ignore/.git-ai-instructions rules
+# live only in Python now; these assert the shell reaches them and hands back
+# the right bytes. Rule coverage itself is in test/python/ (test_commit_cli.py,
+# test_subject_limit.py, test_ignore.py, ...).
 load '../helpers/common'
 
 setup() {
@@ -53,4 +54,25 @@ commit_format() {
   '
   assert_failure
   assert_output --partial 'requires python3'
+}
+
+@test "ignore-pathspec bridge: emits leading pathspec args the shell splats" {
+  run "${GIT_AI_PYTHON:-python3}" "${REPO_ROOT}/python/git_ai/_commit_cli.py" \
+    ignore-pathspec --repo "$BATS_TEST_TMPDIR"
+  assert_success
+  [ "${lines[0]}" = '--' ]
+  [ "${lines[1]}" = ':/' ]
+}
+
+@test "instructions bridge: prints the repo file, nothing when absent" {
+  run "${GIT_AI_PYTHON:-python3}" "${REPO_ROOT}/python/git_ai/_commit_cli.py" \
+    instructions --repo "$BATS_TEST_TMPDIR"
+  assert_success
+  assert_output ''
+
+  printf '  Scope commits by service.\n' >"$BATS_TEST_TMPDIR/.git-ai-instructions"
+  run "${GIT_AI_PYTHON:-python3}" "${REPO_ROOT}/python/git_ai/_commit_cli.py" \
+    instructions --repo "$BATS_TEST_TMPDIR"
+  assert_success
+  assert_output 'Scope commits by service.'
 }

@@ -112,3 +112,41 @@ def test_pr_format_fails_on_an_empty_response(
     monkeypatch.setattr("sys.stdin", io.StringIO("  \n "))
     assert _pr_repo_cli.main(["format"]) == 1
     assert "empty response" in capsys.readouterr().err
+
+
+def test_ignore_pathspec_emits_defaults(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    assert _commit_cli.main(["ignore-pathspec", "--repo", str(tmp_path)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[:2] == ["--", ":/"]
+    assert any("package-lock.json" in line for line in lines)
+
+
+def test_ignore_pathspec_honours_additions_and_negations(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    (tmp_path / ".git-ai-ignore").write_text(
+        "# comment\nvendor/\n!package-lock.json\n", encoding="utf-8"
+    )
+    assert _commit_cli.main(["ignore-pathspec", "--repo", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert ":(top,exclude,glob)**/vendor/" in out
+    assert "package-lock.json" not in out
+
+
+def test_instructions_prints_nothing_when_absent(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    assert _commit_cli.main(["instructions", "--repo", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_instructions_prints_trimmed_contents(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    (tmp_path / ".git-ai-instructions").write_text(
+        "\n  Scope commits by service.\n\n", encoding="utf-8"
+    )
+    assert _commit_cli.main(["instructions", "--repo", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "Scope commits by service.\n"

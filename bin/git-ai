@@ -225,16 +225,19 @@ cmd_commit() {
   REPO_ROOT=$(git rev-parse --show-toplevel) || die "failed to determine repo root"
 
   local REPO_GUIDANCE
-  REPO_GUIDANCE=$(load_git_ai_instructions "$REPO_ROOT")
+  REPO_GUIDANCE=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
+    instructions --repo "$REPO_ROOT") || die "failed to read .git-ai-instructions"
 
-  local -a IGNORE_PATTERNS=() PATHSPEC=()
-  local _p
-  while IFS= read -r _p; do
-    [[ -n "$_p" ]] && IGNORE_PATTERNS+=("$_p")
-  done < <(load_git_ai_ignore "$REPO_ROOT")
+  # Captured before the loop rather than read through a process substitution:
+  # a pathspec that silently came back empty would send unignored files to the
+  # model, so the exit status has to be checked.
+  local -a PATHSPEC=()
+  local _p pathspec_out
+  pathspec_out=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
+    ignore-pathspec --repo "$REPO_ROOT") || die "failed to read .git-ai-ignore"
   while IFS= read -r _p; do
     [[ -n "$_p" ]] && PATHSPEC+=("$_p")
-  done < <(build_pathspec_excludes ${IGNORE_PATTERNS[@]+"${IGNORE_PATTERNS[@]}"})
+  done <<<"$pathspec_out"
 
   git diff --staged --quiet ${PATHSPEC[@]+"${PATHSPEC[@]}"} && die "no staged changes to summarize"
 
@@ -435,7 +438,9 @@ cmd_pr() {
   printf '%s' "$CHURN_SUBJECTS" >"$CHURN_FILE"
   local PR_REPO_ROOT
   PR_REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PR_REPO_ROOT="."
-  load_git_ai_instructions "$PR_REPO_ROOT" >"$INSTR_FILE"
+  "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
+    instructions --repo "$PR_REPO_ROOT" >"$INSTR_FILE" ||
+    die "failed to read .git-ai-instructions"
   "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_pr_repo_cli.py" build-input \
     --diff-file "$DIFF_FILE" \
     --commit-log-file "$LOG_FILE" \
