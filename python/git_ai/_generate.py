@@ -21,16 +21,16 @@ if TYPE_CHECKING:
     )
     from ._git_branch import format_branch_context
     from ._instructions import format_repo_guidance
-    from ._pr_prompt_build import build_mr_prompt_input
+    from ._pr_prompt_build import DiffScope, build_mr_prompt_input
 elif __package__ in (None, ""):
     import importlib
 
     _git_mod = importlib.import_module("_git")
     _git_branch_mod = importlib.import_module("_git_branch")
+    _pr_prompt_build_mod = importlib.import_module("_pr_prompt_build")
     DEFAULT_RELEASE_CONTEXT = _git_mod.DEFAULT_RELEASE_CONTEXT
-    build_mr_prompt_input = importlib.import_module(
-        "_pr_prompt_build"
-    ).build_mr_prompt_input
+    DiffScope = _pr_prompt_build_mod.DiffScope
+    build_mr_prompt_input = _pr_prompt_build_mod.build_mr_prompt_input
     derive_diff_stat = _git_mod.derive_diff_stat
     format_branch_context = _git_branch_mod.format_branch_context
     format_repo_guidance = importlib.import_module("_instructions").format_repo_guidance
@@ -43,7 +43,7 @@ else:
     )
     from ._git_branch import format_branch_context
     from ._instructions import format_repo_guidance
-    from ._pr_prompt_build import build_mr_prompt_input
+    from ._pr_prompt_build import DiffScope, build_mr_prompt_input
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _DEFAULT_MAX_DIFF_BYTES = 900_000
@@ -169,6 +169,7 @@ def build_mr_prompt(
     existing_pr: str | None = None,
     churn_subjects: set[str] | None = None,
     repo_guidance: str | None = None,
+    diff_scope: DiffScope = "since_existing",
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_input) pair for MR/PR generation.
 
@@ -180,8 +181,24 @@ def build_mr_prompt(
     instead of emitted as standalone sections. Feed both returned strings to
     your LLM, then run the response through :func:`parse_mr_response`.
 
+    **Contract for ``diff`` / ``commit_log``.** ``diff_scope`` declares what
+    they span, and is meaningful only alongside ``existing_pr``:
+
+    - ``"since_existing"`` (default) — they cover only the commits added since
+      ``existing_pr`` was written. The prompt then treats ``existing_pr`` as the
+      sole record of the earlier work and forbids dropping content merely
+      because the diff does not show it.
+    - ``"branch"`` — they cover the whole branch as it now stands (e.g. a
+      three-dot diff against the base, or a re-describe after a rebase). The
+      prompt may then prune content the branch no longer contains.
+
+    Declaring ``"branch"`` while passing an incremental diff makes the model
+    rewrite away everything ``existing_pr`` covers but the diff omits, so the
+    default errs toward preservation: over-declaring ``"since_existing"`` only
+    costs a stale sentence the model failed to prune.
+
     Raises:
-        ValueError: if ``diff`` is empty.
+        ValueError: if ``diff`` is empty or ``diff_scope`` is not a known scope.
         RuntimeError: if the diff exceeds ``GIT_AI_MAX_DIFF_BYTES``.
     """
     if not diff.strip():
@@ -200,6 +217,7 @@ def build_mr_prompt(
         existing_pr=existing_pr,
         churn_subjects=churn_subjects,
         repo_guidance=repo_guidance,
+        diff_scope=diff_scope,
     )
     return _load_prompt(prompt_name), user_input
 

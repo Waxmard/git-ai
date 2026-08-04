@@ -1,6 +1,9 @@
-User POV: developers running git-ai from the CLI (git-ai commit / pr / setup). What they
-perceive as the product is the generated commit & PR text, the commands and flags, the
-setup wizard, and which providers/models work. "User-facing" means a change to any of that.
+User POV: two audiences. First, developers running git-ai from the CLI (git-ai commit / pr /
+setup). What they perceive as the product is the generated commit & PR text, the commands and
+flags, the setup wizard, and which providers/models work. Second, developers who install the
+waxmard-git-ai Python package and import git_ai directly, never touching the CLI: for them
+the product is the surface in __init__.py's __all__ — the signatures, what each argument
+means, and what the functions return. "User-facing" means a change to either of those.
 
 This repo writes scopeless Conventional Commits — do not add a scope.
 
@@ -8,7 +11,15 @@ Type rules from this POV:
 - A new command, flag, provider, or setup capability → feat
 - Editing a prompt (python/git_ai/prompts/*.txt) or a classification rule so the generated
   commit/PR output changes → feat or fix. The prompts ARE product behavior, never docs/chore.
-- Restructuring lib/ or python/ internals with no change to CLI or generated output → refactor
+- Changing what an exported function accepts, returns, or assumes about its inputs → feat or
+  fix, never refactor — including when the diff only touches prompt prose or python/ internals
+- Restructuring lib/ or python/ internals with no change to the CLI, the generated output, or
+  the git_ai public API → refactor
 - BATS or pytest changes only → test
 - shellcheck, lefthook, line-limit, release tooling, or CI workflows → ci or build
 - docs/src templates and the generated guides (README/AGENTS/CLAUDE/CONTRIBUTING) → docs
+
+Breaking (!) from this POV: removing or renaming an __all__ export, or changing what an
+argument existing callers already pass is taken to mean. A signature that still accepts the
+old call but interprets it differently is the case most easily missed — it is breaking, and
+the CLI staying identical does not make it otherwise.

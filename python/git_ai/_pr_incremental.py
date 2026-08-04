@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         get_branch_churn_subjects,
     )
     from ._ignore import load_ignore_patterns
+    from ._pr_prompt_build import DiffScope
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _git = importlib.import_module("_git")
@@ -58,6 +59,7 @@ elif __package__ in (None, ""):
     git_ref_exists = _git.git_ref_exists
     _ignore = importlib.import_module("_ignore")
     load_ignore_patterns = _ignore.load_ignore_patterns
+    DiffScope = importlib.import_module("_pr_prompt_build").DiffScope
 else:
     from ._git import (
         check_git_repo,
@@ -80,6 +82,11 @@ else:
         get_branch_churn_subjects,
     )
     from ._ignore import load_ignore_patterns
+    from ._pr_prompt_build import DiffScope
+
+# DiffScope is imported at runtime, not just under TYPE_CHECKING: RepoPrContext
+# is public, and `typing.get_type_hints` on it — what a serialization layer
+# reflecting over the dataclass does — evaluates the annotation for real.
 
 # Cache dirs written before `branch-name` existed can't be tied to a branch, so
 # they age out instead.
@@ -103,6 +110,10 @@ class RepoPrContext:
     # Appended rather than grouped with no_changes: RepoPrContext is public, so
     # inserting a field would re-bind every positional argument after it.
     content_id: str | None = None
+    # What `diff`/`commit_log` span, for build_mr_prompt(diff_scope=...): the
+    # whole branch when they were taken against the base branch, otherwise the
+    # commits since the cached HEAD the existing PR text describes.
+    diff_scope: DiffScope = "since_existing"
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=True)
@@ -333,6 +344,7 @@ def prepare_repo_pr_context(
     # leaks already-merged commits into the diff and log, so the PR describes
     # work that isn't on this branch.
     base_ref = _best_base_ref(repo_path, base_branch)
+    diff_scope: DiffScope = "branch" if input_base == base_branch else "since_existing"
     if input_base == base_branch:
         if base_ref is None:
             raise RuntimeError(
@@ -390,6 +402,7 @@ def prepare_repo_pr_context(
                 diff_stat="",
                 release_context=get_mr_release_context(repo_path),
                 content_id=content_id,
+                diff_scope=diff_scope,
                 no_changes=True,
                 warnings=warnings,
             )
@@ -407,6 +420,7 @@ def prepare_repo_pr_context(
             diff_stat="",
             release_context=get_mr_release_context(repo_path),
             content_id=content_id,
+            diff_scope=diff_scope,
             no_changes=True,
         )
 
@@ -453,6 +467,7 @@ def prepare_repo_pr_context(
         ),
         release_context=get_mr_release_context(repo_path),
         content_id=content_id,
+        diff_scope=diff_scope,
         churn_subjects=churn_subjects,
         warnings=warnings,
     )

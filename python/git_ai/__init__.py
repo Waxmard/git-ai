@@ -44,11 +44,13 @@ from ._pr_incremental import (
     prune_pr_cache,
     save_cached_pr,
 )
+from ._pr_prompt_build import DiffScope
 from ._pr_render import render_pr_diff, summarize_pr_changes
 
 __all__ = [
     "BODY_WRAP_WIDTH",
     "SUBJECT_LIMIT",
+    "DiffScope",
     "RepoPrContext",
     "SubjectTrim",
     "branch_content_id",

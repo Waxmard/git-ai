@@ -320,6 +320,23 @@ def test_build_mr_prompt_existing_pr_picks_update_prompt() -> None:
     assert "feat: old title" in user
 
 
+def test_build_mr_prompt_update_defaults_to_incremental_scope() -> None:
+    system, _ = build_mr_prompt(
+        diff=_SAMPLE_DIFF, commit_log=_CONVENTIONAL_LOG, existing_pr="feat: old title"
+    )
+    assert "cover only the commits added since <existing_pr> was written" in system
+
+
+def test_build_mr_prompt_branch_scope_describes_the_whole_branch() -> None:
+    system, _ = build_mr_prompt(
+        diff=_SAMPLE_DIFF,
+        commit_log=_CONVENTIONAL_LOG,
+        existing_pr="feat: old title",
+        diff_scope="branch",
+    )
+    assert "cover the whole branch as it now stands" in system
+
+
 def test_build_mr_prompt_derives_diff_stat_when_omitted() -> None:
     _, user = build_mr_prompt(diff=_SAMPLE_DIFF)
     assert "<changed_files>" in user

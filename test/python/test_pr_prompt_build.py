@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
-from git_ai._pr_prompt_build import build_mr_prompt_input
+from git_ai._pr_prompt_build import DIFF_SCOPES, DiffScope, build_mr_prompt_input
 
 _DIFF = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -0,0 +1 @@\n+x\n"
 
@@ -41,8 +43,48 @@ def test_single_commit_with_existing_pr_uses_update_prompt() -> None:
         commit_log=_log("feat: add widget"),
         existing_pr="# Old\n\nbody",
     )
-    assert name == "pr-two-pass-update.txt"
+    assert name == "pr-two-pass-update-incremental.txt"
     assert "<existing_pr>\n# Old\n\nbody\n</existing_pr>" in user_input
+
+
+def test_update_defaults_to_incremental_scope() -> None:
+    """The unsafe declaration is the one that must be opted into explicitly."""
+    conventional, _ = build_mr_prompt_input(
+        diff=_DIFF, commit_log=_log("feat: a"), existing_pr="# Old"
+    )
+    freeform, _ = build_mr_prompt_input(
+        diff=_DIFF, commit_log=_log("wip"), existing_pr="# Old"
+    )
+    assert conventional == "pr-two-pass-update-incremental.txt"
+    assert freeform == "pr-fallback-update-incremental.txt"
+
+
+def test_branch_scope_selects_the_whole_branch_update_prompts() -> None:
+    conventional, _ = build_mr_prompt_input(
+        diff=_DIFF, commit_log=_log("feat: a"), existing_pr="# Old", diff_scope="branch"
+    )
+    freeform, _ = build_mr_prompt_input(
+        diff=_DIFF, commit_log=_log("wip"), existing_pr="# Old", diff_scope="branch"
+    )
+    assert conventional == "pr-two-pass-update.txt"
+    assert freeform == "pr-fallback-update.txt"
+
+
+def test_diff_scope_is_inert_without_an_existing_pr() -> None:
+    for scope in DIFF_SCOPES:
+        name, _ = build_mr_prompt_input(
+            diff=_DIFF, commit_log=_log("feat: a"), diff_scope=scope
+        )
+        assert name == "pr-two-pass.txt"
+
+
+def test_unknown_diff_scope_is_rejected() -> None:
+    with pytest.raises(ValueError, match="diff_scope must be one of"):
+        build_mr_prompt_input(
+            diff=_DIFF,
+            commit_log=_log("feat: a"),
+            diff_scope=cast("DiffScope", "incremental"),
+        )
 
 
 def test_two_commits_use_two_pass() -> None:

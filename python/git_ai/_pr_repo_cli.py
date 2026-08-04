@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from ._generate import parse_mr_response
     from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
-    from ._pr_prompt_build import build_mr_prompt_input
+    from ._pr_prompt_build import DIFF_SCOPES, DiffScope, build_mr_prompt_input
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _generate = importlib.import_module("_generate")
@@ -24,10 +24,11 @@ elif __package__ in (None, ""):
     prepare_repo_pr_context = _pr_incremental.prepare_repo_pr_context
     save_cached_pr = _pr_incremental.save_cached_pr
     build_mr_prompt_input = _pr_prompt_build.build_mr_prompt_input
+    DIFF_SCOPES = _pr_prompt_build.DIFF_SCOPES
 else:
     from ._generate import parse_mr_response
     from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
-    from ._pr_prompt_build import build_mr_prompt_input
+    from ._pr_prompt_build import DIFF_SCOPES, DiffScope, build_mr_prompt_input
 
 
 def _cmd_prepare(args: argparse.Namespace) -> int:
@@ -98,6 +99,7 @@ def _cmd_build_input(args: argparse.Namespace) -> int:
         existing_pr=existing_pr,
         churn_subjects=_read_subjects(args.churn_subjects_file),
         repo_guidance=_read_optional(args.repo_instructions_file),
+        diff_scope=cast("DiffScope", args.diff_scope),
     )
     sys.stdout.write(json.dumps({"prompt_name": prompt_name, "user_input": user_input}))
     return 0
@@ -138,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--existing-pr-file")
     build.add_argument("--churn-subjects-file")
     build.add_argument("--repo-instructions-file")
+    build.add_argument("--diff-scope", choices=DIFF_SCOPES, default="since_existing")
     build.set_defaults(func=_cmd_build_input)
 
     fmt = sub.add_parser("format")
