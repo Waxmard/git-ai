@@ -30,3 +30,33 @@ jobs:
       - name: Run tests
         run: make test
 
+  npm-pack:
+    name: npm package smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      # The bash CLI shells out to the sibling _*_cli.py modules, but npm ships
+      # only what "files" whitelists — a data-only list silently strips them and
+      # breaks every install. Pack, unpack outside the repo, and drive the
+      # bridges the commit/PR paths depend on.
+      - name: Pack and run the bridges from the tarball
+        run: |
+          set -euo pipefail
+          npm pack --pack-destination /tmp/npmpack >/dev/null
+          tar xzf /tmp/npmpack/*.tgz -C /tmp/npmpack
+          cd /tmp/npmpack/package
+          for mod in _commit_cli _pr_repo_cli _pr_render _generate _git _ignore; do
+            test -f "python/git_ai/${mod}.py" || { echo "missing python/git_ai/${mod}.py"; exit 1; }
+          done
+          ./bin/git-ai providers >/dev/null
+          got=$(printf '===COMMIT===\nfeat: packed\n' | python3 python/git_ai/_commit_cli.py format)
+          [ "$got" = "feat: packed" ] || { echo "commit bridge returned: $got"; exit 1; }
+          got=$(printf '===TITLE===\nfeat: x\n===BODY===\nB.\n' | python3 python/git_ai/_pr_repo_cli.py format)
+          [ "$got" = "$(printf 'feat: x\n\nB.')" ] || { echo "pr bridge returned: $got"; exit 1; }
+          python3 python/git_ai/_commit_cli.py ignore-pathspec --repo . >/dev/null
+
