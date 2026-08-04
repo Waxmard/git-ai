@@ -90,3 +90,20 @@ def test_incremental_scope_prompts_forbid_dropping_unshown_work(name: str) -> No
     assert "cover only the commits added since <existing_pr> was written" in text
     assert "never delete, narrow, or rewrite existing content" in text
     assert "whole branch as it now stands" not in text
+
+
+@pytest.mark.parametrize("name", PROMPT_FILES)
+def test_commit_log_is_declared_optional_wherever_it_is_named(name: str) -> None:
+    """A prompt may not assert a tag the builder omits.
+
+    `build_mr_prompt_input` drops <commit_log> when no log is supplied, so any
+    prompt naming the tag has to say it can be absent — otherwise the model is
+    told a section exists that isn't there, and reads the gap as "no commits".
+    """
+    text = _load_prompt(name)
+    if "<commit_log>" not in text:
+        return
+    assert (
+        "present only when commit messages are available" in text
+        or "(when present) <commit_log>" in text
+    ), f"{name} names <commit_log> without declaring it optional"
