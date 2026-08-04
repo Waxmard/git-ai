@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.7.0](https://github.com/Waxmard/git-ai/compare/v6.6.1...v6.7.0) (2026-08-04)
+
+
+### Features
+
+* reuse PR cache across rebases and force-pushes ([#112](https://github.com/Waxmard/git-ai/issues/112)) ([99be953](https://github.com/Waxmard/git-ai/commit/99be9530e1f2423f89d48bde6c5bb7bf294bc7dd))
+* rewrite generated commit and PR text as structured prose ([#114](https://github.com/Waxmard/git-ai/issues/114)) ([07fbc0d](https://github.com/Waxmard/git-ai/commit/07fbc0d8b3c5bd11d729a9740ef4a13cf1c1abd1))
+
 ## [6.6.1](https://github.com/Waxmard/git-ai/compare/v6.6.0...v6.6.1) (2026-07-28)
 
 
