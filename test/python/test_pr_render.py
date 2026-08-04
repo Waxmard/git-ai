@@ -173,3 +173,35 @@ def test_summary_empty_when_only_whitespace_diff() -> None:
     existing = "feat: x\n\n### A\n- a"
     updated = "feat: x\n\n\n### A\n- a\n"
     assert summarize_pr_changes(existing, updated) == ""
+
+
+def test_summary_groups_level_two_headings() -> None:
+    existing = (
+        "feat: x\n\n## Overview\n\nOld sentence.\n\n## Verification\n\n- run tests"
+    )
+    updated = (
+        "feat: x\n\n## Overview\n\nNew sentence.\n\n## Verification\n"
+        "\n- run tests\n- run lint"
+    )
+    result = summarize_pr_changes(existing, updated)
+
+    assert "- Overview: +1 / -1" in result
+    assert "- Verification: +1" in result
+    assert "Title / intro" not in result
+
+
+def test_summary_matches_cached_body_across_heading_depth() -> None:
+    existing = "feat: x\n\n### Verification\n- run tests"
+    updated = "feat: x\n\n## Verification\n\n- run tests\n- run lint"
+    result = summarize_pr_changes(existing, updated)
+
+    assert result.count("Verification") == 1
+    assert "- Verification: +1" in result
+
+
+def test_summary_ignores_a_bare_hash_run() -> None:
+    existing = "feat: x\n\n## A\n- a\n- ###"
+    updated = "feat: x\n\n## A\n- a"
+    result = summarize_pr_changes(existing, updated)
+
+    assert "- A: -1" in result

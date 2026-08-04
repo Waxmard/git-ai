@@ -258,6 +258,31 @@ def _marker_index(lines: list[str], marker: str) -> int:
     return -1
 
 
+def _fence_open_at(lines: list[str]) -> bool:
+    """True when ``lines`` leave a fence unclosed.
+
+    An odd count is the tell: every fence line matches the open pattern, so a
+    balanced example block inside a model's preamble cancels out while a
+    wrapper the model opened before the markers does not.
+    """
+    return sum(1 for line in lines if _FENCE_OPEN_RE.fullmatch(line)) % 2 == 1
+
+
+def _finish_payload(payload: str, *, wrapped: bool) -> str:
+    """Trim noise off a marker-delimited slice, plus a wrapper's closing fence.
+
+    ``strip_fences`` only unwraps a fence sitting on the response's first and
+    last line, so a model that reasons before the fence or signs its work after
+    it leaves the closing ``` inside the payload.
+    """
+    text = _drop_trailing_noise(payload)
+    if wrapped:
+        lines = text.split("\n")
+        if lines and _FENCE_CLOSE_RE.fullmatch(lines[-1]):
+            text = _drop_trailing_noise("\n".join(lines[:-1]))
+    return text.strip()
+
+
 def _extract_pr_sections(text: str) -> str:
     """Slice ``title\\n\\nbody`` out of ``===TITLE===`` / ``===BODY===`` markers.
 
@@ -273,7 +298,9 @@ def _extract_pr_sections(text: str) -> str:
     title = "\n".join(lines[t_idx + 1 : b_idx]).strip()
     if not title:
         return text
-    body = _drop_trailing_noise("\n".join(lines[b_idx + 1 :])).strip()
+    body = _finish_payload(
+        "\n".join(lines[b_idx + 1 :]), wrapped=_fence_open_at(lines[:t_idx])
+    )
     return f"{title}\n\n{body}" if body else title
 
 
@@ -295,12 +322,16 @@ def _extract_commit_message(text: str) -> str:
     lines = text.split("\n")
     idx = _marker_index(lines, _COMMIT_MARKER)
     if idx >= 0:
-        after = _drop_trailing_noise("\n".join(lines[idx + 1 :])).strip()
+        after = _finish_payload(
+            "\n".join(lines[idx + 1 :]), wrapped=_fence_open_at(lines[:idx])
+        )
         if after:
             return after
     for i, line in enumerate(lines):
         if _COMMIT_SUBJECT_RE.match(line.strip()):
-            return _drop_trailing_noise("\n".join(lines[i:])).strip()
+            return _finish_payload(
+                "\n".join(lines[i:]), wrapped=_fence_open_at(lines[:i])
+            )
     return text
 
 
