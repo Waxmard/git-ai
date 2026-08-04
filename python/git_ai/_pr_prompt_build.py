@@ -92,21 +92,23 @@ def build_mr_prompt_input(
             line[len("GITAI_COMMIT ") :] if line.startswith("GITAI_COMMIT ") else line
             for line in log.splitlines()
         )
+        # An empty <commit_log> is omitted, not emitted blank: the prompt names
+        # the tag as authoritative context, so a present-but-empty one asserts
+        # "this branch has no commits" to a caller that merely passed no log.
+        log_block = (
+            f"<commit_log>\n{clean_log}\n</commit_log>\n" if clean_log.strip() else ""
+        )
+        body = (
+            f"{log_block}"
+            f"<changed_files>\n{diff_stat}\n</changed_files>\n"
+            f"<diff>\n{diff}\n</diff>"
+        )
         if existing_pr:
             prompt_name = f"pr-fallback-update{scope_suffix}.txt"
-            user_input = (
-                f"<existing_pr>\n{existing_pr}\n</existing_pr>\n\n"
-                f"<commit_log>\n{clean_log}\n</commit_log>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>\n"
-                f"<diff>\n{diff}\n</diff>"
-            )
+            user_input = f"<existing_pr>\n{existing_pr}\n</existing_pr>\n\n{body}"
         else:
             prompt_name = "pr-fallback.txt"
-            user_input = (
-                f"<commit_log>\n{clean_log}\n</commit_log>\n"
-                f"<changed_files>\n{diff_stat}\n</changed_files>\n"
-                f"<diff>\n{diff}\n</diff>"
-            )
+            user_input = body
 
     user_input = f"<release_context>{release_context}</release_context>\n\n{user_input}"
     guidance_block = format_repo_guidance(repo_guidance)

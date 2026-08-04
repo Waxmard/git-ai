@@ -1,1 +1,1 @@
-<commit_log>, <changed_files>, and <diff> cover the whole branch as it now stands, not only the commits added since <existing_pr> was written — read them as the current state of the branch rather than as a list of additions, and add only what <existing_pr> does not already cover.
+<changed_files>, <diff>, and (when present) <commit_log> cover the whole branch as it now stands, not only the commits added since <existing_pr> was written — read them as the current state of the branch rather than as a list of additions, and add only what <existing_pr> does not already cover.
