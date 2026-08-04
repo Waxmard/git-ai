@@ -59,6 +59,7 @@ elif __package__ in (None, ""):
     git_ref_exists = _git.git_ref_exists
     _ignore = importlib.import_module("_ignore")
     load_ignore_patterns = _ignore.load_ignore_patterns
+    DiffScope = importlib.import_module("_pr_prompt_build").DiffScope
 else:
     from ._git import (
         check_git_repo,
@@ -81,6 +82,11 @@ else:
         get_branch_churn_subjects,
     )
     from ._ignore import load_ignore_patterns
+    from ._pr_prompt_build import DiffScope
+
+# DiffScope is imported at runtime, not just under TYPE_CHECKING: RepoPrContext
+# is public, and `typing.get_type_hints` on it — what a serialization layer
+# reflecting over the dataclass does — evaluates the annotation for real.
 
 # Cache dirs written before `branch-name` existed can't be tied to a branch, so
 # they age out instead.

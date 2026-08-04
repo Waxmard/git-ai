@@ -5,10 +5,13 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+import typing
 from pathlib import Path
 
 import pytest
 from git_ai import (
+    DiffScope,
+    RepoPrContext,
     build_mr_prompt,
     get_git_dir,
     get_head_sha,
@@ -636,6 +639,11 @@ def test_prepare_stamps_fingerprint_when_regenerating(tmp_path: Path) -> None:
 
     assert ctx.no_changes is False
     assert ctx.content_id is not None
+
+
+def test_repo_pr_context_annotations_resolve_at_runtime() -> None:
+    """RepoPrContext is public, so a serialization layer may reflect over it."""
+    assert typing.get_type_hints(RepoPrContext)["diff_scope"] == DiffScope
 
 
 def test_prepare_declares_incremental_scope_on_the_cached_ancestor_path(
