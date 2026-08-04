@@ -273,15 +273,18 @@ uv.lock              composer.lock     Pipfile.lock        pubspec.lock
 mix.lock             flake.lock
 ```
 
-Drop a `.git-ai-ignore` file at the repo root to add more patterns (one per line, `#` comments and blank lines ignored). Patterns are Git pathspec glob fragments that git-ai prefixes with `**/`, so `generated/**/*.ts` matches TypeScript files under any `generated/` directory; leading `/` is not `.gitignore` root syntax. Lines starting with `!` re-include a pattern, useful when you actually want to review a built-in default:
+Drop a `.git-ai-ignore` file at the repo root to add more patterns (one per line, `#` comments and blank lines ignored). Patterns are Git pathspec glob fragments, **not `.gitignore` syntax** — a leading `/` is not root-anchoring. Each pattern matches at any depth: `generated/**/*.ts` matches TypeScript files under any `generated/` directory, and a bare directory name (`vendor`, or `vendor/`) excludes everything beneath it. Lines starting with `!` re-include a pattern, useful when you actually want to review a built-in default:
 
 ```
 build/dist.js
 generated/**/*.ts
+vendor/
 
 # Re-include this lockfile when you want to review it
 !package-lock.json
 ```
+
+`!` removes a pattern by exact string match, so it only re-includes a built-in default (or an earlier line spelled identically) — it is not `.gitignore` negation precedence.
 
 If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`, set `0` to disable), git-ai aborts with a "Largest changed files" hint pointing at what to ignore or unstage.
 
