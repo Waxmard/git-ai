@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.7.1](https://github.com/Waxmard/git-ai/compare/v6.7.0...v6.7.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* preserve earlier PR content when updating from new commits ([#117](https://github.com/Waxmard/git-ai/issues/117)) ([e7e3731](https://github.com/Waxmard/git-ai/commit/e7e3731fe1d0786cc9734d50f8669fdb1af436bf))
+
 ## [6.7.0](https://github.com/Waxmard/git-ai/compare/v6.6.1...v6.7.0) (2026-08-04)
 
 
