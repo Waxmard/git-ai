@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.7.2](https://github.com/Waxmard/git-ai/compare/v6.7.1...v6.7.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* stop blank commit_log tag from implying a branch has no commits ([#120](https://github.com/Waxmard/git-ai/issues/120)) ([e40eae2](https://github.com/Waxmard/git-ai/commit/e40eae24c671309b0cd6af9baeb9858015f203a7))
+
 ## [6.7.1](https://github.com/Waxmard/git-ai/compare/v6.7.0...v6.7.1) (2026-08-04)
 
 
