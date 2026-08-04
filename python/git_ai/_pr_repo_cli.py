@@ -12,19 +12,22 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from ._generate import parse_mr_response
     from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
-    from ._pr_prompt_build import build_mr_prompt_input, verbatim_pr_text
+    from ._pr_prompt_build import build_mr_prompt_input
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    _generate = importlib.import_module("_generate")
     _pr_incremental = importlib.import_module("_pr_incremental")
     _pr_prompt_build = importlib.import_module("_pr_prompt_build")
+    parse_mr_response = _generate.parse_mr_response
     prepare_repo_pr_context = _pr_incremental.prepare_repo_pr_context
     save_cached_pr = _pr_incremental.save_cached_pr
     build_mr_prompt_input = _pr_prompt_build.build_mr_prompt_input
-    verbatim_pr_text = _pr_prompt_build.verbatim_pr_text
 else:
+    from ._generate import parse_mr_response
     from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
-    from ._pr_prompt_build import build_mr_prompt_input, verbatim_pr_text
+    from ._pr_prompt_build import build_mr_prompt_input
 
 
 def _cmd_prepare(args: argparse.Namespace) -> int:
@@ -87,13 +90,6 @@ def _read_subjects(path: str | None) -> set[str] | None:
 def _cmd_build_input(args: argparse.Namespace) -> int:
     commit_log = _read_optional(args.commit_log_file)
     existing_pr = _read_optional(args.existing_pr_file)
-    # Single conventional commit → emit it verbatim and skip the LLM.
-    verbatim = verbatim_pr_text(commit_log, existing_pr)
-    if verbatim is not None:
-        sys.stdout.write(
-            json.dumps({"prompt_name": "verbatim", "user_input": verbatim})
-        )
-        return 0
     prompt_name, user_input = build_mr_prompt_input(
         diff=Path(args.diff_file).read_text(encoding="utf-8"),
         commit_log=commit_log,
@@ -104,6 +100,11 @@ def _cmd_build_input(args: argparse.Namespace) -> int:
         repo_guidance=_read_optional(args.repo_instructions_file),
     )
     sys.stdout.write(json.dumps({"prompt_name": prompt_name, "user_input": user_input}))
+    return 0
+
+
+def _cmd_format(args: argparse.Namespace) -> int:
+    sys.stdout.write(parse_mr_response(sys.stdin.read()))
     return 0
 
 
@@ -138,6 +139,9 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--churn-subjects-file")
     build.add_argument("--repo-instructions-file")
     build.set_defaults(func=_cmd_build_input)
+
+    fmt = sub.add_parser("format")
+    fmt.set_defaults(func=_cmd_format)
 
     args = parser.parse_args(argv)
     func = cast(Callable[[argparse.Namespace], int], args.func)

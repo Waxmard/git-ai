@@ -300,7 +300,7 @@ EOF
   cat >"$CONF" <<'EOF'
 [vertex]
 account  = me@acme.com
-projects = sierra-data-den, the-file-system
+projects = example-project, example-sandbox
 
 [vertex-gemini]
 gemini-3.5-flash
@@ -310,10 +310,10 @@ claude-sonnet-4-6
 EOF
   run parse_user_options
   assert_success
-  assert_line "vertex-gemini@sierra-data-den:gemini-3.5-flash"
-  assert_line "vertex-gemini@the-file-system:gemini-3.5-flash"
-  assert_line "vertex-anthropic@sierra-data-den:claude-sonnet-4-6"
-  assert_line "vertex-anthropic@the-file-system:claude-sonnet-4-6"
+  assert_line "vertex-gemini@example-project:gemini-3.5-flash"
+  assert_line "vertex-gemini@example-sandbox:gemini-3.5-flash"
+  assert_line "vertex-anthropic@example-project:claude-sonnet-4-6"
+  assert_line "vertex-anthropic@example-sandbox:claude-sonnet-4-6"
   # The bare base sections are not emitted when projects expand them.
   refute_line "vertex-gemini:gemini-3.5-flash"
   refute_line "vertex-anthropic:claude-sonnet-4-6"
@@ -322,34 +322,34 @@ EOF
 @test "parse_user_options: explicit profile section overrides/coexists, no dup" {
   cat >"$CONF" <<'EOF'
 [vertex]
-projects = sierra-data-den
+projects = example-project
 
 [vertex-gemini]
 gemini-3.5-flash
 
-[vertex-gemini@sierra-data-den]
+[vertex-gemini@example-project]
 gemini-3.5-flash
 gemini-3.1-pro-preview
 EOF
   run parse_user_options
   assert_success
   # gemini-3.5-flash appears once despite both sections naming it.
-  assert_equal "$(parse_user_options | grep -c 'vertex-gemini@sierra-data-den:gemini-3.5-flash')" "1"
-  assert_line "vertex-gemini@sierra-data-den:gemini-3.1-pro-preview"
+  assert_equal "$(parse_user_options | grep -c 'vertex-gemini@example-project:gemini-3.5-flash')" "1"
+  assert_line "vertex-gemini@example-project:gemini-3.1-pro-preview"
 }
 
 @test "list_options: expanded projects produce labelled picker entries" {
   cat >"$CONF" <<'EOF'
 [vertex]
-projects = sierra-data-den, the-file-system
+projects = example-project, example-sandbox
 
 [vertex-gemini]
 gemini-3.5-flash
 EOF
   run list_options commit
   assert_success
-  assert_output --partial "vertex-gemini@sierra-data-den:gemini-3.5-flash|gemini-3.5-flash · Vertex AI [sierra-data-den]"
-  assert_output --partial "vertex-gemini@the-file-system:gemini-3.5-flash|gemini-3.5-flash · Vertex AI [the-file-system]"
+  assert_output --partial "vertex-gemini@example-project:gemini-3.5-flash|gemini-3.5-flash · Vertex AI [example-project]"
+  assert_output --partial "vertex-gemini@example-sandbox:gemini-3.5-flash|gemini-3.5-flash · Vertex AI [example-sandbox]"
 }
 
 # --- vertex_resolve layered lookup ---
@@ -359,20 +359,20 @@ EOF
 [vertex]
 account  = me@acme.com
 region   = us-east5
-projects = sierra-data-den, the-file-system
+projects = example-project, example-sandbox
 
 [vertex-anthropic]
 claude-sonnet-4-6
 EOF
-  run vertex_resolve "vertex-anthropic@the-file-system" account
+  run vertex_resolve "vertex-anthropic@example-sandbox" account
   assert_output "me@acme.com"
 
-  run vertex_resolve "vertex-anthropic@the-file-system" region
+  run vertex_resolve "vertex-anthropic@example-sandbox" region
   assert_output "us-east5"
 
   # No project= anywhere → profile name is the project.
-  run vertex_resolve "vertex-anthropic@the-file-system" project
-  assert_output "the-file-system"
+  run vertex_resolve "vertex-anthropic@example-sandbox" project
+  assert_output "example-sandbox"
 }
 
 @test "vertex_resolve: explicit profile section wins over shared defaults" {

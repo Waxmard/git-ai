@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import difflib
 import os
+import re
 import sys
 from argparse import ArgumentParser
 from pathlib import Path
@@ -76,10 +77,15 @@ def render_pr_diff(existing: str, updated: str, *, color: bool) -> str:
 
 
 _INTRO = "_intro"
+_HEADING_RE = re.compile(r"#{2,3} +\S")
 
 
 def _parse_sections(text: str) -> dict[str, list[str]]:
-    """Group non-blank lines by ``### Heading``, order preserved.
+    """Group non-blank lines by markdown heading, order preserved.
+
+    ``##`` and ``###`` both count, and depth is dropped from the key: current
+    bodies head their sections with ``##``, cached ones from before that prompt
+    change with ``###``, and a regeneration compares the two.
 
     Lines before the first heading (title, preamble) land in ``_INTRO``.
     """
@@ -87,8 +93,8 @@ def _parse_sections(text: str) -> dict[str, list[str]]:
     current = _INTRO
     for raw in text.splitlines():
         line = raw.rstrip()
-        if line.startswith("### "):
-            current = line[4:].strip()
+        if _HEADING_RE.match(line):
+            current = line.lstrip("#").strip()
             sections.setdefault(current, [])
             continue
         stripped = line.strip()

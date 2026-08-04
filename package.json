@@ -25,6 +25,7 @@
   "files": [
     "bin/",
     "lib/",
+    "python/git_ai/*.py",
     "python/git_ai/default-excludes.txt",
     "python/git_ai/recommended-models.conf",
     "python/git_ai/prompts/",

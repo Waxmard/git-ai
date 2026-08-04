@@ -80,8 +80,23 @@ def load_ignore_patterns(
 def to_pathspec_args(patterns: list[str] | tuple[str, ...] | None) -> list[str]:
     """Build trailing ``-- :/ :(top,exclude,glob)**/X ...`` args for ``git diff``.
 
+    Each pattern yields **two** specs. Under ``glob`` magic ``*`` does not cross
+    ``/``, so ``**/vendor`` matches a *file* named ``vendor`` and nothing under a
+    directory of that name — a bare ``vendor/`` line would silently exclude
+    nothing. Emitting ``**/vendor/**`` alongside it covers the directory case;
+    for a filename the extra spec matches nothing and is inert.
+
     Empty when ``patterns`` is empty/None, so callers can splat unconditionally.
     """
     if not patterns:
         return []
-    return ["--", ":/", *(f":(top,exclude,glob)**/{p}" for p in patterns)]
+    specs: list[str] = []
+    for pattern in patterns:
+        stem = pattern.rstrip("/")
+        if not stem:
+            continue
+        specs.append(f":(top,exclude,glob)**/{stem}")
+        specs.append(f":(top,exclude,glob)**/{stem}/**")
+    if not specs:
+        return []
+    return ["--", ":/", *specs]

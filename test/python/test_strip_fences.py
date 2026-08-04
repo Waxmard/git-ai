@@ -55,3 +55,26 @@ def test_unwraps_subject_but_keeps_body_code_spans() -> None:
 def test_does_not_unwrap_subject_with_internal_spans() -> None:
     # Ambiguous line (two spans) — not a clean wrapper, leave untouched.
     assert strip_fences("`a` and `b`") == "`a` and `b`"
+
+
+def test_inner_fenced_block_survives() -> None:
+    body = (
+        "===TITLE===\nfix: thing\n===BODY===\n"
+        "## Verification\n\n```bash\nnpm test\n```\n\nAll pass."
+    )
+    assert strip_fences(body) == body
+
+
+def test_unwraps_outer_fence_around_inner_block() -> None:
+    result = strip_fences("```markdown\n## Verification\n\n```bash\nnpm test\n```\n```")
+    assert result == "## Verification\n\n```bash\nnpm test\n```"
+
+
+def test_lone_trailing_fence_not_treated_as_wrapper() -> None:
+    text = "## Verification\n\n```bash\nnpm test\n```"
+    assert strip_fences(text) == text
+
+
+def test_lone_leading_fence_not_treated_as_wrapper() -> None:
+    text = "```bash\nnpm test\n```\n\nAll suites should pass."
+    assert strip_fences(text) == text

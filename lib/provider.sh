@@ -240,7 +240,8 @@ print(data["choices"][0]["message"]["content"])
 }
 
 # run_provider TOOL_NAME PROVIDER PROMPT INPUT [MODEL]
-# Runs the given LLM provider with the prompt and input, pipes through strip_fences.
+# Runs the given LLM provider with the prompt and input, emitting its raw text;
+# the caller pipes that through the Python parse layer.
 run_provider() {
   local tool_name="$1"
   local provider="$2"
@@ -260,14 +261,14 @@ run_provider() {
         die "Claude Code auth requires the Claude Code CLI. See: https://claude.ai/code"
       # --max-turns must exceed 1: reasoning models spend a turn thinking, so a
       # cap of 1 aborts with "Reached max turns" before any text is emitted.
-      claude -p "$prompt" --max-turns 3 --model "$model" <<<"$input" | strip_fences ||
+      claude -p "$prompt" --max-turns 3 --model "$model" <<<"$input" ||
         die "Claude generation failed"
       ;;
     anthropic-api)
       local anthropic_key
       anthropic_key=$(resolve_api_key anthropic-api-key ANTHROPIC_API_KEY) ||
         die "Anthropic API auth not found. Set ANTHROPIC_API_KEY or store 'anthropic-api-key' in your keychain."
-      _run_anthropic_api "$model" "$prompt" "$input" "$anthropic_key" | strip_fences ||
+      _run_anthropic_api "$model" "$prompt" "$input" "$anthropic_key" ||
         die "Anthropic API generation failed"
       ;;
     vertex-gemini|vertex-anthropic)
@@ -301,9 +302,9 @@ run_provider() {
       fi
 
       if [[ "$provider_base_name" == "vertex-anthropic" ]]; then
-        _run_vertex_anthropic_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account" | strip_fences
+        _run_vertex_anthropic_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account"
       else
-        _run_vertex_gemini_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account" | strip_fences
+        _run_vertex_gemini_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account"
       fi
       ;;
     gemini-api)
@@ -312,7 +313,7 @@ run_provider() {
       gemini_api_key=$(resolve_gemini_api_key) ||
         die "Gemini API auth not found. Set GEMINI_API_KEY or store 'gemini-api-key' in your keychain."
       export GEMINI_API_KEY="$gemini_api_key"
-      _run_gemini_cli "$model" "$prompt" "$input" | strip_fences
+      _run_gemini_cli "$model" "$prompt" "$input"
       ;;
     codex)
       command -v codex >/dev/null 2>&1 ||
@@ -337,13 +338,13 @@ run_provider() {
       output=$(<"$codex_output_file")
       rm -f "$codex_output_file"
       [[ -n "$output" ]] || die "Codex generation failed: empty response"
-      printf '\n%s\n' "$output" | strip_fences
+      printf '%s\n' "$output"
       ;;
     openai-api)
       local openai_key
       openai_key=$(resolve_api_key openai-api-key OPENAI_API_KEY) ||
         die "OpenAI API auth not found. Set OPENAI_API_KEY or store 'openai-api-key' in your keychain."
-      _run_openai_api "$model" "$prompt" "$input" "$openai_key" | strip_fences ||
+      _run_openai_api "$model" "$prompt" "$input" "$openai_key" ||
         die "OpenAI API generation failed"
       ;;
     *)

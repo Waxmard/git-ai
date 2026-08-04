@@ -106,5 +106,21 @@ def test_to_pathspec_args_builds_excludes() -> None:
         "--",
         ":/",
         ":(top,exclude,glob)**/package-lock.json",
+        ":(top,exclude,glob)**/package-lock.json/**",
         ":(top,exclude,glob)**/yarn.lock",
+        ":(top,exclude,glob)**/yarn.lock/**",
     ]
+
+
+def test_to_pathspec_args_normalizes_a_directory_pattern() -> None:
+    """A trailing slash must not produce ``**/vendor//**``."""
+    assert to_pathspec_args(["vendor/"]) == [
+        "--",
+        ":/",
+        ":(top,exclude,glob)**/vendor",
+        ":(top,exclude,glob)**/vendor/**",
+    ]
+
+
+def test_to_pathspec_args_skips_a_slash_only_pattern() -> None:
+    assert to_pathspec_args(["/"]) == []

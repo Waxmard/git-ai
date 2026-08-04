@@ -124,9 +124,9 @@ EOF
 # --- _merge_vertex_projects (additive project attach) ---
 
 @test "_merge_vertex_projects: new project appended to current list" {
-  run _merge_vertex_projects "the-file-system" "sierra-data-den"
+  run _merge_vertex_projects "example-sandbox" "example-project"
   assert_success
-  assert_output "the-file-system, sierra-data-den"
+  assert_output "example-sandbox, example-project"
 }
 
 @test "_merge_vertex_projects: re-picking an existing project dedupes" {
