@@ -95,3 +95,21 @@ def test_two_commits_use_two_pass() -> None:
 def test_empty_diff_is_rejected() -> None:
     with pytest.raises(ValueError, match="diff is empty"):
         build_mr_prompt_input(diff="", commit_log=_log("feat: add widget"))
+
+
+def test_absent_commit_log_omits_the_tag_entirely() -> None:
+    """A blank <commit_log> asserts "no commits"; absence just says nothing."""
+    _, user_input = build_mr_prompt_input(diff=_DIFF, existing_pr="# Old")
+    assert "<commit_log>" not in user_input
+    assert "<changed_files>" in user_input
+    assert "<diff>" in user_input
+
+
+def test_whitespace_only_commit_log_omits_the_tag() -> None:
+    _, user_input = build_mr_prompt_input(diff=_DIFF, commit_log="  \n \n")
+    assert "<commit_log>" not in user_input
+
+
+def test_present_commit_log_still_emits_the_tag() -> None:
+    _, user_input = build_mr_prompt_input(diff=_DIFF, commit_log=_log("wip: thing"))
+    assert "<commit_log>\nwip: thing" in user_input

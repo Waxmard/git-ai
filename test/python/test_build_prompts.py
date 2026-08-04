@@ -307,7 +307,10 @@ def test_build_mr_prompt_fallback_when_not_conventional() -> None:
 def test_build_mr_prompt_no_log_uses_fallback() -> None:
     _, user = build_mr_prompt(diff=_SAMPLE_DIFF)
     assert "<draft>" not in user
-    assert "<commit_log>" in user
+    # The fallback tell is <diff>, which the two-pass input never carries. The
+    # log tag itself is absent rather than blank — see the omission tests.
+    assert "<diff>" in user
+    assert "<commit_log>" not in user
 
 
 def test_build_mr_prompt_existing_pr_picks_update_prompt() -> None:
