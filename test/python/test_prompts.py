@@ -58,6 +58,11 @@ def test_commit_prompt_requires_prose_body() -> None:
     assert "no markdown headings" in text
 
 
+def test_commit_prompt_caps_body_length() -> None:
+    text = _load_prompt("commit.txt")
+    assert "hard ceiling" in text
+
+
 def test_update_prompts_mention_existing_pr() -> None:
     for name in ["pr-two-pass-update.txt", "pr-fallback-update.txt"]:
         assert "existing_pr" in _load_prompt(name), f"{name} missing existing_pr tag"
