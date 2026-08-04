@@ -112,7 +112,7 @@ _file_mtime() {
 # An emptied-and-saved buffer also aborts, matching native git.
 # ---------------------------------------------------------------------------
 _commit_prompt_and_run() {
-  local msg="$1"
+  local msg="$1" note="${2:-}"
   if [[ -t 1 ]]; then
     local tmpfile editor comment_char
     tmpfile=$(mktemp /tmp/git-ai-commit.XXXXXX)
@@ -124,6 +124,7 @@ _commit_prompt_and_run() {
     [[ -z "$comment_char" || "$comment_char" == "auto" ]] && comment_char='#'
     {
       printf '%s\n' "$msg"
+      [[ -n "$note" ]] && printf '\n%s %s\n' "$comment_char" "$note"
       printf '\n%s Save and close (e.g. :wq) to commit this message.\n' "$comment_char"
       printf '%s Quit WITHOUT saving (e.g. :q or :q!) to abort — nothing is committed.\n' "$comment_char"
       printf '%s Lines starting with %s are ignored.\n' "$comment_char" "$comment_char"
@@ -155,6 +156,7 @@ _commit_prompt_and_run() {
     trap - EXIT INT TERM
     return "$commit_status"
   else
+    [[ -n "$note" ]] && printf 'git-ai: %s\n' "$note" >&2
     printf '%s\n' "$msg"
   fi
 }
@@ -164,6 +166,7 @@ _commit_prompt_and_run() {
 # ---------------------------------------------------------------------------
 
 cmd_commit() {
+  require_python
   local PROVIDER MODEL BASE=""
   local -a rest=()
   # Pull --base out of the args; everything else stays positional.
@@ -222,16 +225,19 @@ cmd_commit() {
   REPO_ROOT=$(git rev-parse --show-toplevel) || die "failed to determine repo root"
 
   local REPO_GUIDANCE
-  REPO_GUIDANCE=$(load_git_ai_instructions "$REPO_ROOT")
+  REPO_GUIDANCE=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
+    instructions --repo "$REPO_ROOT") || die "failed to read .git-ai-instructions"
 
-  local -a IGNORE_PATTERNS=() PATHSPEC=()
-  local _p
-  while IFS= read -r _p; do
-    [[ -n "$_p" ]] && IGNORE_PATTERNS+=("$_p")
-  done < <(load_git_ai_ignore "$REPO_ROOT")
+  # Captured before the loop rather than read through a process substitution:
+  # a pathspec that silently came back empty would send unignored files to the
+  # model, so the exit status has to be checked.
+  local -a PATHSPEC=()
+  local _p pathspec_out
+  pathspec_out=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
+    ignore-pathspec --repo "$REPO_ROOT") || die "failed to read .git-ai-ignore"
   while IFS= read -r _p; do
     [[ -n "$_p" ]] && PATHSPEC+=("$_p")
-  done < <(build_pathspec_excludes ${IGNORE_PATTERNS[@]+"${IGNORE_PATTERNS[@]}"})
+  done <<<"$pathspec_out"
 
   git diff --staged --quiet ${PATHSPEC[@]+"${PATHSPEC[@]}"} && die "no staged changes to summarize"
 
@@ -272,14 +278,24 @@ cmd_commit() {
 ${STAGED_DIFF}
 </diff>"
 
-  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL" | extract_commit_output) || exit $?
+  local note_file SUBJECT_NOTE=""
+  note_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-note.XXXXXX") ||
+    die "failed to create temporary file"
+  local rc=0
+  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL" |
+    "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" format \
+      --note-file "$note_file") || rc=$?
+  [[ -s "$note_file" ]] && SUBJECT_NOTE=$(<"$note_file")
+  rm -f "$note_file"
+  ((rc == 0)) || exit "$rc"
   [[ -n "$(_trim "$generated")" ]] ||
     die "${PROVIDER} returned an empty commit message; retry or try another provider"
   save_last_message commit "$generated"
-  _commit_prompt_and_run "$generated"
+  _commit_prompt_and_run "$generated" "$SUBJECT_NOTE"
 }
 
 cmd_pr() {
+  require_python
   local PROVIDER MODEL BASE FRESH FROM_SHA
   PROVIDER=""
   MODEL=""
@@ -422,7 +438,9 @@ cmd_pr() {
   printf '%s' "$CHURN_SUBJECTS" >"$CHURN_FILE"
   local PR_REPO_ROOT
   PR_REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || PR_REPO_ROOT="."
-  load_git_ai_instructions "$PR_REPO_ROOT" >"$INSTR_FILE"
+  "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
+    instructions --repo "$PR_REPO_ROOT" >"$INSTR_FILE" ||
+    die "failed to read .git-ai-instructions"
   "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_pr_repo_cli.py" build-input \
     --diff-file "$DIFF_FILE" \
     --commit-log-file "$LOG_FILE" \
@@ -448,19 +466,6 @@ PY
 )
   rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
 
-  # "verbatim": the branch is a single Conventional-Commits commit, so its
-  # message already IS the best PR summary — use it directly and skip the LLM.
-  if [[ "$PROMPT_NAME" == "verbatim" ]]; then
-    echo "git-ai: single conventional commit — using it verbatim (no LLM call)" >&2
-    save_last_message pr "$INPUT"
-    if [[ -n "$CURRENT_BRANCH" ]]; then
-      save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$INPUT" "$HEAD_SHA" "${CONTENT_ID:-}" ||
-        die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
-    fi
-    render_pr_output "${EXISTING_PR:-}" "$INPUT"
-    return 0
-  fi
-
   case "$PROMPT_NAME" in
     pr-two-pass.txt) PROMPT="$PROMPT_TWO_PASS" ;;
     pr-fallback.txt) PROMPT="$PROMPT_FALLBACK" ;;
@@ -475,7 +480,7 @@ PY
 
   local OUTPUT
   OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL") || exit $?
-  OUTPUT=$(extract_pr_output <<<"$OUTPUT")
+  OUTPUT=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_pr_repo_cli.py" format <<<"$OUTPUT") || exit $?
   save_last_message pr "$OUTPUT"
   if [[ -n "$CURRENT_BRANCH" ]]; then
     save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" "${CONTENT_ID:-}" ||

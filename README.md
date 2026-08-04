@@ -113,7 +113,7 @@ git-ai mr [...]   # alias for pr
 ```
 
 - Reads the commit log and diff against the base branch
-- Produces a Conventional Commits title + markdown body with a `### Test Plan` section
+- Produces a Conventional Commits title + a markdown body structured by purpose (`## Overview`/`## Problem` → `## Change` → `## Verification`), scaled to the size of the change — a one-concern PR gets a few sentences and no headings at all
 - Auto-detects the base branch from the remote default (falls back to `main`)
 - Use `--base` to override (e.g. `--base dev`)
 - Saves the generated output per current-branch/base-branch pair under `.git/pr-cache/`; subsequent runs with the same pair refine the previous result automatically
@@ -168,6 +168,20 @@ system, user = git_ai.build_commit_prompt(diff_text)
 raw = my_llm(system, user)               # your call: SDK, agent framework, REST, etc.
 commit_msg = git_ai.parse_commit_response(raw)
 ```
+
+`parse_commit_response` only parses — fences off, `===COMMIT===` marker unwrapped, agent trailers dropped. The two formatting rules the `git-ai` CLI enforces deterministically are separate calls, so a library consumer opts into them:
+
+```python
+msg = git_ai.wrap_commit_body(commit_msg)          # hard-wrap prose at BODY_WRAP_WIDTH (72)
+trim = git_ai.enforce_subject_limit(msg)           # cut the subject to SUBJECT_LIMIT (70)
+commit_msg = trim.message
+if trim.over_limit:
+    warn(f"subject is {trim.subject_length} chars with no clean clause break")
+elif trim.dropped:
+    warn(f'trimmed: dropped "{trim.dropped}"')
+```
+
+They stay separate because `enforce_subject_limit` returns a `SubjectTrim`, not a string: a subject with no usable clause break is returned untouched, and the caller is expected to surface that rather than ship an over-long subject silently.
 
 **MR/PR description** (data-mode — no local checkout, e.g. fetched from the GitHub/GitLab API):
 
@@ -259,15 +273,18 @@ uv.lock              composer.lock     Pipfile.lock        pubspec.lock
 mix.lock             flake.lock
 ```
 
-Drop a `.git-ai-ignore` file at the repo root to add more patterns (one per line, `#` comments and blank lines ignored). Patterns are Git pathspec glob fragments that git-ai prefixes with `**/`, so `generated/**/*.ts` matches TypeScript files under any `generated/` directory; leading `/` is not `.gitignore` root syntax. Lines starting with `!` re-include a pattern, useful when you actually want to review a built-in default:
+Drop a `.git-ai-ignore` file at the repo root to add more patterns (one per line, `#` comments and blank lines ignored). Patterns are Git pathspec glob fragments, **not `.gitignore` syntax** — a leading `/` is not root-anchoring. Each pattern matches at any depth: `generated/**/*.ts` matches TypeScript files under any `generated/` directory, and a bare directory name (`vendor`, or `vendor/`) excludes everything beneath it. Lines starting with `!` re-include a pattern, useful when you actually want to review a built-in default:
 
 ```
 build/dist.js
 generated/**/*.ts
+vendor/
 
 # Re-include this lockfile when you want to review it
 !package-lock.json
 ```
+
+`!` removes a pattern by exact string match, so it only re-includes a built-in default (or an earlier line spelled identically) — it is not `.gitignore` negation precedence.
 
 If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`, set `0` to disable), git-ai aborts with a "Largest changed files" hint pointing at what to ignore or unstage.
 

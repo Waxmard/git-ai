@@ -12,95 +12,12 @@ die() {
 GIT_AI_PKG_DIR="${GIT_AI_PKG_DIR:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../python/git_ai}"
 [[ -d "$GIT_AI_PKG_DIR" ]] || die "GIT_AI_PKG_DIR not found: $GIT_AI_PKG_DIR (use the git-ai console script, not _sh/bin/git-ai directly)"
 
-# Built-in lockfile patterns excluded from diffs by default.
-GIT_AI_DEFAULT_EXCLUDES_FILE="${GIT_AI_PKG_DIR}/default-excludes.txt"
-GIT_AI_DEFAULT_EXCLUDES=()
-if [[ ! -r "$GIT_AI_DEFAULT_EXCLUDES_FILE" ]]; then
-  die "missing default excludes file: $GIT_AI_DEFAULT_EXCLUDES_FILE"
-fi
-while IFS= read -r line || [[ -n "$line" ]]; do
-  line="${line#"${line%%[![:space:]]*}"}"
-  line="${line%"${line##*[![:space:]]}"}"
-  [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
-  GIT_AI_DEFAULT_EXCLUDES+=("$line")
-done <"$GIT_AI_DEFAULT_EXCLUDES_FILE"
-
-# load_git_ai_ignore <repo_root>
-# Print active exclude patterns (defaults + .git-ai-ignore additions, minus
-# negations marked with `!`), one per line. Order: defaults first, then
-# additions in file order. Duplicates are dropped.
-load_git_ai_ignore() {
-  local repo_root="$1"
-  local ignore_file="${repo_root}/.git-ai-ignore"
-  local -a additions=()
-  local -a negations=()
-  local line trimmed neg
-  if [[ -r "$ignore_file" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      trimmed="${line#"${line%%[![:space:]]*}"}"
-      trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-      [[ -z "$trimmed" || "${trimmed:0:1}" == "#" ]] && continue
-      if [[ "${trimmed:0:1}" == "!" ]]; then
-        neg="${trimmed:1}"
-        neg="${neg#"${neg%%[![:space:]]*}"}"
-        neg="${neg%"${neg##*[![:space:]]}"}"
-        [[ -n "$neg" ]] && negations+=("$neg")
-      else
-        additions+=("$trimmed")
-      fi
-    done <"$ignore_file"
-  fi
-
-  local emitted=$'\n'
-  local p n is_negated
-  for p in "${GIT_AI_DEFAULT_EXCLUDES[@]}" ${additions[@]+"${additions[@]}"}; do
-    is_negated=false
-    for n in ${negations[@]+"${negations[@]}"}; do
-      [[ "$n" == "$p" ]] && { is_negated=true; break; }
-    done
-    [[ "$is_negated" == "true" ]] && continue
-    case "$emitted" in
-      *$'\n'"$p"$'\n'*) continue ;;
-    esac
-    printf '%s\n' "$p"
-    emitted+="$p"$'\n'
-  done
-}
-
-# load_git_ai_instructions <repo_root>
-# Print the trimmed contents of the repo-root .git-ai-instructions file, or
-# nothing when it is absent/empty. Free-form repo-local conventions (commit
-# scopes, type-classification overrides) surfaced to the model as authoritative.
-load_git_ai_instructions() {
-  local repo_root="$1"
-  local instr_file="${repo_root}/.git-ai-instructions"
-  [[ -r "$instr_file" ]] || return 0
-  # Mirror the Python path (_instructions.py): skip non-UTF-8 files instead of
-  # injecting garbled bytes into the prompt. Only enforced when iconv is
-  # available; degrade to a raw read otherwise.
-  if command -v iconv >/dev/null 2>&1; then
-    iconv -f UTF-8 -t UTF-8 "$instr_file" >/dev/null 2>&1 || return 0
-  fi
-  local content
-  content=$(<"$instr_file")
-  # Trim leading/trailing whitespace; emit nothing when effectively empty.
-  content="${content#"${content%%[![:space:]]*}"}"
-  content="${content%"${content##*[![:space:]]}"}"
-  [[ -n "$content" ]] && printf '%s\n' "$content"
-  return 0
-}
-
-# build_pathspec_excludes [patterns...]
-# Print repo-root pathspec args for `git diff` (one per line), or nothing
-# when no patterns are given. Caller splats the result into the git command.
-build_pathspec_excludes() {
-  [[ $# -gt 0 ]] || return 0
-  printf -- '--\n'
-  printf ':/\n'
-  local p
-  for p in "$@"; do
-    printf ':(top,exclude,glob)**/%s\n' "$p"
-  done
+# python3 backs response formatting and every provider API call, so name a
+# missing interpreter up front instead of surfacing it as "command not found"
+# from inside a pipeline after the LLM has already been billed.
+require_python() {
+  command -v "${GIT_AI_PYTHON:-python3}" >/dev/null 2>&1 ||
+    die "requires python3 (set GIT_AI_PYTHON to point at an interpreter)"
 }
 
 # check_diff_size_or_die <diff>
@@ -139,92 +56,6 @@ check_diff_size_or_die() {
     printf 'Add patterns to .git-ai-ignore (repo root) to skip them, unstage them, or raise GIT_AI_MAX_DIFF_BYTES.\n'
   } >&2
   exit 1
-}
-
-strip_fences() {
-  perl -0pe '
-    s/^[ \t]*```.*\n//mg;
-    s/^[ \t]*`+[ \t]*\n//mg;
-    s/\A(?:[ \t]*\n)+//;
-    s/\A[ \t]*(`+)([^`\n]+)\1[ \t]*$/$2/m;
-    s/(?:\n[ \t]*)+\z/\n/s;
-  '
-}
-
-# Shape of a droppable trailing line, passed into the perl extractors below
-# through the environment: an agent self-attribution trailer, or a ===WORD===
-# sentinel whatever the word is (models routinely close a section with an
-# invented ===END=== no prompt asked for). One shape rather than two passes
-# because they interleave — an agent signing below its own ===END=== strands the
-# marker otherwise. Mirrors python/git_ai/_generate.py:_drop_trailing_noise.
-export GIT_AI_TRAILING_NOISE_RE='(?i:co-authored-by:|\W*generated with \[).*|={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}'
-
-# Drop trailing sentinel and agent self-attribution lines from stdin. Agent CLIs
-# (claude -p, codex exec) carry a system prompt of their own instructing them to
-# sign commits with Co-Authored-By: and PR bodies with a "Generated with [...]"
-# line; that outranks the git-ai prompt, so the trailer is stripped after the
-# fact. Passes the input through unchanged when the noise is all there is.
-# Mirrors python/git_ai/_generate.py:_drop_trailing_noise_safe.
-drop_trailing_noise() {
-  perl -0777 -ne '
-    my $orig = $_;
-    my $noise = qr/^[ \t]*(?:$ENV{GIT_AI_TRAILING_NOISE_RE})[ \t]*$/;
-    my @l = split /\n/, $_, -1;
-    while (@l && ($l[-1] !~ /\S/ || $l[-1] =~ $noise)) {
-      pop @l;
-    }
-    print @l ? join("\n", @l) . "\n" : $orig;
-  '
-}
-
-# Slice title/body out of sentinel-delimited PR output read from stdin. The PR
-# prompts wrap their answer in ===TITLE=== / ===BODY=== line markers so any
-# preamble, reasoning, or char-count chatter outside the markers is discarded;
-# prints "title\n\nbody". Passes the input through unchanged when the markers
-# are absent or malformed (older or non-compliant models). Mirrors
-# python/git_ai/_generate.py:_extract_pr_sections.
-extract_pr_output() {
-  perl -0777 -ne '
-    my $marker = qr/(?:\A|\n)[ \t]*(?:$ENV{GIT_AI_TRAILING_NOISE_RE})[ \t]*\z/;
-    if (/^===TITLE===[ \t]*\n(.*?)\n===BODY===[ \t]*\n(.*)\z/ms) {
-      my ($t, $b) = ($1, $2);
-      $t =~ s/\A\s+//; $t =~ s/\s+\z//;
-      $b =~ s/\A\s+//; $b =~ s/\s+\z//;
-      while ($b =~ s/$marker//) { $b =~ s/\s+\z//; }
-      if (length $t) {
-        print length($b) ? "$t\n\n$b\n" : "$t\n";
-        next;
-      }
-    }
-    print;
-  ' | drop_trailing_noise
-}
-
-# Slice the commit message out of a model response read from stdin, discarding
-# any preamble. Reasoning models emit their type-choice rationale ahead of the
-# message, which otherwise lands as the subject line. Prefers everything after
-# the ===COMMIT=== marker the commit prompt asks for; falls back to the first
-# Conventional Commits subject line onward for models that drop the marker, and
-# passes the input through unchanged when neither is present. Mirrors
-# python/git_ai/_generate.py:_extract_commit_message.
-extract_commit_output() {
-  perl -0777 -ne '
-    my $marker = qr/(?:\A|\n)[ \t]*(?:$ENV{GIT_AI_TRAILING_NOISE_RE})[ \t]*\z/;
-    if (/^===COMMIT===[ \t]*\n(.*)\z/ms) {
-      my $m = $1;
-      $m =~ s/\A\s+//; $m =~ s/\s+\z//;
-      while ($m =~ s/$marker//) { $m =~ s/\s+\z//; }
-      if (length $m) { print "$m\n"; next; }
-    }
-    if (/^[ \t]*((?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)(?:\([^)]*\))?!?: \S.*)\z/ms) {
-      my $m = $1;
-      $m =~ s/\s+\z//;
-      while ($m =~ s/$marker//) { $m =~ s/\s+\z//; }
-      print "$m\n";
-      next;
-    }
-    print;
-  ' | drop_trailing_noise
 }
 
 # Print $1 with leading/trailing whitespace stripped.

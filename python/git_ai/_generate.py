@@ -8,16 +8,42 @@ from __future__ import annotations
 
 import os
 import re
+import textwrap
+from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
-from ._git import (
-    DEFAULT_RELEASE_CONTEXT,
-    derive_diff_stat,
-    largest_diff_files,
-)
-from ._git_branch import format_branch_context
-from ._instructions import format_repo_guidance
-from ._pr_prompt_build import build_mr_prompt_input
+if TYPE_CHECKING:
+    from ._git import (
+        DEFAULT_RELEASE_CONTEXT,
+        derive_diff_stat,
+        largest_diff_files,
+    )
+    from ._git_branch import format_branch_context
+    from ._instructions import format_repo_guidance
+    from ._pr_prompt_build import build_mr_prompt_input
+elif __package__ in (None, ""):
+    import importlib
+
+    _git_mod = importlib.import_module("_git")
+    _git_branch_mod = importlib.import_module("_git_branch")
+    DEFAULT_RELEASE_CONTEXT = _git_mod.DEFAULT_RELEASE_CONTEXT
+    build_mr_prompt_input = importlib.import_module(
+        "_pr_prompt_build"
+    ).build_mr_prompt_input
+    derive_diff_stat = _git_mod.derive_diff_stat
+    format_branch_context = _git_branch_mod.format_branch_context
+    format_repo_guidance = importlib.import_module("_instructions").format_repo_guidance
+    largest_diff_files = _git_mod.largest_diff_files
+else:
+    from ._git import (
+        DEFAULT_RELEASE_CONTEXT,
+        derive_diff_stat,
+        largest_diff_files,
+    )
+    from ._git_branch import format_branch_context
+    from ._instructions import format_repo_guidance
+    from ._pr_prompt_build import build_mr_prompt_input
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _DEFAULT_MAX_DIFF_BYTES = 900_000
@@ -58,12 +84,27 @@ def _load_prompt(name: str) -> str:
     return (_PROMPTS_DIR / name).read_text(encoding="utf-8").rstrip()
 
 
+_FENCE_OPEN_RE = re.compile(r"[ \t]*`{3,}[^`]*")
+_FENCE_CLOSE_RE = re.compile(r"[ \t]*`{3,}[ \t]*")
+
+
 def strip_fences(text: str) -> str:
-    text = re.sub(r"^[ \t]*```.*\n", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^[ \t]*`+[ \t]*$\n?", "", text, flags=re.MULTILINE)
-    text = text.strip()
+    """Unwrap a fence only when it wraps the entire response.
+
+    Fenced blocks *inside* a PR body are content — verification commands,
+    deployment steps — so only a fence that opens the first line and closes the
+    last is treated as the model wrapping its whole answer.
+    """
+    lines = text.strip().split("\n")
+    if (
+        len(lines) >= 2
+        and _FENCE_OPEN_RE.fullmatch(lines[0])
+        and _FENCE_CLOSE_RE.fullmatch(lines[-1])
+    ):
+        lines = lines[1:-1]
     # Unwrap a subject wrapped in an inline code span ("`feat: add x`"). Only a
     # whole-line single span, so code spans inside a body survive.
+    text = "\n".join(lines).strip()
     lines = text.split("\n")
     if lines:
         m = re.fullmatch(r"[ \t]*(`+)([^`]+)\1[ \t]*", lines[0])
@@ -217,6 +258,31 @@ def _marker_index(lines: list[str], marker: str) -> int:
     return -1
 
 
+def _fence_open_at(lines: list[str]) -> bool:
+    """True when ``lines`` leave a fence unclosed.
+
+    An odd count is the tell: every fence line matches the open pattern, so a
+    balanced example block inside a model's preamble cancels out while a
+    wrapper the model opened before the markers does not.
+    """
+    return sum(1 for line in lines if _FENCE_OPEN_RE.fullmatch(line)) % 2 == 1
+
+
+def _finish_payload(payload: str, *, wrapped: bool) -> str:
+    """Trim noise off a marker-delimited slice, plus a wrapper's closing fence.
+
+    ``strip_fences`` only unwraps a fence sitting on the response's first and
+    last line, so a model that reasons before the fence or signs its work after
+    it leaves the closing ``` inside the payload.
+    """
+    text = _drop_trailing_noise(payload)
+    if wrapped:
+        lines = text.split("\n")
+        if lines and _FENCE_CLOSE_RE.fullmatch(lines[-1]):
+            text = _drop_trailing_noise("\n".join(lines[:-1]))
+    return text.strip()
+
+
 def _extract_pr_sections(text: str) -> str:
     """Slice ``title\\n\\nbody`` out of ``===TITLE===`` / ``===BODY===`` markers.
 
@@ -232,15 +298,16 @@ def _extract_pr_sections(text: str) -> str:
     title = "\n".join(lines[t_idx + 1 : b_idx]).strip()
     if not title:
         return text
-    body = _drop_trailing_noise("\n".join(lines[b_idx + 1 :])).strip()
+    body = _finish_payload(
+        "\n".join(lines[b_idx + 1 :]), wrapped=_fence_open_at(lines[:t_idx])
+    )
     return f"{title}\n\n{body}" if body else title
 
 
 _COMMIT_MARKER = "===COMMIT==="
-_COMMIT_SUBJECT_RE = re.compile(
-    r"^(?:feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert)"
-    r"(?:\([^)]*\))?!?: \S"
-)
+_COMMIT_TYPES = "feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert"
+_COMMIT_PREFIX_RE = re.compile(rf"^(?:{_COMMIT_TYPES})(?:\([^)]*\))?!?: ")
+_COMMIT_SUBJECT_RE = re.compile(rf"^(?:{_COMMIT_TYPES})(?:\([^)]*\))?!?: \S")
 
 
 def _extract_commit_message(text: str) -> str:
@@ -255,13 +322,188 @@ def _extract_commit_message(text: str) -> str:
     lines = text.split("\n")
     idx = _marker_index(lines, _COMMIT_MARKER)
     if idx >= 0:
-        after = _drop_trailing_noise("\n".join(lines[idx + 1 :])).strip()
+        after = _finish_payload(
+            "\n".join(lines[idx + 1 :]), wrapped=_fence_open_at(lines[:idx])
+        )
         if after:
             return after
     for i, line in enumerate(lines):
         if _COMMIT_SUBJECT_RE.match(line.strip()):
-            return _drop_trailing_noise("\n".join(lines[i:])).strip()
+            return _finish_payload(
+                "\n".join(lines[i:]), wrapped=_fence_open_at(lines[:i])
+            )
     return text
+
+
+SUBJECT_LIMIT = 70
+_MIN_TRIMMED_SUBJECT = 24
+_CLAUSE_SEPARATORS = (" and ", " plus ", ", ", "; ")
+
+
+class SubjectTrim(NamedTuple):
+    """Result of ``enforce_subject_limit``.
+
+    ``dropped`` is the clause removed from the subject, empty when nothing was
+    trimmed; ``over_limit`` says whether the subject still exceeds the limit,
+    which is how a caller knows to warn.
+    """
+
+    message: str
+    dropped: str
+    subject_length: int
+    over_limit: bool
+
+
+def _clause_break_positions(subject: str, start: int) -> Iterator[int]:
+    """Yield indices in ``subject`` at or after ``start`` that may hold a break.
+
+    Skips anything nested in brackets or a code span: a separator inside a code
+    reference (``parse(foo, bar)``) is punctuation, not a clause boundary, and
+    cutting there leaves a mangled half-identifier. Code spans follow CommonMark
+    — a run of backticks closes only on a run of the same length — so a span
+    opened with two backticks can hold a literal backtick without ending early.
+    An unclosed bracket or span suppresses every later position, which degrades
+    to the untouched ``over_limit`` path rather than a bad trim.
+    """
+    depth = 0
+    code_run = 0
+    i = 0
+    while i < len(subject):
+        ch = subject[i]
+        if ch == "`":
+            run = len(subject[i:]) - len(subject[i:].lstrip("`"))
+            if code_run == 0:
+                code_run = run
+            elif run == code_run:
+                code_run = 0
+            i += run
+            continue
+        if code_run == 0:
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth = max(0, depth - 1)
+            if i >= start and depth == 0:
+                yield i
+        i += 1
+
+
+def enforce_subject_limit(message: str, limit: int = SUBJECT_LIMIT) -> SubjectTrim:
+    """Shorten an over-long commit subject at a clause boundary.
+
+    Long subjects are near-always two clauses joined by ``and`` / ``,`` / ``;``,
+    so cutting at the last such break under ``limit`` leaves a whole,
+    grammatical subject and the dropped detail is already covered by the body.
+    A subject with no usable break is returned untouched with ``over_limit``
+    set — a mid-word truncation reads worse than an over-long subject, so the
+    caller warns instead. Separators inside the Conventional Commits prefix are
+    skipped so a multi-word scope can't be cut in half.
+    """
+    subject, newline, rest = message.partition("\n")
+    length = len(subject)
+    if length <= limit:
+        return SubjectTrim(message, "", length, False)
+
+    prefix = _COMMIT_PREFIX_RE.match(subject)
+    best = ""
+    for i in _clause_break_positions(subject, prefix.end() if prefix else 0):
+        if not any(subject.startswith(sep, i) for sep in _CLAUSE_SEPARATORS):
+            continue
+        head = subject[:i].rstrip(" ,;")
+        if _MIN_TRIMMED_SUBJECT <= len(head) <= limit and len(head) > len(best):
+            best = head
+    if not best:
+        return SubjectTrim(message, "", length, True)
+    dropped = subject[len(best) :].strip(" ,;")
+    return SubjectTrim(best + newline + rest, dropped, length, False)
+
+
+BODY_WRAP_WIDTH = 72
+_PARAGRAPH_BREAK_RE = re.compile(r"(\n[ \t]*\n)")
+_LIST_ITEM_RE = re.compile(r"(?:[-*+]|\d+[.)]) ")
+_TRAILER_LINE_RE = re.compile(r"[A-Za-z][A-Za-z0-9-]*:(?: \S.*)?")
+_FENCE_DELIM_RE = re.compile(r"[ \t]*((`|~)\2{2,})(.*)")
+_FENCE_ANY_RE = re.compile(r"`{3,}|~{3,}")
+
+
+def _fence_state(
+    lines: list[str], fence: tuple[str, int] | None
+) -> tuple[str, int] | None:
+    """Track fence nesting across ``lines``, returning the open delimiter.
+
+    ``None`` means "not inside a fence"; otherwise (character, run length).
+    Follows CommonMark: a fence closes only on a run of the *same* character at
+    least as long as the one that opened it, so a four-backtick block can hold a
+    three-backtick example without either the inner opener or its closer ending
+    the outer block. Only a backtick opener's info string is restricted (it may
+    not contain a backtick); a tilde opener's is free-form.
+    """
+    for ln in lines:
+        m = _FENCE_DELIM_RE.fullmatch(ln)
+        if not m:
+            continue
+        run, char, rest = m.group(1), m.group(2), m.group(3)
+        if fence:
+            if char == fence[0] and len(run) >= fence[1] and not rest.strip():
+                fence = None
+        elif char == "~" or "`" not in rest:
+            fence = (char, len(run))
+    return fence
+
+
+def _reflowable(lines: list[str], is_last: bool) -> bool:
+    # Only the final paragraph gets the trailer exemption: git reads trailers
+    # from the last block, and mid-body prose routinely opens "Verified: ...",
+    # which is ordinary text that should still wrap.
+    if is_last and all(_TRAILER_LINE_RE.fullmatch(ln) for ln in lines):
+        return False
+    return all(
+        ln[:1].strip() and not _LIST_ITEM_RE.match(ln) and not _FENCE_ANY_RE.search(ln)
+        for ln in lines
+    )
+
+
+def wrap_commit_body(message: str, width: int = BODY_WRAP_WIDTH) -> str:
+    """Hard-wrap the prose paragraphs of a commit body at ``width`` columns.
+
+    git renders commit bodies verbatim, so an unwrapped paragraph is a single
+    long line in ``git log``; models wrap inconsistently, so it is done here.
+    Reflow is confined to plain prose — indented lines, list items, fenced
+    blocks, and a trailing trailer block keep their line structure, which is
+    load-bearing. The subject is never touched (see ``enforce_subject_limit``).
+    """
+    subject, newline, body = message.partition("\n")
+    if not newline:
+        return message
+    core = body.lstrip("\n")
+    lead = len(body) - len(core)
+    tail = len(core) - len(core.rstrip("\n"))
+    blocks = _PARAGRAPH_BREAK_RE.split(core[: len(core) - tail])
+    content = [i for i, b in enumerate(blocks) if i % 2 == 0 and b.strip()]
+    last = content[-1] if content else -1
+    out = []
+    fence: tuple[str, int] | None = None
+    for i, block in enumerate(blocks):
+        if i % 2 or not block.strip():
+            out.append(block)
+            continue
+        lines = block.split("\n")
+        # A fenced block can span blank lines, which puts an interior stanza in
+        # its own paragraph with no fence marker of its own to spot it by.
+        reflow = not fence and _reflowable(lines, i == last)
+        fence = _fence_state(lines, fence)
+        if not reflow:
+            out.append(block)
+            continue
+        out.append(
+            textwrap.fill(
+                " ".join(lines),
+                width=width,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+        )
+    return subject + newline + "\n" * lead + "".join(out) + "\n" * tail
 
 
 def parse_commit_response(raw: str) -> str:

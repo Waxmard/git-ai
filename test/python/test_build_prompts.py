@@ -431,3 +431,56 @@ def test_parse_commit_response_drops_end_marker_on_fallback_path() -> None:
 def test_parse_mr_response_drops_invented_end_marker() -> None:
     raw = "===TITLE===\nfeat: title\n===BODY===\n- x\n===END===\n"
     assert parse_mr_response(raw) == "feat: title\n\n- x"
+
+
+def test_parse_commit_response_drops_a_wrapper_fence_after_a_preamble() -> None:
+    raw = "Analysis: feat.\n```\n===COMMIT===\nfeat: add thing\n\nBody.\n```"
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
+def test_parse_commit_response_drops_a_wrapper_fence_above_a_trailer() -> None:
+    raw = (
+        "```markdown\n===COMMIT===\nfeat: add thing\n\nBody.\n```\n"
+        "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+    )
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
+def test_parse_commit_response_drops_a_wrapper_fence_without_a_marker() -> None:
+    raw = "Analysis: feat.\n```\nfeat: add thing\n\nBody.\n```"
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
+def test_parse_commit_response_keeps_a_fenced_block_in_the_body() -> None:
+    raw = "===COMMIT===\nfeat: add thing\n\nRun:\n\n```\nmake test\n```"
+    assert (
+        parse_commit_response(raw) == "feat: add thing\n\nRun:\n\n```\nmake test\n```"
+    )
+
+
+def test_parse_mr_response_drops_a_wrapper_fence_after_a_preamble() -> None:
+    raw = (
+        "Here is the PR.\n```markdown\n===TITLE===\nfeat: add thing\n"
+        "===BODY===\n## Overview\n\nText.\n```"
+    )
+    assert parse_mr_response(raw) == "feat: add thing\n\n## Overview\n\nText."
+
+
+def test_parse_mr_response_keeps_a_body_ending_in_a_fenced_block() -> None:
+    raw = (
+        "Here is the PR.\n===TITLE===\nfeat: add thing\n"
+        "===BODY===\n## Verification\n\n```\nmake test\n```"
+    )
+    assert parse_mr_response(raw) == (
+        "feat: add thing\n\n## Verification\n\n```\nmake test\n```"
+    )
+
+
+def test_parse_mr_response_keeps_a_body_fence_after_a_balanced_preamble() -> None:
+    raw = (
+        "Considered:\n```\nold approach\n```\n===TITLE===\nfeat: add thing\n"
+        "===BODY===\n## Verification\n\n```\nmake test\n```"
+    )
+    assert parse_mr_response(raw) == (
+        "feat: add thing\n\n## Verification\n\n```\nmake test\n```"
+    )

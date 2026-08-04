@@ -83,7 +83,7 @@ def test_git_module_supports_standalone_import() -> None:
                 "import sys; "
                 f"sys.path.insert(0, {str(package_dir)!r}); "
                 "import _git; "
-                "print(_git.to_pathspec_args(['x.lock'])[-1])"
+                "print(_git.to_pathspec_args(['x.lock'])[2])"
             ),
         ],
         capture_output=True,
@@ -246,6 +246,74 @@ def test_get_staged_diff_excludes_default_lockfiles(tmp_path: Path) -> None:
 
     assert "app.py" in diff
     assert "package-lock.json" not in diff
+
+
+def _stage_nested(repo: Path, files: dict[str, str]) -> None:
+    _init_repo(repo)
+    for name, content in files.items():
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+
+
+def test_get_staged_diff_excludes_a_directory_pattern(tmp_path: Path) -> None:
+    """Asserts real exclusion, not that a pathspec string was produced.
+
+    ``glob`` magic stops ``*`` at ``/``, so a bare ``**/vendor`` spec matches
+    only a file of that name — this is the regression guard for that.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_nested(
+        repo,
+        {
+            ".git-ai-ignore": "vendor/\n",
+            "vendor/dep.js": "vendored\n",
+            "src/vendor/nested.js": "also vendored\n",
+            "app.py": "print('hi')\n",
+        },
+    )
+
+    diff = get_staged_diff(repo)
+
+    assert "app.py" in diff
+    assert "vendor/dep.js" not in diff
+    assert "src/vendor/nested.js" not in diff
+
+
+def test_get_staged_diff_excludes_a_directory_pattern_without_slash(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_nested(
+        repo,
+        {".git-ai-ignore": "dist\n", "dist/out.js": "built\n", "app.py": "x = 1\n"},
+    )
+
+    diff = get_staged_diff(repo)
+
+    assert "app.py" in diff
+    assert "dist/out.js" not in diff
+
+
+def test_get_staged_diff_negation_reinstates_a_default(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_nested(
+        repo,
+        {
+            ".git-ai-ignore": "!package-lock.json\n",
+            "package-lock.json": "lock\n",
+            "app.py": "x = 1\n",
+        },
+    )
+
+    diff = get_staged_diff(repo)
+
+    assert "app.py" in diff
+    assert "package-lock.json" in diff
 
 
 def test_get_staged_diff_auto_loads_git_ai_ignore(tmp_path: Path) -> None:
