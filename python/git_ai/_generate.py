@@ -11,16 +11,39 @@ import re
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
-from ._git import (
-    DEFAULT_RELEASE_CONTEXT,
-    derive_diff_stat,
-    largest_diff_files,
-)
-from ._git_branch import format_branch_context
-from ._instructions import format_repo_guidance
-from ._pr_prompt_build import build_mr_prompt_input
+if TYPE_CHECKING:
+    from ._git import (
+        DEFAULT_RELEASE_CONTEXT,
+        derive_diff_stat,
+        largest_diff_files,
+    )
+    from ._git_branch import format_branch_context
+    from ._instructions import format_repo_guidance
+    from ._pr_prompt_build import build_mr_prompt_input
+elif __package__ in (None, ""):
+    import importlib
+
+    _git_mod = importlib.import_module("_git")
+    _git_branch_mod = importlib.import_module("_git_branch")
+    DEFAULT_RELEASE_CONTEXT = _git_mod.DEFAULT_RELEASE_CONTEXT
+    build_mr_prompt_input = importlib.import_module(
+        "_pr_prompt_build"
+    ).build_mr_prompt_input
+    derive_diff_stat = _git_mod.derive_diff_stat
+    format_branch_context = _git_branch_mod.format_branch_context
+    format_repo_guidance = importlib.import_module("_instructions").format_repo_guidance
+    largest_diff_files = _git_mod.largest_diff_files
+else:
+    from ._git import (
+        DEFAULT_RELEASE_CONTEXT,
+        derive_diff_stat,
+        largest_diff_files,
+    )
+    from ._git_branch import format_branch_context
+    from ._instructions import format_repo_guidance
+    from ._pr_prompt_build import build_mr_prompt_input
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _DEFAULT_MAX_DIFF_BYTES = 900_000

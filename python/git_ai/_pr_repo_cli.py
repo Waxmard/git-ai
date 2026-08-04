@@ -12,16 +12,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from ._generate import parse_mr_response
     from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
     from ._pr_prompt_build import build_mr_prompt_input
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    _generate = importlib.import_module("_generate")
     _pr_incremental = importlib.import_module("_pr_incremental")
     _pr_prompt_build = importlib.import_module("_pr_prompt_build")
+    parse_mr_response = _generate.parse_mr_response
     prepare_repo_pr_context = _pr_incremental.prepare_repo_pr_context
     save_cached_pr = _pr_incremental.save_cached_pr
     build_mr_prompt_input = _pr_prompt_build.build_mr_prompt_input
 else:
+    from ._generate import parse_mr_response
     from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
     from ._pr_prompt_build import build_mr_prompt_input
 
@@ -99,6 +103,11 @@ def _cmd_build_input(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_format(args: argparse.Namespace) -> int:
+    sys.stdout.write(parse_mr_response(sys.stdin.read()))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="git_ai._pr_repo_cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -130,6 +139,9 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--churn-subjects-file")
     build.add_argument("--repo-instructions-file")
     build.set_defaults(func=_cmd_build_input)
+
+    fmt = sub.add_parser("format")
+    fmt.set_defaults(func=_cmd_format)
 
     args = parser.parse_args(argv)
     func = cast(Callable[[argparse.Namespace], int], args.func)

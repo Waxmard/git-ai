@@ -166,6 +166,7 @@ _commit_prompt_and_run() {
 # ---------------------------------------------------------------------------
 
 cmd_commit() {
+  require_python
   local PROVIDER MODEL BASE=""
   local -a rest=()
   # Pull --base out of the args; everything else stays positional.
@@ -274,16 +275,24 @@ cmd_commit() {
 ${STAGED_DIFF}
 </diff>"
 
-  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL" | extract_commit_output | wrap_commit_body) || exit $?
+  local note_file SUBJECT_NOTE=""
+  note_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-note.XXXXXX") ||
+    die "failed to create temporary file"
+  local rc=0
+  generated=$(run_provider commit "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL" |
+    "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" format \
+      --note-file "$note_file") || rc=$?
+  [[ -s "$note_file" ]] && SUBJECT_NOTE=$(<"$note_file")
+  rm -f "$note_file"
+  ((rc == 0)) || exit "$rc"
   [[ -n "$(_trim "$generated")" ]] ||
     die "${PROVIDER} returned an empty commit message; retry or try another provider"
-  enforce_subject_limit "$generated"
-  generated="$GIT_AI_SUBJECT_MESSAGE"
   save_last_message commit "$generated"
-  _commit_prompt_and_run "$generated" "$GIT_AI_SUBJECT_NOTE"
+  _commit_prompt_and_run "$generated" "$SUBJECT_NOTE"
 }
 
 cmd_pr() {
+  require_python
   local PROVIDER MODEL BASE FRESH FROM_SHA
   PROVIDER=""
   MODEL=""
@@ -466,7 +475,7 @@ PY
 
   local OUTPUT
   OUTPUT=$(run_provider pr "$PROVIDER" "$PROMPT" "$INPUT" "$MODEL") || exit $?
-  OUTPUT=$(extract_pr_output <<<"$OUTPUT")
+  OUTPUT=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_pr_repo_cli.py" format <<<"$OUTPUT") || exit $?
   save_last_message pr "$OUTPUT"
   if [[ -n "$CURRENT_BRANCH" ]]; then
     save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" "${CONTENT_ID:-}" ||
