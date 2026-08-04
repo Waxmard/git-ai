@@ -636,3 +636,74 @@ def test_prepare_stamps_fingerprint_when_regenerating(tmp_path: Path) -> None:
 
     assert ctx.no_changes is False
     assert ctx.content_id is not None
+
+
+def test_prepare_declares_incremental_scope_on_the_cached_ancestor_path(
+    tmp_path: Path,
+) -> None:
+    repo = _rebase_repo(tmp_path)
+    _seed_cache(repo)
+    _commit(repo, "later.txt", "later\n", "feat: add later work")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    # The cached SHA is still an ancestor, so diff/log cover only the new
+    # commit — the earlier branch work exists solely in the cached PR text.
+    assert ctx.input_base != "main"
+    assert ctx.diff_scope == "since_existing"
+    assert "feat: add later work" in ctx.commit_log
+    assert "f.txt" not in ctx.diff
+
+    system, _ = build_mr_prompt(
+        diff=ctx.diff,
+        commit_log=ctx.commit_log,
+        diff_stat=ctx.diff_stat,
+        existing_pr=ctx.existing_pr,
+        diff_scope=ctx.diff_scope,
+    )
+    assert "cover only the commits added since <existing_pr> was written" in system
+    assert "never delete, narrow, or rewrite existing content" in system
+
+
+def test_prepare_declares_branch_scope_when_diffing_against_the_base(
+    tmp_path: Path,
+) -> None:
+    repo = _rebase_repo(tmp_path)
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    assert ctx.input_base == "main"
+    assert ctx.diff_scope == "branch"
+
+
+def test_prepare_declares_branch_scope_after_a_rewrite_carrying_new_work(
+    tmp_path: Path,
+) -> None:
+    repo = _rebase_repo(tmp_path)
+    _seed_cache(repo)
+    _move_main_and_rebase(repo)
+    _commit(repo, "f.txt", "a\nb\nc\nd\n", "feat: more work")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    # The incremental base is gone, so the branch is re-described in full and
+    # the model may prune what the branch no longer contains.
+    assert ctx.diff_scope == "branch"
+
+
+def test_prepare_declares_incremental_scope_from_an_explicit_previous_sha(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _commit(repo, "one.txt", "one\n", "feat: add first")
+    first_sha = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "two.txt", "two\n", "feat: add second")
+
+    ctx = prepare_repo_pr_context(
+        repo,
+        base_branch="main",
+        existing_pr="feat: old title\n\nold body",
+        previous_head_sha=first_sha,
+    )
+
+    assert ctx.diff_scope == "since_existing"

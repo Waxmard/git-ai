@@ -1,5 +1,15 @@
 # Changelog
 
+> **Note for Python library consumers upgrading through 6.7.0** — 6.7.0 changed what
+> `build_mr_prompt(existing_pr=...)` assumes about `diff` without changing its signature:
+> the update prompts began asserting that `diff`/`commit_log` cover the whole branch. If
+> you feed an *incremental* diff (the commits since the prior description was written),
+> the model was told that partial slice was the branch's current state and rewrote away
+> the earlier content `existing_pr` described. The following release adds an explicit
+> `diff_scope` argument (`"since_existing"` — the default — or `"branch"`) and selects a
+> prompt that states the declared scope. No action is needed on the default; pass
+> `diff_scope="branch"` if you feed a full-branch diff and want stale content pruned.
+
 ## [6.6.1](https://github.com/Waxmard/git-ai/compare/v6.6.0...v6.6.1) (2026-07-28)
 
 

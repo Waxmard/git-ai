@@ -368,12 +368,6 @@ cmd_pr() {
     fi
   fi
 
-  local PROMPT_TWO_PASS PROMPT_FALLBACK PROMPT_TWO_PASS_UPDATE PROMPT_FALLBACK_UPDATE
-  PROMPT_TWO_PASS=$(cat "${GIT_AI_PKG_DIR}/prompts/pr-two-pass.txt") || die "failed to read pr-two-pass prompt"
-  PROMPT_FALLBACK=$(cat "${GIT_AI_PKG_DIR}/prompts/pr-fallback.txt") || die "failed to read pr-fallback prompt"
-  PROMPT_TWO_PASS_UPDATE=$(cat "${GIT_AI_PKG_DIR}/prompts/pr-two-pass-update.txt") || die "failed to read pr-two-pass-update prompt"
-  PROMPT_FALLBACK_UPDATE=$(cat "${GIT_AI_PKG_DIR}/prompts/pr-fallback-update.txt") || die "failed to read pr-fallback-update prompt"
-
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
   local GIT_DIR
   GIT_DIR=$(git rev-parse --git-dir)
@@ -402,7 +396,7 @@ cmd_pr() {
     }
   printf '%s\n' "$PREP_OUTPUT" >"$PREP_FILE"
   # Variables set by sourced prep file (BASE_BRANCH/INPUT_BASE consumed but not referenced directly)
-  local CURRENT_BRANCH HEAD_SHA EXISTING_PR COMMIT_LOG DIFF DIFF_STAT RELEASE_CONTEXT CONTENT_ID NO_CHANGES CHURN_SUBJECTS WARNINGS
+  local CURRENT_BRANCH HEAD_SHA EXISTING_PR COMMIT_LOG DIFF DIFF_STAT RELEASE_CONTEXT CONTENT_ID DIFF_SCOPE NO_CHANGES CHURN_SUBJECTS WARNINGS
   # shellcheck disable=SC1090
   source "$PREP_FILE"
   rm -f "$PREP_FILE"
@@ -448,7 +442,8 @@ cmd_pr() {
     --release-context-file "$RELEASE_FILE" \
     --existing-pr-file "$EXISTING_FILE" \
     --churn-subjects-file "$CHURN_FILE" \
-    --repo-instructions-file "$INSTR_FILE" >"$BUILD_FILE" || {
+    --repo-instructions-file "$INSTR_FILE" \
+    --diff-scope "$DIFF_SCOPE" >"$BUILD_FILE" || {
       rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
       die "failed to build PR prompt input"
     }
@@ -467,12 +462,12 @@ PY
   rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
 
   case "$PROMPT_NAME" in
-    pr-two-pass.txt) PROMPT="$PROMPT_TWO_PASS" ;;
-    pr-fallback.txt) PROMPT="$PROMPT_FALLBACK" ;;
-    pr-two-pass-update.txt) PROMPT="$PROMPT_TWO_PASS_UPDATE" ;;
-    pr-fallback-update.txt) PROMPT="$PROMPT_FALLBACK_UPDATE" ;;
+    pr-two-pass.txt | pr-fallback.txt) ;;
+    pr-two-pass-update.txt | pr-fallback-update.txt) ;;
+    pr-two-pass-update-incremental.txt | pr-fallback-update-incremental.txt) ;;
     *) die "unknown prompt selected: $PROMPT_NAME" ;;
   esac
+  PROMPT=$(cat "${GIT_AI_PKG_DIR}/prompts/${PROMPT_NAME}") || die "failed to read ${PROMPT_NAME%.txt} prompt"
 
   if [[ -n "${EXISTING_PR:-}" && -n "${CURRENT_BRANCH:-}" ]]; then
     echo "git-ai: updating existing PR draft for ${CURRENT_BRANCH} (use --fresh to regenerate)" >&2
