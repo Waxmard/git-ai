@@ -47,6 +47,7 @@ jobs:
       - name: Pack and run the bridges from the tarball
         run: |
           set -euo pipefail
+          mkdir -p /tmp/npmpack
           npm pack --pack-destination /tmp/npmpack >/dev/null
           tar xzf /tmp/npmpack/*.tgz -C /tmp/npmpack
           cd /tmp/npmpack/package
