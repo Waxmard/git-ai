@@ -46,13 +46,26 @@ from ._pr_incremental import (
 )
 from ._pr_prompt_build import DiffScope
 from ._pr_render import render_pr_diff, summarize_pr_changes
+from ._scope import (
+    MAX_SCOPE_COMMITS,
+    BranchScope,
+    Concern,
+    ScopeCommit,
+    analyze_branch_scope,
+    suggested_split,
+)
 
 __all__ = [
     "BODY_WRAP_WIDTH",
+    "MAX_SCOPE_COMMITS",
     "SUBJECT_LIMIT",
+    "BranchScope",
+    "Concern",
     "DiffScope",
     "RepoPrContext",
+    "ScopeCommit",
     "SubjectTrim",
+    "analyze_branch_scope",
     "branch_content_id",
     "build_commit_prompt",
     "build_mr_prompt",
@@ -86,6 +99,7 @@ __all__ = [
     "resolve_commit_base",
     "save_cached_pr",
     "strip_fences",
+    "suggested_split",
     "summarize_pr_changes",
     "wrap_commit_body",
 ]
