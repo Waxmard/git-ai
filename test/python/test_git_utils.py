@@ -3,6 +3,7 @@
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from git_ai import (
@@ -22,6 +23,7 @@ from git_ai._git_branch import (
     _list_branch_refs,
     base_warnings,
     branch_content_id,
+    group_ranges_by_file,
 )
 from git_ai._pr_incremental import branch_cache_dir
 
@@ -676,6 +678,70 @@ def test_churn_bad_base_returns_empty(tmp_path: Path) -> None:
 
     # An unresolvable base must not raise — churn detection is best-effort.
     assert get_branch_churn_subjects(repo, "no-such-branch") == []
+
+
+def test_group_ranges_by_file_keeps_first_seen_path_order() -> None:
+    grouped = group_ranges_by_file(
+        [("b.py", 1, 2), ("a.py", 5, 1), ("b.py", 9, 3), ("a.py", 20, 1)]
+    )
+
+    assert list(grouped) == ["b.py", "a.py"]
+    assert grouped["b.py"] == [(1, 2), (9, 3)]
+    assert grouped["a.py"] == [(5, 1), (20, 1)]
+
+
+def _count_blame_invocations(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Record every `git blame` argv shelled out to while the patch is active."""
+    seen: list[list[str]] = []
+    real_run = subprocess.run
+
+    def spy(args: Any, *rest: Any, **kwargs: Any) -> Any:
+        if isinstance(args, list) and args[:2] == ["git", "blame"]:
+            seen.append(args)
+        return real_run(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+    return seen
+
+
+def test_blame_batches_hunks_into_one_call_per_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"core.py": "base\n"}, "chore: base")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"new.py": "1\n2\n3\n4\n5\n6\n7\n"}, "feat: add new module")
+    # Three separated hunks in one file — blame's cost is the per-file history
+    # walk, so these must cost one invocation carrying three -L ranges, not three.
+    _commit_files(repo, {"new.py": "A\n2\n3\nB\n5\n6\nC\n"}, "perf: tune new module")
+
+    seen = _count_blame_invocations(monkeypatch)
+    assert get_branch_churn_subjects(repo, "main") == ["perf: tune new module"]
+
+    calls_for_new = [args for args in seen if args[-1] == "new.py"]
+    assert len(calls_for_new) == 1
+    assert sorted(a for a in calls_for_new[0] if a.startswith("-L")) == [
+        "-L1,1",
+        "-L4,4",
+        "-L7,7",
+    ]
+
+
+def test_blame_batch_unions_provenance_across_hunks(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_files(repo, {"mixed.py": "base1\nbase2\nbase3\n"}, "chore: base")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"mixed.py": "base1\nbase2\nbase3\nadded\n"}, "feat: append")
+    # One hunk edits the branch's own line, another edits a base line. Batching
+    # unions both blames into one verdict, which must still come back "not
+    # branch-local" — a rider hunk cannot be masked by a branch-local sibling.
+    _commit_files(repo, {"mixed.py": "CHANGED\nbase2\nbase3\nEDITED\n"}, "fix: both")
+
+    assert get_branch_churn_subjects(repo, "main") == []
 
 
 def _forked_repo(repo: Path) -> None:

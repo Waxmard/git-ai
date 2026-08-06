@@ -1,106 +1,113 @@
 """Branch scope analysis: partition a branch's commits into distinct concerns.
 
-The inverse of churn detection. :func:`get_branch_churn_subjects` asks "does
-this commit only refine code the branch itself introduced?" to *fold* such
-commits into the feature they refine. The same blame evidence, kept per-commit
-instead of collapsed to a yes/no, says which commits belong together — and so
-which ones are riding along on a branch that has nothing to do with them.
+A branch that has picked up unrelated riders can be split *before* it is pushed,
+where rewriting is still free. This module assembles the evidence and parses the
+partition; like the rest of the package it never calls an LLM itself.
 
-Deterministic throughout: blame and file overlap decide the partition, and the
-labels are taken verbatim from commit subjects. Naming and merging clusters that
-are one concern under two subjects is a job for a caller with an LLM.
+The partition is the model's, not a clustering algorithm's, because the question
+is semantic. Structural clustering was tried first — union-find over commits
+joined by shared files and by ``git blame`` of the lines each commit edits — and
+measured against real branches it does not work. A blame edge implies a file
+edge (a commit cannot refine another's lines without touching its file), so the
+expensive half was inert; and file connectivity tracks how coupled the codebase
+is, not how related the work is. A 25-commit branch touching 57 files of one
+subsystem is one connected component however many unrelated things it carries.
+The commit subjects, meanwhile, say plainly which work belongs together.
+
+What stays deterministic is everything the model should not be trusted with:
+gathering the commits, and checking that the returned partition covers every one
+of them exactly once.
 """
 
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ._git import _DIFF_FILE_HEADER, _git, get_repo_root
-    from ._git_branch import _blame_introducers
+    from ._generate import _load_prompt, strip_fences
+    from ._git import _git, get_repo_root
     from ._ignore import load_ignore_patterns, to_pathspec_args
 elif __package__ in (None, ""):
     import importlib as _importlib
 
     _git_mod = _importlib.import_module("_git")
     _git = _git_mod._git
-    _DIFF_FILE_HEADER = _git_mod._DIFF_FILE_HEADER
     get_repo_root = _git_mod.get_repo_root
-    _blame_introducers = _importlib.import_module("_git_branch")._blame_introducers
+    _generate_mod = _importlib.import_module("_generate")
+    _load_prompt = _generate_mod._load_prompt
+    strip_fences = _generate_mod.strip_fences
     _ignore_mod = _importlib.import_module("_ignore")
     load_ignore_patterns = _ignore_mod.load_ignore_patterns
     to_pathspec_args = _ignore_mod.to_pathspec_args
 else:
-    from ._git import _DIFF_FILE_HEADER, _git, get_repo_root
-    from ._git_branch import _blame_introducers
+    from ._generate import _load_prompt, strip_fences
+    from ._git import _git, get_repo_root
     from ._ignore import load_ignore_patterns, to_pathspec_args
 
-# Every commit costs a `git show` plus a `git blame` per modified file, so the
-# cap matches churn detection's. Over it, the branch comes back as one concern.
-MAX_SCOPE_COMMITS = 50
+# Past this the prompt stops being worth its tokens, and a branch that long has
+# problems no split suggestion addresses. Over the cap the branch is reported
+# degraded rather than partitioned.
+MAX_SCOPE_COMMITS = 60
 
-_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+")
-_TYPE_RE = re.compile(r"^([a-zA-Z]+)(?:\([^)]*\))?(!?):")
+SCOPE_MARKER = "===SCOPE==="
+
+_RECORD_SEP = "\x1e"
+_FIELD_SEP = "\x1f"
+_TYPE_RE = re.compile(r"^([a-zA-Z]+)(?:\([^)]*\))?!?:")
 
 
 @dataclass(frozen=True)
 class ScopeCommit:
-    """One commit's scope evidence.
-
-    ``refines`` holds the in-branch SHAs whose lines this commit edits — the
-    dependency edge that binds a follow-up to the work it follows up on.
-    ``touches_pre_existing`` means at least one edited line predates the branch,
-    which is what a rider commit looks like: it changes code the branch had no
-    reason to be near.
-    """
-
     sha: str
     subject: str
     commit_type: str
     files: tuple[str, ...]
-    refines: frozenset[str] = frozenset()
-    touches_pre_existing: bool = False
-    branch_local: bool = False
 
 
 @dataclass(frozen=True)
 class Concern:
-    """A cluster of commits that the evidence says belong to one another."""
+    """One unit of intent the branch carries.
 
+    ``adds_new_files`` and ``touches_pre_existing_files`` are answered against
+    the base tree at file granularity — a rider is usually recognisable as a
+    concern that only edits files the branch had no other reason to open. The
+    line-level version of that question is deliberately not asked: ``git blame``
+    reports the commit that *last* wrote a line, so a branch editing a shared
+    line early "adopts" it, and every later commit touching that line then looks
+    branch-local. File-level provenance is weaker, but it is exact.
+    """
+
+    label: str
     commits: tuple[ScopeCommit, ...]
     files: tuple[str, ...]
     primary: bool = False
     adds_new_files: bool = False
+    touches_pre_existing_files: bool = False
 
-    @property
-    def label(self) -> str:
-        """Heuristic name: the first feature-ish subject, else the oldest one.
 
-        A placeholder for a caller that titles clusters with an LLM — never a
-        claim that the cluster is *about* the commit it borrows from.
-        """
-        for commit in self.commits:
-            if commit.commit_type == "feat":
-                return commit.subject
-        return self.commits[0].subject if self.commits else ""
+@dataclass(frozen=True)
+class ScopeContext:
+    """Deterministic input for the partition, and the reason there isn't one.
 
-    @property
-    def touches_pre_existing(self) -> bool:
-        return any(c.touches_pre_existing for c in self.commits)
+    ``degraded`` means no partition should be attempted or believed — an empty,
+    unreadable, or over-long range. Callers must not read it as "this branch is
+    focused"; it means the question went unanswered.
+    """
+
+    base: str
+    commits: tuple[ScopeCommit, ...] = ()
+    branch: str | None = None
+    base_files: frozenset[str] = frozenset()
+    degraded: bool = False
+    degraded_reason: str = ""
 
 
 @dataclass(frozen=True)
 class BranchScope:
-    """Result of :func:`analyze_branch_scope`.
-
-    ``degraded`` marks a partition that evidence didn't produce — an over-cap or
-    git-failed run yields every commit in one concern, which must not be read as
-    "this branch is focused".
-    """
-
     base: str
     concerns: tuple[Concern, ...] = ()
     branch: str | None = None
@@ -116,30 +123,12 @@ class BranchScope:
         return not self.degraded and len(self.concerns) > 1
 
     @property
-    def secondary(self) -> tuple[Concern, ...]:
+    def primary(self) -> Concern | None:
+        return next((c for c in self.concerns if c.primary), None)
+
+    @property
+    def riders(self) -> tuple[Concern, ...]:
         return tuple(c for c in self.concerns if not c.primary)
-
-
-@dataclass
-class _Union:
-    """Union-find over commit indices."""
-
-    parent: list[int] = field(default_factory=list)
-
-    def add(self) -> int:
-        self.parent.append(len(self.parent))
-        return len(self.parent) - 1
-
-    def find(self, i: int) -> int:
-        while self.parent[i] != i:
-            self.parent[i] = self.parent[self.parent[i]]
-            i = self.parent[i]
-        return i
-
-    def union(self, a: int, b: int) -> None:
-        root_a, root_b = self.find(a), self.find(b)
-        if root_a != root_b:
-            self.parent[root_b] = root_a
 
 
 def _commit_type(subject: str) -> str:
@@ -147,252 +136,250 @@ def _commit_type(subject: str) -> str:
     return match.group(1).lower() if match else ""
 
 
-def _commit_files_and_ranges(
-    repo_path: str | Path, commit: str, pathspec: list[str]
-) -> tuple[list[str], list[tuple[str, int, int]]] | None:
-    """Return ``(files, (pre_image_path, start, count) ranges)`` for one commit.
-
-    One ``git show`` serves both — walking the same ``-U0`` diff twice would
-    double the subprocess cost of the whole analysis. Pure-addition hunks (old
-    count 0) yield no range, matching churn detection.
-    """
-    try:
-        diff = _git(
-            repo_path,
-            "show",
-            "--no-color",
-            "-M",
-            "-U0",
-            "--format=",
-            commit,
-            *pathspec,
-        )
-    except RuntimeError:
-        return None
-    files: list[str] = []
-    ranges: list[tuple[str, int, int]] = []
-    current_a: str | None = None
-    for line in diff.splitlines():
-        header_match = _DIFF_FILE_HEADER.match(line)
-        if header_match:
-            current_a = header_match.group("a")
-            path = header_match.group("b")
-            if path not in files:
-                files.append(path)
+def _parse_files_log(output: str) -> dict[str, tuple[str, ...]]:
+    """``sha -> touched paths`` from a ``log --name-only`` run."""
+    by_sha: dict[str, tuple[str, ...]] = {}
+    for record in output.split(_RECORD_SEP):
+        if not record.strip():
             continue
-        if line.startswith("@@") and current_a is not None:
-            hunk = _HUNK_RE.match(line)
-            if hunk:
-                start = int(hunk.group(1))
-                count = int(hunk.group(2)) if hunk.group(2) is not None else 1
-                if count > 0:
-                    ranges.append((current_a, start, count))
-    return files, ranges
-
-
-def _classify_commit(
-    repo_path: str | Path,
-    commit: str,
-    branch_shas: frozenset[str],
-    pathspec: list[str],
-) -> ScopeCommit | None:
-    """Blame every line ``commit`` edits and record where those lines came from."""
-    parsed = _commit_files_and_ranges(repo_path, commit, pathspec)
-    if parsed is None:
-        return None
-    files, ranges = parsed
-    try:
-        subject = _git(repo_path, "show", "-s", "--format=%s", commit).strip()
-    except RuntimeError:
-        return None
-
-    refines: set[str] = set()
-    touches_pre_existing = False
-    for file, start, count in ranges:
-        shas = _blame_introducers(repo_path, f"{commit}^", file, start, count)
-        if shas is None:
-            # Blame failed (file absent at the parent, unreadable rev). Unknown
-            # provenance is treated as pre-existing so a rider can't hide behind
-            # a failed probe.
-            touches_pre_existing = True
-            continue
-        in_branch = shas & branch_shas
-        refines |= in_branch
-        if shas - branch_shas:
-            touches_pre_existing = True
-
-    return ScopeCommit(
-        sha=commit,
-        subject=subject,
-        commit_type=_commit_type(subject),
-        files=tuple(files),
-        refines=frozenset(refines),
-        touches_pre_existing=touches_pre_existing,
-        branch_local=bool(ranges) and not touches_pre_existing,
-    )
-
-
-def _cluster(commits: list[ScopeCommit], linkable: dict[str, set[str]]) -> list[int]:
-    """Assign each commit a cluster id.
-
-    Two edges join commits: a blame edge (this commit edits lines an in-branch
-    commit introduced) and a file edge (both touch the same file). The blame
-    edge is the load-bearing one — file overlap alone would merge two unrelated
-    changes that happen to share a config file, which is why ``linkable`` has
-    already dropped the paths ``.git-ai-ignore`` excludes.
-    """
-    union = _Union()
-    index_of: dict[str, int] = {}
-    for i, commit in enumerate(commits):
-        union.add()
-        index_of[commit.sha] = i
-
-    for i, commit in enumerate(commits):
-        for sha in commit.refines:
-            other = index_of.get(sha)
-            if other is not None:
-                union.union(i, other)
-
-    first_toucher: dict[str, int] = {}
-    for i, commit in enumerate(commits):
-        for file in linkable.get(commit.sha, set()):
-            other = first_toucher.setdefault(file, i)
-            union.union(i, other)
-
-    return [union.find(i) for i in range(len(commits))]
-
-
-def _build_concerns(
-    commits: list[ScopeCommit], cluster_ids: list[int], new_files: frozenset[str]
-) -> tuple[Concern, ...]:
-    """Group commits by cluster id, oldest-first, and mark the primary one."""
-    order: list[int] = []
-    grouped: dict[int, list[ScopeCommit]] = {}
-    for commit, cluster_id in zip(commits, cluster_ids, strict=True):
-        if cluster_id not in grouped:
-            grouped[cluster_id] = []
-            order.append(cluster_id)
-        grouped[cluster_id].append(commit)
-
-    drafts: list[Concern] = []
-    for cluster_id in order:
-        members = grouped[cluster_id]
-        files: list[str] = []
-        for commit in members:
-            for file in commit.files:
-                if file not in files:
-                    files.append(file)
-        drafts.append(
-            Concern(
-                commits=tuple(members),
-                files=tuple(files),
-                adds_new_files=any(f in new_files for f in files),
+        sha, _, body = record.partition("\n")
+        sha = sha.strip()
+        if sha:
+            by_sha[sha] = tuple(
+                dict.fromkeys(f for f in body.splitlines() if f.strip())
             )
-        )
-
-    if not drafts:
-        return ()
-    primary = max(
-        range(len(drafts)),
-        key=lambda i: (len(drafts[i].commits), len(drafts[i].files), -i),
-    )
-    return tuple(
-        Concern(
-            commits=draft.commits,
-            files=draft.files,
-            primary=(i == primary),
-            adds_new_files=draft.adds_new_files,
-        )
-        for i, draft in enumerate(drafts)
-    )
+    return by_sha
 
 
-def _branch_new_files(
-    repo_path: str | Path, base_ref: str, pathspec: list[str]
-) -> frozenset[str]:
-    """Paths the branch adds that the base doesn't have. Empty on git failure."""
+def _base_files(repo_path: str | Path, base_ref: str) -> frozenset[str]:
+    """Every path in the base tree. Empty on git failure — provenance is advisory."""
     try:
-        out = _git(
-            repo_path,
-            "diff",
-            "--name-only",
-            "--diff-filter=A",
-            f"{base_ref}...HEAD",
-            *pathspec,
-        )
+        out = _git(repo_path, "ls-tree", "-r", "--name-only", base_ref)
     except RuntimeError:
         return frozenset()
     return frozenset(line for line in out.splitlines() if line)
 
 
-def _degraded(base_ref: str, branch: str | None, reason: str) -> BranchScope:
-    return BranchScope(
-        base=base_ref, branch=branch, degraded=True, degraded_reason=reason
-    )
-
-
-def analyze_branch_scope(
+def prepare_branch_scope(
     repo_path: str | Path,
     base_ref: str,
     *,
+    tip: str = "HEAD",
     branch: str | None = None,
     limit: int = MAX_SCOPE_COMMITS,
     exclude_patterns: list[str] | tuple[str, ...] | None = None,
-) -> BranchScope:
-    """Partition ``base_ref..HEAD`` into the distinct concerns it carries.
+) -> ScopeContext:
+    """Gather ``base_ref..tip`` as the input to a scope partition.
 
-    Each commit's edited lines are blamed against its own parent: lines the
-    branch introduced bind the commit to the commit that introduced them, lines
-    that predate the base don't. Commits sharing a file are joined too, ignoring
-    the paths ``.git-ai-ignore`` and the lockfile defaults exclude so a
-    dependency bump can't glue two features together.
+    Three git calls: the commit list, the per-commit paths, and the base tree.
 
-    Best-effort, like churn detection — a git failure or a range over ``limit``
-    comes back ``degraded`` with every commit in one concern rather than raising,
-    since the caller's real job (a commit, a PR) must not fail over advice.
+    The commit list is taken **without** the ``.git-ai-ignore`` pathspec and the
+    paths **with** it, then joined. Passing the pathspec to a single
+    ``log --name-only`` would drop any commit whose every path is excluded —
+    silently deleting a lockfile-only dependency bump from a report whose entire
+    job is noticing that the bump rode along. Such a commit keeps its subject
+    and comes through with no files; only the path noise is filtered.
+
+    Never raises — an unreadable range comes back ``degraded``, since the
+    caller's real job (a commit, a PR) must not fail over advice.
     """
-    try:
-        branch_shas = frozenset(
-            _git(repo_path, "rev-list", f"{base_ref}..HEAD").split()
-        )
-        shas = _git(repo_path, "rev-list", "--no-merges", f"{base_ref}..HEAD").split()
-    except RuntimeError as exc:
-        return _degraded(base_ref, branch, str(exc))
-    if not shas:
-        return BranchScope(base=base_ref, branch=branch)
-
     if exclude_patterns is None:
         try:
             exclude_patterns = load_ignore_patterns(get_repo_root(repo_path))
         except RuntimeError:
             exclude_patterns = []
-    pathspec = to_pathspec_args(exclude_patterns)
-
-    shas.reverse()
-    commits: list[ScopeCommit] = []
-    for sha in shas:
-        classified = _classify_commit(repo_path, sha, branch_shas, pathspec)
-        if classified is not None:
-            commits.append(classified)
-    if not commits:
-        return _degraded(base_ref, branch, "no commit could be classified")
-
-    if len(shas) > limit:
-        return BranchScope(
-            base=base_ref,
-            branch=branch,
-            concerns=_build_concerns(commits, [0] * len(commits), frozenset()),
-            degraded=True,
-            degraded_reason=f"{len(shas)} commits exceeds the {limit}-commit cap",
+    rng = f"{base_ref}..{tip}"
+    try:
+        listing = _git(
+            repo_path,
+            "log",
+            "--no-merges",
+            "--reverse",
+            f"--format=%H{_FIELD_SEP}%s",
+            rng,
+        )
+        paths = _git(
+            repo_path,
+            "log",
+            "--no-merges",
+            "--name-only",
+            f"--format={_RECORD_SEP}%H",
+            rng,
+            *to_pathspec_args(exclude_patterns),
+        )
+    except RuntimeError as exc:
+        return ScopeContext(
+            base=base_ref, branch=branch, degraded=True, degraded_reason=str(exc)
         )
 
-    linkable = {c.sha: set(c.files) for c in commits}
-    concerns = _build_concerns(
-        commits,
-        _cluster(commits, linkable),
-        _branch_new_files(repo_path, base_ref, pathspec),
+    files_by_sha = _parse_files_log(paths)
+    commits = []
+    for line in listing.splitlines():
+        sha, _, subject = line.partition(_FIELD_SEP)
+        sha, subject = sha.strip(), subject.strip()
+        if not sha:
+            continue
+        commits.append(
+            ScopeCommit(
+                sha=sha,
+                subject=subject,
+                commit_type=_commit_type(subject),
+                files=files_by_sha.get(sha, ()),
+            )
+        )
+    if not commits:
+        return ScopeContext(
+            base=base_ref,
+            branch=branch,
+            degraded=True,
+            degraded_reason=f"no commits in {base_ref}..{tip}",
+        )
+    if len(commits) > limit:
+        return ScopeContext(
+            base=base_ref,
+            commits=tuple(commits),
+            branch=branch,
+            degraded=True,
+            degraded_reason=f"{len(commits)} commits exceeds the {limit}-commit cap",
+        )
+    return ScopeContext(
+        base=base_ref,
+        commits=tuple(commits),
+        branch=branch,
+        base_files=_base_files(repo_path, base_ref),
     )
-    return BranchScope(base=base_ref, branch=branch, concerns=concerns)
+
+
+def build_scope_prompt(context: ScopeContext) -> tuple[str, str]:
+    """Return ``(system_prompt, user_input)`` for the partition."""
+    lines: list[str] = []
+    if context.branch:
+        lines.append(f"<branch>{context.branch}</branch>")
+    lines.append("<branch_commits>")
+    for i, commit in enumerate(context.commits, 1):
+        listed = ", ".join(commit.files) if commit.files else "(none)"
+        lines.append(f"{i}. {commit.subject}")
+        lines.append(f"   files: {listed}")
+    lines.append("</branch_commits>")
+    return _load_prompt("scope.txt"), "\n".join(lines)
+
+
+def _extract_scope_json(response: str) -> str:
+    """Slice the JSON out, discarding any reasoning the model emitted first."""
+    text = strip_fences(response.strip())
+    if SCOPE_MARKER in text:
+        text = text.rsplit(SCOPE_MARKER, 1)[1]
+    text = strip_fences(text.strip())
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        return ""
+    return text[start : end + 1]
+
+
+def _read_concerns(
+    payload: Any, total: int
+) -> list[tuple[str, bool, list[int]]] | None:
+    """Validate the model's shape and its coverage of the commit list.
+
+    Every commit must be claimed exactly once. A partition that drops or
+    duplicates one is rejected outright rather than repaired: a silently dropped
+    commit is the exact failure this tool exists to catch.
+    """
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("concerns")
+    if not isinstance(raw, list) or not raw:
+        return None
+    parsed: list[tuple[str, bool, list[int]]] = []
+    claimed: list[int] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        label = str(entry.get("label", "")).strip()
+        indexes = entry.get("commits")
+        if not label or not isinstance(indexes, list) or not indexes:
+            return None
+        numbers: list[int] = []
+        for value in indexes:
+            # bool is an int subclass, and `true` in the array is a shape error.
+            if not isinstance(value, int) or isinstance(value, bool):
+                return None
+            if not 1 <= value <= total:
+                return None
+            numbers.append(value)
+        claimed.extend(numbers)
+        parsed.append((label, bool(entry.get("primary")), numbers))
+    if sorted(claimed) != list(range(1, total + 1)):
+        return None
+    return parsed
+
+
+def _pick_primary(concerns: list[Concern]) -> tuple[Concern, ...]:
+    """Keep exactly one primary, falling back to the largest concern."""
+    flagged = [i for i, c in enumerate(concerns) if c.primary]
+    if len(flagged) == 1:
+        return tuple(concerns)
+    winner = (
+        flagged[0]
+        if flagged
+        else max(range(len(concerns)), key=lambda i: len(concerns[i].commits))
+    )
+    return tuple(replace(c, primary=(i == winner)) for i, c in enumerate(concerns))
+
+
+def parse_scope_response(response: str, context: ScopeContext) -> BranchScope:
+    """Turn the model's partition into a :class:`BranchScope`.
+
+    A response that is unparseable, or that does not account for every commit
+    exactly once, yields a ``degraded`` result rather than a partial one.
+    """
+    if context.degraded:
+        return degraded_scope(context)
+
+    raw = _extract_scope_json(response)
+    try:
+        payload = json.loads(raw) if raw else None
+    except json.JSONDecodeError:
+        payload = None
+    parsed = _read_concerns(payload, len(context.commits)) if payload else None
+    if parsed is None:
+        return BranchScope(
+            base=context.base,
+            branch=context.branch,
+            degraded=True,
+            degraded_reason="could not read a complete partition from the response",
+        )
+
+    concerns: list[Concern] = []
+    for label, primary, numbers in parsed:
+        members = tuple(context.commits[n - 1] for n in sorted(numbers))
+        files = tuple(dict.fromkeys(f for c in members for f in c.files))
+        concerns.append(
+            Concern(
+                label=label,
+                commits=members,
+                files=files,
+                primary=primary,
+                adds_new_files=any(f not in context.base_files for f in files),
+                touches_pre_existing_files=any(f in context.base_files for f in files),
+            )
+        )
+    return BranchScope(
+        base=context.base,
+        concerns=_pick_primary(concerns),
+        branch=context.branch,
+    )
+
+
+def degraded_scope(context: ScopeContext) -> BranchScope:
+    """The unanswered result, for callers skipping the LLM call outright."""
+    return BranchScope(
+        base=context.base,
+        branch=context.branch,
+        degraded=True,
+        degraded_reason=context.degraded_reason or "scope analysis unavailable",
+    )
 
 
 def suggested_split(concern: Concern, base_ref: str) -> list[str]:
@@ -412,13 +399,6 @@ def suggested_split(concern: Concern, base_ref: str) -> list[str]:
     ]
 
 
-def _slug(subject: str) -> str:
-    """`fix: lock TTL off-by-one` → `fix/lock-ttl-off-by-one`."""
-    match = _TYPE_RE.match(subject)
-    prefix = ""
-    rest = subject
-    if match:
-        prefix = f"{match.group(1).lower()}/"
-        rest = subject[match.end() :]
-    words = re.findall(r"[a-zA-Z0-9]+", rest.lower())[:5]
-    return f"{prefix}{'-'.join(words)}" if words else ""
+def _slug(label: str) -> str:
+    """`Lock TTL off-by-one` → `lock-ttl-off-by-one`."""
+    return "-".join(re.findall(r"[a-zA-Z0-9]+", label.lower())[:6])

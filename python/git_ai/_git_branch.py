@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -532,13 +532,26 @@ def _commit_preimage_ranges(
 
 
 def _blame_introducers(
-    repo_path: str | Path, rev: str, file: str, start: int, count: int
+    repo_path: str | Path, rev: str, file: str, ranges: Sequence[tuple[int, int]]
 ) -> set[str] | None:
-    """Return the SHAs that introduced lines ``start..start+count-1`` of ``file``
-    at ``rev``. Returns None when blame fails (e.g. file absent at ``rev``)."""
-    end = start + count - 1
+    """SHAs that introduced ``ranges`` of ``file`` at ``rev``, or None on failure.
+
+    ``-L`` may be repeated and blame's cost is the history walk for the file,
+    not the line count, so a commit that edits one file in ten places pays one
+    walk here instead of ten.
+
+    Git rejects the whole invocation if any single range is invalid, making the
+    result all-or-nothing. That is the wanted behaviour rather than a limitation
+    — callers read None as "provenance unknown, assume pre-existing", and
+    salvaging the blameable ranges would return a clean-looking set that hides
+    the unreadable one. Ranges come from the diff against ``rev`` itself, so a
+    partial failure means something is wrong with the assumption, not the range.
+    """
+    if not ranges:
+        return None
+    args = [f"-L{start},{start + count - 1}" for start, count in dict.fromkeys(ranges)]
     result = subprocess.run(
-        ["git", "blame", "--porcelain", "-l", f"-L{start},{end}", rev, "--", file],
+        ["git", "blame", "--porcelain", "-l", *args, rev, "--", file],
         cwd=str(repo_path),
         capture_output=True,
         text=True,
@@ -553,6 +566,20 @@ def _blame_introducers(
         if match:
             shas.add(match.group(1))
     return shas
+
+
+def group_ranges_by_file(
+    ranges: Iterable[tuple[str, int, int]],
+) -> dict[str, list[tuple[int, int]]]:
+    """``(path, start, count)`` triples → ``{path: [(start, count), ...]}``.
+
+    First-seen path order, so a caller walking the result blames files in the
+    order the diff presented them.
+    """
+    grouped: dict[str, list[tuple[int, int]]] = {}
+    for file, start, count in ranges:
+        grouped.setdefault(file, []).append((start, count))
+    return grouped
 
 
 def get_branch_churn_subjects(
@@ -595,8 +622,8 @@ def get_branch_churn_subjects(
         if not ranges:
             continue  # parse failure or pure-addition commit → not churn
         branch_local = True
-        for file, start, count in ranges:
-            shas = _blame_introducers(repo_path, f"{commit}^", file, start, count)
+        for file, file_ranges in group_ranges_by_file(ranges).items():
+            shas = _blame_introducers(repo_path, f"{commit}^", file, file_ranges)
             if not shas or not shas <= branch_shas:
                 branch_local = False
                 break

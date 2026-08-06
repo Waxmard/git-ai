@@ -10,12 +10,18 @@ UPDATE_PROMPT_FILES = [
     "pr-fallback-update-incremental.txt",
 ]
 
-PROMPT_FILES = [
-    "commit.txt",
+PR_PROMPT_FILES = [
     "pr-two-pass.txt",
     "pr-fallback.txt",
     *UPDATE_PROMPT_FILES,
 ]
+
+# Prompts whose output is prose a reader will act on, so the voice and
+# no-unverifiable-claims rules apply. scope.txt is excluded: it emits JSON
+# labels, where "no line numbers" and "## Verification" are meaningless.
+PROSE_PROMPT_FILES = ["commit.txt", *PR_PROMPT_FILES]
+
+PROMPT_FILES = [*PROSE_PROMPT_FILES, "scope.txt"]
 
 
 @pytest.mark.parametrize("name", PROMPT_FILES)
@@ -37,14 +43,14 @@ def test_commit_prompt_mentions_conventional_commits() -> None:
 
 
 def test_pr_prompts_mention_verification() -> None:
-    for name in PROMPT_FILES[1:]:
+    for name in PR_PROMPT_FILES:
         assert "## Verification" in _load_prompt(name), (
             f"{name} missing Verification section"
         )
 
 
 def test_pr_prompts_forbid_type_headings() -> None:
-    for name in PROMPT_FILES[1:]:
+    for name in PR_PROMPT_FILES:
         text = _load_prompt(name)
         assert "never by conventional commit type" in text, (
             f"{name} missing structure rule"
@@ -52,7 +58,7 @@ def test_pr_prompts_forbid_type_headings() -> None:
 
 
 def test_all_prompts_forbid_unverifiable_claims() -> None:
-    for name in PROMPT_FILES:
+    for name in PROSE_PROMPT_FILES:
         text = _load_prompt(name)
         assert "never include line numbers" in text, f"{name} allows line numbers"
         assert "you have executed nothing" in text, f"{name} missing no-execution guard"
@@ -107,3 +113,16 @@ def test_commit_log_is_declared_optional_wherever_it_is_named(name: str) -> None
         "present only when commit messages are available" in text
         or "(when present) <commit_log>" in text
     ), f"{name} names <commit_log> without declaring it optional"
+
+
+def test_scope_prompt_states_the_coverage_contract() -> None:
+    text = _load_prompt("scope.txt")
+    # The parser rejects any partition that drops or duplicates a commit, so the
+    # prompt has to demand the same thing the validator enforces.
+    assert "exactly one concern" in text
+    assert "===SCOPE===" in text
+
+
+def test_scope_prompt_biases_against_over_splitting() -> None:
+    text = _load_prompt("scope.txt")
+    assert "Prefer fewer concerns when genuinely unsure" in text

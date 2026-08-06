@@ -1,9 +1,19 @@
-"""Tests for branch scope partitioning in _scope.py."""
+"""Tests for branch scope collection, prompting, and partition parsing."""
 
+import json
 import subprocess
 from pathlib import Path
 
-from git_ai import analyze_branch_scope, suggested_split
+from git_ai import (
+    SCOPE_MARKER,
+    ScopeCommit,
+    ScopeContext,
+    build_scope_prompt,
+    degraded_scope,
+    parse_scope_response,
+    prepare_branch_scope,
+    suggested_split,
+)
 
 
 def _init_repo(repo: Path) -> None:
@@ -22,174 +32,307 @@ def _commit_files(repo: Path, files: dict[str, str], message: str) -> None:
     subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True)
 
 
-def _checkout(repo: Path, *args: str) -> None:
-    subprocess.run(["git", "checkout", *args], cwd=repo, check=True)
-
-
 def _crept_repo(repo: Path) -> None:
     """A branch carrying a feature plus two unrelated riders."""
     _init_repo(repo)
     _commit_files(
-        repo,
-        {"core.py": "a\nb\nc\n", "lock.py": "ttl = 1\n", "pyproject.toml": "ruff==1\n"},
-        "chore: base",
+        repo, {"core.py": "a\n", "pyproject.toml": "ruff==1\n"}, "chore: base"
     )
-    _checkout(repo, "-b", "feature")
-    _commit_files(repo, {"persona.py": "x\ny\nz\n"}, "feat: add persona")
-    _commit_files(repo, {"persona.py": "x\nY2\nz\n"}, "refactor: tidy persona")
-    _commit_files(repo, {"lock.py": "ttl = 2\n"}, "fix: lock TTL off-by-one")
+    subprocess.run(["git", "checkout", "-qb", "feature"], cwd=repo, check=True)
+    _commit_files(repo, {"persona.py": "x\n"}, "feat: add persona")
+    _commit_files(repo, {"persona.py": "y\n"}, "fix: tidy persona")
     _commit_files(repo, {"pyproject.toml": "ruff==2\n"}, "chore: bump ruff")
 
 
-def _labels(repo: Path) -> list[str]:
-    return [c.label for c in analyze_branch_scope(repo, "main").concerns]
+def _response(concerns: list[dict[str, object]]) -> str:
+    return f"{SCOPE_MARKER}\n{json.dumps({'concerns': concerns})}"
 
 
-def test_unrelated_riders_split_into_their_own_concerns(tmp_path: Path) -> None:
+def _ctx(n: int) -> ScopeContext:
+    return ScopeContext(
+        base="main",
+        commits=tuple(
+            ScopeCommit(
+                sha=f"{i:040x}",
+                subject=f"feat: c{i}",
+                commit_type="feat",
+                files=(f"f{i}.py",),
+            )
+            for i in range(1, n + 1)
+        ),
+        base_files=frozenset({"f1.py"}),
+    )
+
+
+def test_prepare_collects_subjects_and_files_oldest_first(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _crept_repo(repo)
 
-    scope = analyze_branch_scope(repo, "main")
-    assert scope.is_split
-    assert len(scope.concerns) == 3
-    assert scope.commit_count == 4
+    ctx = prepare_branch_scope(repo, "main", branch="feature")
 
-    primary = next(c for c in scope.concerns if c.primary)
-    # The refactor blames back to the feat's own lines → same concern.
-    assert [c.subject for c in primary.commits] == [
+    assert not ctx.degraded
+    assert [c.subject for c in ctx.commits] == [
         "feat: add persona",
-        "refactor: tidy persona",
-    ]
-    assert primary.label == "feat: add persona"
-    assert primary.adds_new_files
-
-    assert sorted(c.label for c in scope.secondary) == [
+        "fix: tidy persona",
         "chore: bump ruff",
-        "fix: lock TTL off-by-one",
     ]
+    assert ctx.commits[0].files == ("persona.py",)
+    assert ctx.commits[0].commit_type == "feat"
+    assert ctx.branch == "feature"
 
 
-def test_rider_editing_base_code_is_flagged_pre_existing(tmp_path: Path) -> None:
+def test_prepare_records_the_base_tree_for_provenance(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _crept_repo(repo)
 
-    scope = analyze_branch_scope(repo, "main")
-    rider = next(c for c in scope.concerns if c.label == "fix: lock TTL off-by-one")
-    assert rider.touches_pre_existing
-    assert not rider.adds_new_files
-    assert rider.files == ("lock.py",)
+    ctx = prepare_branch_scope(repo, "main")
+
+    assert "pyproject.toml" in ctx.base_files
+    assert "persona.py" not in ctx.base_files
 
 
-def test_shared_file_links_commits_without_a_blame_edge(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    _commit_files(repo, {"core.py": "a\n"}, "chore: base")
-    _checkout(repo, "-b", "feature")
-    _commit_files(repo, {"new.py": "1\n"}, "feat: add new")
-    # Appending is a pure addition — no pre-image lines, so no blame edge. Only
-    # the shared path keeps the two together.
-    _commit_files(repo, {"new.py": "1\n2\n"}, "feat: extend new")
-
-    scope = analyze_branch_scope(repo, "main")
-    assert len(scope.concerns) == 1
-    assert scope.concerns[0].commits[1].refines == frozenset()
-
-
-def test_lockfile_churn_does_not_glue_concerns_together(tmp_path: Path) -> None:
+def test_prepare_excludes_ignored_paths_from_the_prompt(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit_files(repo, {"core.py": "a\n", "uv.lock": "v1\n"}, "chore: base")
-    _checkout(repo, "-b", "feature")
-    _commit_files(repo, {"new.py": "1\n", "uv.lock": "v2\n"}, "feat: add new")
-    _commit_files(repo, {"core.py": "b\n", "uv.lock": "v3\n"}, "fix: unrelated bug")
+    subprocess.run(["git", "checkout", "-qb", "feature"], cwd=repo, check=True)
+    _commit_files(repo, {"core.py": "b\n", "uv.lock": "v2\n"}, "feat: work")
 
-    scope = analyze_branch_scope(repo, "main")
-    assert len(scope.concerns) == 2
-    assert all("uv.lock" not in c.files for c in scope.concerns)
+    ctx = prepare_branch_scope(repo, "main")
+
+    assert ctx.commits[0].files == ("core.py",)
 
 
-def test_focused_branch_is_one_concern(tmp_path: Path) -> None:
+def test_prepare_degrades_on_an_unreadable_range(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    _init_repo(repo)
-    _commit_files(repo, {"core.py": "a\nb\n"}, "chore: base")
-    _checkout(repo, "-b", "feature")
-    _commit_files(repo, {"new.py": "x\ny\n"}, "feat: add new")
-    _commit_files(repo, {"new.py": "x\nY\n"}, "fix: correct new")
+    _crept_repo(repo)
 
-    scope = analyze_branch_scope(repo, "main")
-    assert not scope.is_split
-    assert not scope.degraded
-    assert len(scope.concerns) == 1
+    ctx = prepare_branch_scope(repo, "no-such-branch")
+
+    assert ctx.degraded
+    assert ctx.commits == ()
 
 
-def test_empty_range_yields_no_concerns(tmp_path: Path) -> None:
+def test_prepare_degrades_on_an_empty_range(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit_files(repo, {"core.py": "a\n"}, "chore: base")
 
-    scope = analyze_branch_scope(repo, "main")
-    assert scope.concerns == ()
-    assert not scope.degraded
-    assert not scope.is_split
+    ctx = prepare_branch_scope(repo, "main")
+
+    assert ctx.degraded
+    assert "no commits" in ctx.degraded_reason
 
 
-def test_over_limit_degrades_to_a_single_concern(tmp_path: Path) -> None:
+def test_prepare_degrades_over_the_commit_cap(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _crept_repo(repo)
 
-    scope = analyze_branch_scope(repo, "main", limit=1)
+    ctx = prepare_branch_scope(repo, "main", limit=2)
+
+    assert ctx.degraded
+    assert "exceeds the 2-commit cap" in ctx.degraded_reason
+
+
+def test_prompt_numbers_commits_and_lists_files(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _crept_repo(repo)
+
+    system, user = build_scope_prompt(
+        prepare_branch_scope(repo, "main", branch="feature")
+    )
+
+    assert "===SCOPE===" in system
+    assert "<branch>feature</branch>" in user
+    assert "1. feat: add persona" in user
+    assert "   files: persona.py" in user
+    assert "3. chore: bump ruff" in user
+
+
+def test_parse_builds_concerns_and_marks_provenance(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _crept_repo(repo)
+    ctx = prepare_branch_scope(repo, "main", branch="feature")
+
+    scope = parse_scope_response(
+        _response(
+            [
+                {"label": "Persona support", "primary": True, "commits": [1, 2]},
+                {"label": "Ruff bump", "primary": False, "commits": [3]},
+            ]
+        ),
+        ctx,
+    )
+
+    assert scope.is_split
+    assert scope.primary is not None
+    assert scope.primary.label == "Persona support"
+    assert [c.subject for c in scope.primary.commits] == [
+        "feat: add persona",
+        "fix: tidy persona",
+    ]
+    assert scope.primary.adds_new_files
+    rider = scope.riders[0]
+    assert rider.label == "Ruff bump"
+    assert rider.touches_pre_existing_files
+    assert not rider.adds_new_files
+
+
+def test_parse_discards_reasoning_before_the_marker() -> None:
+    ctx = _ctx(2)
+    noisy = "Let me think about this.\nThe branch does two things.\n" + _response(
+        [{"label": "A", "primary": True, "commits": [1, 2]}]
+    )
+
+    scope = parse_scope_response(noisy, ctx)
+
+    assert not scope.degraded
+    assert scope.concerns[0].label == "A"
+
+
+def test_parse_accepts_a_fenced_response_without_a_marker() -> None:
+    ctx = _ctx(2)
+    fenced = '```json\n{"concerns":[{"label":"A","primary":true,"commits":[1,2]}]}\n```'
+
+    scope = parse_scope_response(fenced, ctx)
+
+    assert not scope.degraded
+    assert scope.concerns[0].label == "A"
+
+
+def test_parse_rejects_a_partition_that_drops_a_commit() -> None:
+    scope = parse_scope_response(
+        _response([{"label": "A", "primary": True, "commits": [1, 2]}]), _ctx(3)
+    )
+
+    # Commit 3 vanished. A dropped commit is the exact failure this tool exists
+    # to catch, so the partition is refused rather than reported incomplete.
+    assert scope.degraded
+    assert scope.concerns == ()
+
+
+def test_parse_rejects_a_partition_that_claims_a_commit_twice() -> None:
+    scope = parse_scope_response(
+        _response(
+            [
+                {"label": "A", "primary": True, "commits": [1, 2]},
+                {"label": "B", "primary": False, "commits": [2]},
+            ]
+        ),
+        _ctx(2),
+    )
+
+    assert scope.degraded
+
+
+def test_parse_rejects_an_out_of_range_index() -> None:
+    scope = parse_scope_response(
+        _response([{"label": "A", "primary": True, "commits": [1, 9]}]), _ctx(2)
+    )
+
+    assert scope.degraded
+
+
+def test_parse_rejects_unparseable_output() -> None:
+    scope = parse_scope_response("I could not determine the concerns.", _ctx(2))
+
+    assert scope.degraded
+    assert "complete partition" in scope.degraded_reason
+
+
+def test_parse_promotes_the_largest_concern_when_none_is_primary() -> None:
+    scope = parse_scope_response(
+        _response(
+            [
+                {"label": "A", "primary": False, "commits": [1]},
+                {"label": "B", "primary": False, "commits": [2, 3]},
+            ]
+        ),
+        _ctx(3),
+    )
+
+    assert scope.primary is not None
+    assert scope.primary.label == "B"
+
+
+def test_parse_keeps_only_the_first_of_several_primaries() -> None:
+    scope = parse_scope_response(
+        _response(
+            [
+                {"label": "A", "primary": True, "commits": [1]},
+                {"label": "B", "primary": True, "commits": [2]},
+            ]
+        ),
+        _ctx(2),
+    )
+
+    assert [c.primary for c in scope.concerns] == [True, False]
+
+
+def test_parse_passes_a_degraded_context_straight_through(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _crept_repo(repo)
+    ctx = prepare_branch_scope(repo, "main", limit=1)
+
+    scope = parse_scope_response(
+        _response([{"label": "A", "primary": True, "commits": [1]}]), ctx
+    )
+
+    # An over-cap context must not be partitioned even if a response exists —
+    # degraded means the question went unanswered, never "the branch is focused".
+    assert scope.degraded
+    assert not scope.is_split
+    assert scope.concerns == ()
+
+
+def test_degraded_scope_carries_the_context_reason(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _crept_repo(repo)
+
+    scope = degraded_scope(prepare_branch_scope(repo, "main", limit=1))
+
     assert scope.degraded
     assert "exceeds the 1-commit cap" in scope.degraded_reason
-    # Degraded must not read as "focused" — is_split is suppressed, and the
-    # single concern holds every commit rather than claiming a partition.
-    assert not scope.is_split
-    assert len(scope.concerns) == 1
-    assert len(scope.concerns[0].commits) == 4
 
 
-def test_bad_base_degrades_instead_of_raising(tmp_path: Path) -> None:
+def test_suggested_split_slugs_the_label_and_orders_picks(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _crept_repo(repo)
+    ctx = prepare_branch_scope(repo, "main")
+    scope = parse_scope_response(
+        _response(
+            [
+                {"label": "Persona support", "primary": True, "commits": [1, 2]},
+                {"label": "Ruff bump", "primary": False, "commits": [3]},
+            ]
+        ),
+        ctx,
+    )
 
-    scope = analyze_branch_scope(repo, "no-such-branch")
-    assert scope.degraded
-    assert scope.concerns == ()
+    commands = suggested_split(scope.riders[0], "origin/main")
+    assert commands[0] == "git switch -c ruff-bump main"
+    assert commands[1] == f"git cherry-pick {ctx.commits[2].sha[:7]}"
+
+    primary = scope.primary
+    assert primary is not None
+    picks = suggested_split(primary, "main")[1].removeprefix("git cherry-pick ")
+    assert picks.split() == [c.sha[:7] for c in primary.commits]
 
 
-def test_branch_name_is_carried_through(tmp_path: Path) -> None:
+def test_prepare_keeps_a_commit_whose_every_file_is_ignored(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    _crept_repo(repo)
+    _init_repo(repo)
+    _commit_files(repo, {"core.py": "a\n", "uv.lock": "v1\n"}, "chore: base")
+    subprocess.run(["git", "checkout", "-qb", "feature"], cwd=repo, check=True)
+    _commit_files(repo, {"core.py": "b\n"}, "feat: work")
+    _commit_files(repo, {"uv.lock": "v2\n"}, "fix(security): upgrade joserfc")
 
-    scope = analyze_branch_scope(repo, "main", branch="feature")
-    assert scope.branch == "feature"
-    assert scope.base == "main"
+    ctx = prepare_branch_scope(repo, "main")
 
-
-def test_suggested_split_emits_branch_and_cherry_pick(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _crept_repo(repo)
-
-    scope = analyze_branch_scope(repo, "main")
-    rider = next(c for c in scope.concerns if c.label == "fix: lock TTL off-by-one")
-    commands = suggested_split(rider, "origin/main")
-
-    assert commands[0] == "git switch -c fix/lock-ttl-off-by-one main"
-    assert commands[1] == f"git cherry-pick {rider.commits[0].sha[:7]}"
-
-
-def test_suggested_split_orders_cherry_picks_oldest_first(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _crept_repo(repo)
-
-    scope = analyze_branch_scope(repo, "main")
-    primary = next(c for c in scope.concerns if c.primary)
-    picks = suggested_split(primary, "main")[1].removeprefix("git cherry-pick ").split()
-
-    assert picks == [c.sha[:7] for c in primary.commits]
-
-
-def test_scope_labels_are_stable_across_runs(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _crept_repo(repo)
-
-    assert _labels(repo) == _labels(repo)
+    # A lockfile-only bump is exactly the rider this tool exists to surface, so
+    # it must keep its subject even though every path it touches is filtered.
+    assert [c.subject for c in ctx.commits] == [
+        "feat: work",
+        "fix(security): upgrade joserfc",
+    ]
+    assert ctx.commits[1].files == ()
