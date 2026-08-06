@@ -126,3 +126,12 @@ def test_scope_prompt_states_the_coverage_contract() -> None:
 def test_scope_prompt_biases_against_over_splitting() -> None:
     text = _load_prompt("scope.txt")
     assert "Prefer fewer concerns when genuinely unsure" in text
+
+
+def test_scope_prompt_handles_uninformative_subjects() -> None:
+    text = _load_prompt("scope.txt")
+    # Measured failure: on a branch with 12% conventional subjects the model
+    # collapsed four concerns into two. Vague wording must push weight onto the
+    # file paths, not onto grouping everything together.
+    assert "When the subjects are vague, judge by the files" in text
+    assert "Serving the branch's goal does not make two things one concern" in text

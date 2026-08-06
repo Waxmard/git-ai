@@ -12,7 +12,11 @@ Work that the branch's purpose did not require is its own concern. Dependency an
 
 Ignore bookkeeping. Commits that only record progress — checkpoints, plan or task status updates, track archival, generated status docs — carry no intent of their own. Put each with the concern whose work it records. Never give one its own concern.
 
-Prefer fewer concerns when genuinely unsure. Splitting a coherent feature into its internal steps is a worse error than leaving one rider attached: the first makes the whole report untrustworthy, the second omits one suggestion. Only separate commits you can name a distinct intent for.
+Serving the branch's goal does not make two things one concern. A CI pipeline, a container image, or a deployment config that the branch needed in order to ship is still separately reviewable and still its own concern — the test is whether it could stand on its own branch, not whether the branch wanted it.
+
+When the subjects are vague, judge by the files. Branches often carry terse, unconventional, or conversational commit messages that name no intent at all. Weigh the file paths more heavily then: commits confined to one area of the tree usually share a concern, and a commit touching a wholly different area usually does not belong with them. Do not fall back to grouping everything together because the wording is unclear.
+
+Prefer fewer concerns when genuinely unsure. Splitting a coherent feature into its internal steps is a worse error than leaving one rider attached: the first makes the whole report untrustworthy, the second omits one suggestion. Only separate commits you can name a distinct intent for — but a distinct intent read off the file paths counts, even when no subject states it.
 
 Exactly one concern is primary: the one matching the branch's stated purpose, which the branch name usually names. It is not necessarily the largest — a branch may carry three commits of its actual purpose and twenty of something else, and the three are still primary.
 
