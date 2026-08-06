@@ -1,0 +1,32 @@
+You are splitting a git branch into the distinct concerns it carries, so that work riding along unrelated to the branch's purpose can be moved onto its own branch before the branch is pushed for review.
+
+You are given the branch's commits, oldest first, each numbered and listed with the files it touched. You are NOT given the diff. Judge from the subjects and the file paths.
+
+A concern is one unit of intent — the smallest grouping a reviewer would want to review as a whole. Group the commits so that every concern stands on its own: it could be lifted onto a fresh branch off the base and still make sense.
+
+Grouping rules, in order of authority:
+
+Follow-up commits belong with the work they follow up on. A fix, refactor, style, chore, or test commit that corrects, tidies, lints, or completes something introduced earlier in this branch is part of that concern, never its own. Branches accumulate many of these — repeated "fix lint errors", "address review comments", "fix the pipeline", "add type annotation" commits are the normal shape of one concern being finished, not evidence of several. Two commits with the same or near-identical subject are almost always the same concern.
+
+Work that the branch's purpose did not require is its own concern. Dependency and version bumps, security upgrades, unrelated CI or build changes, unrelated documentation, and drive-by fixes to areas the branch otherwise does not touch each stand alone. Separate them by what they change, not by how they are labelled: two dependency bumps to unrelated dependencies are two concerns, while a bump and the code change it forces are one.
+
+Ignore bookkeeping. Commits that only record progress — checkpoints, plan or task status updates, track archival, generated status docs — carry no intent of their own. Put each with the concern whose work it records. Never give one its own concern.
+
+Serving the branch's goal does not make two things one concern. A CI pipeline, a container image, or a deployment config that the branch needed in order to ship is still separately reviewable and still its own concern — the test is whether it could stand on its own branch, not whether the branch wanted it.
+
+When the subjects are vague, judge by the files. Branches often carry terse, unconventional, or conversational commit messages that name no intent at all. Weigh the file paths more heavily then: commits confined to one area of the tree usually share a concern, and a commit touching a wholly different area usually does not belong with them. Do not fall back to grouping everything together because the wording is unclear.
+
+Prefer fewer concerns when genuinely unsure. Splitting a coherent feature into its internal steps is a worse error than leaving one rider attached: the first makes the whole report untrustworthy, the second omits one suggestion. Only separate commits you can name a distinct intent for — but a distinct intent read off the file paths counts, even when no subject states it.
+
+Exactly one concern is primary: the one matching the branch's stated purpose, which the branch name usually names. It is not necessarily the largest — a branch may carry three commits of its actual purpose and twenty of something else, and the three are still primary.
+
+Label each concern with a short noun phrase naming what it does, in six words or fewer. No Conventional Commits prefix, no trailing period. Describe the concern as a whole, never by quoting one member commit's subject.
+
+Assign every commit to exactly one concern. Every number in the list must appear once, and no number may appear twice or be omitted.
+
+Wrap your answer in the exact line marker shown below. Emit NOTHING before the ===SCOPE=== line — no preamble, no restatement of the commits, no explanation of how you grouped them. Any reasoning you do stays out of the output entirely. ===SCOPE=== is the only marker that exists: the JSON simply ends the response, so never emit a closing marker such as ===END===.
+
+===SCOPE===
+{"concerns":[{"label":"<short noun phrase>","primary":<true or false>,"commits":[<commit numbers>]}]}
+
+Emit the JSON as a single object on one line, with no code fence around it.
