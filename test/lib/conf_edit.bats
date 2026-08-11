@@ -138,3 +138,28 @@ teardown() {
   assert_line 'account  = me@acme.com'
   assert_line 'projects = alpha, beta'
 }
+
+# --- conf_remove_section_setting -------------------------------------------
+
+@test "conf_remove_section_setting: drops the key, keeps the section's other lines" {
+  run conf_remove_section_setting vertex projects <"$FIXTURE"
+  assert_success
+  refute_line 'projects = alpha, beta'
+  assert_line '[vertex]'
+  assert_line 'account  = me@acme.com'
+}
+
+@test "conf_remove_section_setting: only touches the named section" {
+  printf '[vertex]\nprojects = a\n\n[vertex-gemini]\nprojects = b\n' >"${TEST_DIR}/v.conf"
+  run conf_remove_section_setting vertex-gemini projects <"${TEST_DIR}/v.conf"
+  assert_success
+  assert_line 'projects = a'
+  assert_equal "$(printf '%s\n' "$output" | grep -c '^projects')" "1"
+}
+
+@test "conf_remove_section_setting: absent key passes the file through" {
+  run conf_remove_section_setting vertex region <"$FIXTURE"
+  assert_success
+  assert_line 'projects = alpha, beta'
+  assert_line 'gemini-3.5-flash'
+}

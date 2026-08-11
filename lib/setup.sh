@@ -481,11 +481,16 @@ _setup_edit_existing() {
 
 # Best-effort: seed the per-repo default so the next commit/pr has a pick ready
 # without prompting. Only meaningful inside a git repo. TOKEN is a wizard
-# provider token; the saved pick is its first concrete runnable provider.
+# provider token; the saved pick is its first concrete runnable provider —
+# profile-qualified for vertex, whose project lives in the profile.
 _setup_seed_default_provider() {
-  local token="$1" first
+  local token="$1" conf="${2:-$(user_options_path)}" first pr
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   first=$(_setup_expand_provider "$token" | head -n1)
+  if [[ "$token" == vertex ]]; then
+    pr=$(vertex_section_projects "$conf" | head -n1)
+    [[ -n "$pr" ]] && first="${first}@${pr}"
+  fi
   save_last_provider commit "$first"
   save_last_provider pr "$first"
   printf 'Default provider for this repo set to %s.\n' "$(provider_display_name "$token")"
@@ -499,33 +504,26 @@ _setup_fast_path() {
   local conf="$1"
   shift
   local -a ready=("$@")
-  local p c model recs
-
-  printf 'Detected providers you can use right now — enabling them with recommended models:\n\n'
-  local combos=""
-  for p in "${ready[@]}"; do
-    recs=""
-    while IFS= read -r c; do
-      model=$(recommended_model "$c")
-      combos+="${c}:${model}"$'\n'
-      [[ -n "$model" ]] && recs="${recs:+${recs}, }${model}"
-    done < <(_setup_expand_provider "$p")
-    printf '  ✓ %-14s → %s\n' "$(provider_display_name "$p")" "${recs:-(pick a model later)}"
-  done
+  local p c model recs pr
 
   # Vertex readiness came from somewhere — a prior config (the reset case) or
   # the environment. Capture those settings BEFORE the overwrite so the fresh
   # config stays self-sufficient; without this a reset would silently strand a
   # "ready" vertex provider with no project to run against.
   local carry_projects="" carry_account="" carry_region="" s
+  local -a projects=()
   case " ${ready[*]} " in *" vertex "*)
-    # Project priority: the config's own projects/project keys, then the
-    # environment, then — last resort — the project detected during the
+    # Project priority: the config's own per-project sections and project keys,
+    # then the environment, then — last resort — the project detected during the
     # readiness probe (set when vertex entered the ready set on ADC +
     # detection alone).
-    carry_projects=$(_setup_current_vertex_projects)
+    carry_projects=$(_setup_current_vertex_projects "$conf")
     carry_projects="${carry_projects:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
     carry_projects="${carry_projects:-${SETUP_VERTEX_DETECTED:-}}"
+    while IFS= read -r pr; do
+      pr=$(_trim "$pr")
+      [[ -n "$pr" ]] && projects+=("$pr")
+    done < <(printf '%s\n' "${carry_projects//,/$'\n'}")
     for s in vertex vertex-anthropic vertex-gemini; do
       [[ -z "$carry_account" ]] && carry_account=$(vertex_resolve "$s" account)
       [[ -z "$carry_region" ]] && carry_region=$(vertex_resolve "$s" region)
@@ -533,24 +531,39 @@ _setup_fast_path() {
     ;;
   esac
 
+  printf 'Detected providers you can use right now — enabling them with recommended models:\n\n'
+  local combos=""
+  for p in "${ready[@]}"; do
+    recs=""
+    while IFS= read -r c; do
+      model=$(recommended_model "$c")
+      # Vertex pins per project, so each known project gets its own section.
+      if [[ "$p" == vertex && ${#projects[@]} -gt 0 ]]; then
+        for pr in "${projects[@]}"; do combos+="${c}@${pr}:${model}"$'\n'; done
+      else
+        combos+="${c}:${model}"$'\n'
+      fi
+      [[ -n "$model" ]] && recs="${recs:+${recs}, }${model}"
+    done < <(_setup_expand_provider "$p")
+    printf '  ✓ %-14s → %s%s\n' "$(provider_display_name "$p")" \
+      "${recs:-(pick a model later)}" \
+      "$([[ "$p" == vertex && ${#projects[@]} -gt 0 ]] && printf ' (projects: %s)' "$(_join_comma "${projects[@]}")")"
+  done
+
   local conf_dir
   conf_dir=$(dirname "$conf")
   mkdir -p "$conf_dir" || die "Cannot create config dir: $conf_dir"
   printf '%s' "$combos" | render_options_conf | _conf_write_fresh "$conf" ||
     die "Failed to write $conf"
 
-  # Restore the captured vertex settings into the shared [vertex] block. The
-  # wizard always writes the plural `projects =` key — even for one project —
-  # so every later edit (additive attach, replace action) seeds from one place.
-  if [[ -n "$carry_projects" ]]; then
-    _conf_apply "$conf" conf_set_section_setting vertex projects "$carry_projects"
-  fi
+  # Restore the captured vertex settings into the shared [vertex] block, which
+  # every per-project section inherits from.
   [[ -n "$carry_account" ]] && _conf_apply "$conf" conf_set_section_setting vertex account "$carry_account"
   [[ -n "$carry_region" ]] && _conf_apply "$conf" conf_set_section_setting vertex region "$carry_region"
 
   printf '\nWrote %s\n' "$conf"
 
-  _setup_seed_default_provider "${ready[0]}"
+  _setup_seed_default_provider "${ready[0]}" "$conf"
 
   # Land on the overview: the edit loop shows the resulting config and offers
   # the advanced actions; its default action is Done, so a bare Enter finishes.

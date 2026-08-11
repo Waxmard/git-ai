@@ -59,7 +59,13 @@ _fast() {
 }
 
 @test "_setup_fast_path: vertex expands to both internal sections, one user-facing row" {
-  run _fast "$CONF" vertex
+  # No project resolvable anywhere: the base sections are the only place to pin,
+  # and vertex takes its project from the environment at run time.
+  run env -u GOOGLE_VERTEX_PROJECT -u GOOGLE_CLOUD_PROJECT bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    GIT_AI_NO_FZF=1 _setup_fast_path "'"$CONF"'" vertex </dev/null
+  '
   assert_success
   # One unified display row, never the internal split.
   assert_output --partial "Vertex AI"
@@ -73,7 +79,7 @@ _fast() {
   assert_line "gemini-rec-test"
 }
 
-@test "_setup_fast_path: reset carries prior vertex settings into the new config" {
+@test "_setup_fast_path: reset carries prior vertex projects into per-project sections" {
   cat >"$CONF" <<'EOF'
 [vertex]
 projects = proj-a, proj-b
@@ -85,8 +91,13 @@ EOF
   run _fast "$CONF" vertex
   assert_success
   run cat "$CONF"
-  assert_line "projects = proj-a, proj-b"
+  assert_line "[vertex-gemini@proj-a]"
+  assert_line "[vertex-gemini@proj-b]"
+  assert_line "[vertex-anthropic@proj-a]"
+  assert_line "[vertex-anthropic@proj-b]"
   assert_line "account = me@example.com"
+  # The projects list drove the old cross product; the sections are the record now.
+  refute_output --partial "projects ="
 }
 
 @test "_setup_fast_path: detected vertex project is written when nothing else resolves" {
@@ -100,7 +111,7 @@ EOF
   '
   assert_success
   run cat "$CONF"
-  assert_line "projects = detected-proj"
+  assert_line "[vertex-gemini@detected-proj]"
 }
 
 @test "_setup_fast_path: env-derived vertex project is written to the config" {
@@ -111,7 +122,7 @@ EOF
   '
   assert_success
   run cat "$CONF"
-  assert_line "projects = env-proj"
+  assert_line "[vertex-anthropic@env-proj]"
 }
 
 @test "_setup_fast_path: seeds the per-repo default provider" {
@@ -123,9 +134,25 @@ EOF
 }
 
 @test "_setup_fast_path: vertex-first seeds a concrete runnable token" {
-  run _fast "$CONF" vertex gemini-api
+  run env -u GOOGLE_VERTEX_PROJECT -u GOOGLE_CLOUD_PROJECT bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    GIT_AI_NO_FZF=1 _setup_fast_path "'"$CONF"'" vertex gemini-api </dev/null
+  '
   assert_success
   source "${REPO_ROOT}/lib/ai-common.sh"
   run get_last_provider commit
   assert_output "vertex-anthropic"
+}
+
+@test "_setup_fast_path: vertex default is profile-qualified when a project is known" {
+  run env GOOGLE_CLOUD_PROJECT=env-proj bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    GIT_AI_NO_FZF=1 _setup_fast_path "'"$CONF"'" vertex </dev/null
+  '
+  assert_success
+  source "${REPO_ROOT}/lib/ai-common.sh"
+  run get_last_provider commit
+  assert_output "vertex-anthropic@env-proj"
 }

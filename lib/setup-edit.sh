@@ -41,34 +41,25 @@ _join_comma() {
   printf '%s' "${joined%, }"
 }
 
-# _merge_vertex_projects CURRENT NEW...
-# Merge NEW project ids into the comma-separated CURRENT list (current order
-# preserved, additions appended, deduped). Prints the merged comma list.
-_merge_vertex_projects() {
-  local current="$1" p
-  shift
-  local -a merged=()
-  local seen=$'\n'
-  while IFS= read -r p; do
-    p=$(_trim "$p")
-    [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
-    merged+=("$p")
-    seen+="$p"$'\n'
-  done < <(
-    printf '%s\n' "${current//,/$'\n'}"
-    [[ $# -gt 0 ]] && printf '%s\n' "$@"
-  )
-  _join_comma ${merged[@]+"${merged[@]}"}
+# Trailing " [account: …]" for the vertex summary row. The account can live in
+# the shared [vertex] block or either internal section.
+_setup_vertex_account_detail() {
+  local s account
+  for s in vertex vertex-anthropic vertex-gemini; do
+    account=$(vertex_resolve "$s" account)
+    [[ -n "$account" ]] && break
+  done
+  [[ -n "$account" ]] && printf ' [account: %s]' "$account"
 }
 
 # For the merged `vertex` summary row, format a trailing " (project: …)" suffix
-# (plus the pinned gcloud account when set) so the summary identifies the GCP
-# project/account pair a vertex provider runs against. Empty for everything
-# else — _setup_conf_wizard_providers always folds the internal sections to the
-# `vertex` token, so that's the only vertex spelling that arrives here.
+# so the summary identifies the GCP project a vertex provider runs against.
+# Empty for everything else — _setup_conf_wizard_providers always folds the
+# internal sections to the `vertex` token, so that's the only vertex spelling
+# that arrives here.
 _setup_vertex_summary_detail() {
   [[ "$1" == vertex ]] || return 0
-  local raw account detail="" pr s
+  local raw pr detail=""
 
   raw=$(_setup_current_vertex_projects)
   local -a projs=()
@@ -78,14 +69,19 @@ _setup_vertex_summary_detail() {
   elif [[ ${#projs[@]} -eq 1 ]]; then
     detail+=" (project: ${projs[0]})"
   fi
+  printf '%s%s' "$detail" "$(_setup_vertex_account_detail)"
+}
 
-  # The account can live in the shared [vertex] block or either internal section.
-  for s in vertex vertex-anthropic vertex-gemini; do
-    account=$(vertex_resolve "$s" account)
-    [[ -n "$account" ]] && break
-  done
-  [[ -n "$account" ]] && detail+=" [account: ${account}]"
-  printf '%s' "$detail"
+# Vertex AI summarises as one row per GCP project, since each project carries
+# its own pins.
+_setup_vertex_summary_rows() {
+  local conf="$1" pr models
+  printf '  • %s%s\n' "$(provider_display_name vertex)" "$(_setup_vertex_account_detail)"
+  while IFS= read -r pr; do
+    models=$(_setup_existing_models "vertex@${pr}" | paste -sd, - | sed 's/,/, /g')
+    printf '      %s — %s\n' "$pr" \
+      "${models:-no models pinned (hidden from the picker until you add one)}"
+  done < <(vertex_section_projects "$conf")
 }
 
 _setup_print_summary() {
@@ -93,6 +89,10 @@ _setup_print_summary() {
   printf 'Configured providers:\n'
   while IFS= read -r p; do
     any=1
+    if [[ "$p" == vertex && -n "$(vertex_section_projects "$conf")" ]]; then
+      _setup_vertex_summary_rows "$conf"
+      continue
+    fi
     # Models pinned under this entry (deduped, @profiles folded to base; the
     # vertex entry folds both internal sections into one row).
     models=$(_setup_existing_models "$p" | paste -sd, - | sed 's/,/, /g')
@@ -131,76 +131,48 @@ _setup_action_add() {
   local provider
   provider=$(_setup_choose_provider 'Set up which provider? ' "${cands[@]}") || { printf 'Cancelled.\n'; return 0; }
 
+  # Vertex is picked project-first, whether or not it is already configured:
+  # models are pinned per project, so there is nowhere to put them until a
+  # project exists. Re-adding it therefore means "attach another GCP project",
+  # and the new project starts from what its siblings already run.
+  if [[ "$provider" == vertex ]]; then
+    _setup_choose_vertex_projects "$provider" "$conf"
+    # No project anywhere: the base sections are the only place left to pin, and
+    # vertex resolves its project from the environment at run time.
+    [[ -n "$(vertex_section_projects "$conf")" ]] || _setup_change_models "$conf" vertex
+    _setup_ensure_auth "$provider" "$conf"
+    return 0
+  fi
+
   # Present section → replace-style model edit. Truly absent → append a new
   # section. Either way no duplicate [provider] header is created.
   local present=$'\n'
   while IFS= read -r p; do present+="$p"$'\n'; done < <(_setup_conf_wizard_providers "$conf")
   if [[ "$present" == *$'\n'"$provider"$'\n'* ]]; then
-    # Re-adding an already-configured vertex means "attach another GCP project",
-    # so go straight to the project picker. Models live in the shared
-    # [vertex-gemini]/[vertex-anthropic] sections and parse_user_options expands
-    # them across every project in the list — the new project inherits the
-    # existing pins with no re-pick. Dropping some is a later, separate edit.
-    if [[ "$provider" == vertex ]]; then
-      _setup_choose_vertex_projects "$provider" "$conf"
-      local inherited
-      inherited=$(_setup_existing_models vertex | paste -sd, - | sed 's/,/, /g')
-      [[ -n "$inherited" ]] &&
-        printf 'Models carried over to every project: %s\n' "$inherited"
-      _setup_ensure_auth "$provider" "$conf"
-      return 0
-    fi
     _setup_change_models "$conf" "$provider"
   else
     local -a models=()
     while IFS= read -r m; do [[ -n "$m" ]] && models+=("$m"); done < <(_setup_pick_models "$provider")
-    if [[ "$provider" == vertex ]]; then
-      if [[ ${#models[@]} -gt 0 ]]; then
-        _setup_write_vertex_models "$conf" "${models[@]}"
-      else
-        # Enabled with nothing pinned: both internal sections, empty (valid —
-        # hidden from the picker until a model is added).
-        _conf_apply "$conf" conf_add_section vertex-anthropic &&
-          _conf_apply "$conf" conf_add_section vertex-gemini
-      fi &&
-        printf 'Added %s.\n' "$(provider_display_name "$provider")"
-    else
-      _conf_apply "$conf" conf_add_section "$provider" ${models[@]+"${models[@]}"} &&
-        printf 'Added %s.\n' "$(provider_display_name "$provider")"
-    fi
+    _conf_apply "$conf" conf_add_section "$provider" ${models[@]+"${models[@]}"} &&
+      printf 'Added %s.\n' "$(provider_display_name "$provider")"
   fi
-  _setup_choose_vertex_projects "$provider" "$conf"
   _setup_ensure_auth "$provider" "$conf"
 }
 
-# The projects the config currently names, as a comma list: the shared
-# [vertex] `projects =` list, falling back to a stray singular `project =`
-# (shared block or either internal section — hand-written configs may use it).
-# Every wizard projects edit seeds from this so no key is ever overlooked.
-_setup_current_vertex_projects() {
-  local cur s
-  cur=$(vertex_config_value vertex projects)
-  if [[ -z "$cur" ]]; then
-    for s in vertex vertex-anthropic vertex-gemini; do
-      cur=$(vertex_resolve "$s" project)
-      [[ -n "$cur" ]] && break
-    done
-  fi
-  printf '%s' "$cur"
-}
-
-# For a vertex provider, let the user pick which GCP project(s) it runs against,
-# merged into the shared [vertex] `projects =` list (expanded into per-project
-# picker profiles at commit time) — picks never drop projects already listed.
-# Shared across both vertex providers by design; a blank pick keeps the current
-# list. No-op for non-vertex providers.
+# For a vertex provider, let the user attach GCP project(s), each getting its
+# own [vertex-<family>@<project>] sections. Additive: a pick never drops a
+# project already configured (that's the replace-style projects editor below),
+# and a blank pick changes nothing. Returns immediately for non-vertex providers.
 _setup_choose_vertex_projects() {
   local provider="$1" conf="$2"
   case "${provider%%@*}" in vertex | vertex-gemini | vertex-anthropic) ;; *) return 0 ;; esac
 
-  local current sweep
-  current=$(_setup_current_vertex_projects)
+  local current sweep seed
+  current=$(_setup_current_vertex_projects "$conf")
   [[ -n "$current" ]] && printf 'Current vertex projects: %s\n' "$current"
+  # Read the pins to inherit before attaching anything, while they are still the
+  # answer to "what is pinned elsewhere".
+  seed=$(_setup_existing_models vertex)
   # One gcloud sweep serves both the picker rows and the account lookup below.
   sweep=$(_setup_gcloud_projects)
 
@@ -209,17 +181,47 @@ _setup_choose_vertex_projects() {
   while IFS= read -r pr; do projs+=("$pr"); done < <(_setup_pick_projects "$sweep")
   [[ ${#projs[@]} -gt 0 ]] || { printf 'Vertex projects unchanged.\n'; return 0; }
 
-  # Additive like everything else in the wizard: picking a project attaches it
-  # alongside the ones already configured; removal stays a manual config edit.
-  local joined
-  joined=$(_merge_vertex_projects "$current" "${projs[@]}")
-  if [[ "$joined" == "$current" ]]; then
-    printf 'Vertex projects unchanged: %s\n' "$joined"
+  local -a added=()
+  local cseen=$'\n'
+  while IFS= read -r pr; do
+    pr=$(_trim "$pr")
+    [[ -n "$pr" ]] && cseen+="$pr"$'\n'
+  done < <(printf '%s\n' "${current//,/$'\n'}")
+  for pr in "${projs[@]}"; do
+    case "$cseen" in *$'\n'"$pr"$'\n'*) continue ;; esac
+    cseen+="$pr"$'\n'
+    _setup_vertex_add_project "$conf" "$pr" && added+=("$pr")
+  done
+  if [[ ${#added[@]} -eq 0 ]]; then
+    printf 'Vertex projects unchanged: %s\n' "$current"
     return 0
   fi
-  _conf_apply "$conf" conf_set_section_setting vertex projects "$joined" &&
-    printf 'Set vertex projects: %s\n' "$joined" &&
-    _setup_offer_account_pin "$conf" "$sweep" "${projs[@]}"
+  printf 'Added vertex project(s): %s\n' "$(_join_comma "${added[@]}")"
+  _setup_pin_new_projects "$conf" "$seed" "${added[@]}"
+  _setup_offer_account_pin "$conf" "$sweep" "${added[@]}"
+}
+
+# _setup_pin_new_projects CONF SEED PROJECT...
+# Pin models on freshly attached projects: one prompt for the whole batch,
+# pre-marked with SEED (what vertex has pinned elsewhere), then that set written
+# to each. Per-project divergence is a later "Change models" edit — asking the
+# same question once per project is not a choice worth offering.
+_setup_pin_new_projects() {
+  local conf="$1" seed="$2" first p
+  shift 2
+  first="$1"
+  shift
+  [[ -n "$seed" ]] && printf 'Starting from the models pinned on your other projects.\n'
+  _setup_change_models "$conf" "vertex@${first}" "$seed"
+  [[ $# -gt 0 ]] || return 0
+
+  local -a picked=()
+  while IFS= read -r p; do [[ -n "$p" ]] && picked+=("$p"); done \
+    < <(_setup_existing_models "vertex@${first}")
+  for p in "$@"; do
+    _setup_write_vertex_models "$conf" "vertex@${p}" ${picked[@]+"${picked[@]}"} || return 1
+  done
+  printf 'Applied the same models to: %s\n' "$(_join_comma "$@")"
 }
 
 # Replace-style editor behind the menu's "Change Vertex AI projects": one
@@ -230,9 +232,12 @@ _setup_choose_vertex_projects() {
 # a vertex provider with no project cannot run, so "clear the list" is not a
 # state the wizard will write (drop vertex entirely via remove-provider).
 _setup_change_vertex_projects() {
-  local conf="$1" current p sweep
-  current=$(_setup_current_vertex_projects)
+  local conf="$1" current p sweep seed
+  current=$(_setup_current_vertex_projects "$conf")
   [[ -n "$current" ]] && printf 'Current vertex projects: %s\n' "$current"
+  # Read the pins to inherit before the edit, while they are still the answer to
+  # "what is pinned elsewhere".
+  seed=$(_setup_existing_models vertex)
   # One gcloud sweep serves both the picker rows and the account lookup below.
   sweep=$(_setup_gcloud_projects)
 
@@ -240,10 +245,12 @@ _setup_change_vertex_projects() {
   # projects, then the custom-id row — a project none of those logins can list
   # is the normal reason to be here, so there must always be a way to type one.
   local rows="" seen=$'\n' preselect="" discovered
+  local -a cur_list=()
   while IFS= read -r p; do
     p=$(_trim "$p")
     [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
     seen+="$p"$'\n'
+    cur_list+=("$p")
     rows+="${p}|${p} (current)"$'\n'
     preselect="$SETUP_PRESELECT_CURRENT"
   done < <(printf '%s\n' "${current//,/$'\n'}")
@@ -278,20 +285,36 @@ _setup_change_vertex_projects() {
     return 0
   fi
 
-  local joined
-  joined=$(_join_comma "${picked[@]}")
-  if [[ "$joined" == "$current" ]]; then
-    printf 'Vertex projects unchanged: %s\n' "$joined"
+  local -a added=() dropped=()
+  for p in "${picked[@]}"; do
+    case "$seen" in *$'\n'"$p"$'\n'*) ;; *) added+=("$p") ;; esac
+  done
+  for p in ${cur_list[@]+"${cur_list[@]}"}; do
+    case "$pseen" in *$'\n'"$p"$'\n'*) ;; *) dropped+=("$p") ;; esac
+  done
+  if [[ ${#added[@]} -eq 0 && ${#dropped[@]} -eq 0 ]]; then
+    printf 'Vertex projects unchanged: %s\n' "$current"
     return 0
   fi
-  _conf_apply "$conf" conf_set_section_setting vertex projects "$joined" &&
-    printf 'Set vertex projects: %s\n' "$joined" &&
-    _setup_offer_account_pin "$conf" "$sweep" "${picked[@]}"
+
+  # Dropping a project deletes its sections, and with them its model pins — the
+  # sections are the only record either one has.
+  for p in ${dropped[@]+"${dropped[@]}"}; do
+    _setup_vertex_drop_project "$conf" "$p" || return 1
+  done
+  for p in ${added[@]+"${added[@]}"}; do
+    _setup_vertex_add_project "$conf" "$p" || return 1
+  done
+  printf 'Set vertex projects: %s\n' "$(_join_comma "${picked[@]}")"
+  [[ ${#dropped[@]} -gt 0 ]] && printf 'Dropped: %s\n' "$(_join_comma "${dropped[@]}")"
+  [[ ${#added[@]} -gt 0 ]] || return 0
+  _setup_pin_new_projects "$conf" "$seed" "${added[@]}"
+  _setup_offer_account_pin "$conf" "$sweep" "${added[@]}"
 }
 
 # Remove a provider section (preserving the rest of the file). Removing the
-# wizard's `vertex` entry drops both internal sections plus the shared [vertex]
-# settings block — nothing vertex-related is left behind.
+# wizard's `vertex` entry drops every per-project section, both base sections,
+# and the shared [vertex] settings block — nothing vertex-related is left behind.
 _setup_action_remove() {
   local conf="$1" p
   local -a secs=()
@@ -299,6 +322,9 @@ _setup_action_remove() {
   local provider
   provider=$(_setup_choose_provider 'Remove which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
   if [[ "$provider" == vertex ]]; then
+    while IFS= read -r p; do
+      _setup_vertex_drop_project "$conf" "$p"
+    done < <(vertex_section_projects "$conf")
     _conf_apply "$conf" conf_remove_section vertex-anthropic &&
       _conf_apply "$conf" conf_remove_section vertex-gemini &&
       _conf_apply "$conf" conf_remove_section vertex
@@ -308,14 +334,17 @@ _setup_action_remove() {
     printf 'Removed %s.\n' "$(provider_display_name "$provider")"
 }
 
-# Print the models currently pinned under PROVIDER's base section (deduped),
-# folding any @profile expansions back to the base. For the wizard's `vertex`
-# token, both internal vertex sections fold together. Used to merge rather
-# than overwrite when adding models.
+# Print the models PROVIDER currently pins (deduped). `vertex` is the union
+# across both internal sections and every project; `vertex@<project>` narrows it
+# to one project. An internal token (`vertex-gemini`) keeps the old base-section
+# reading, @profiles folded in. Used to seed the replace-style model editor.
 _setup_existing_models() {
   parse_user_options | awk -F: -v p="$1" '{
-    split($1, a, "@"); b = a[1]
-    if (p == "vertex" && (b == "vertex-gemini" || b == "vertex-anthropic")) b = "vertex"
+    split($1, a, "@"); b = a[1]; prof = a[2]
+    if (b == "vertex-gemini" || b == "vertex-anthropic") {
+      if (p == "vertex") b = "vertex"
+      else if (index(p, "vertex@") == 1) b = (prof == "") ? "vertex" : "vertex@" prof
+    }
     if (b == p && $2 != "" && !seen[$2]++) print $2
   }'
 }
@@ -339,23 +368,6 @@ _setup_upsert_section_models() {
   fi
 }
 
-# Split MODELS by family and write each subset into its internal vertex section
-# (creating sections only when they get models). This is how the wizard's
-# single "Vertex AI" hides the vertex-gemini/vertex-anthropic split.
-_setup_write_vertex_models() {
-  local conf="$1" m
-  shift
-  local -a anth=() gem=()
-  for m in "$@"; do
-    case "$(_setup_provider_for_model vertex "$m")" in
-      vertex-anthropic) anth+=("$m") ;;
-      *) gem+=("$m") ;;
-    esac
-  done
-  _setup_upsert_section_models "$conf" vertex-anthropic ${anth[@]+"${anth[@]}"} &&
-    _setup_upsert_section_models "$conf" vertex-gemini ${gem[@]+"${gem[@]}"}
-}
-
 # Replace-style model editor (mirrors _setup_change_vertex_projects): one
 # multi-select over the union of the models currently pinned (pre-marked, listed
 # first) and the discovered catalog — the marked set REPLACES the provider's
@@ -363,34 +375,52 @@ _setup_write_vertex_models() {
 # confirming with nothing marked unpins every model (the provider stays
 # configured but drops out of the picker, which is the documented empty-section
 # state); the custom-id row adds unlisted ids to the marked set.
+# PROVIDER may be `vertex@<project>` to edit one project's pins. SEED replaces
+# the current pins as the pre-marked set, which is how a just-attached project
+# starts from what its siblings run.
 _setup_change_models() {
-  local conf="$1" provider="$2" m
-  local current
+  local conf="$1" provider="$2" seed="${3:-}" m
+  local base="${provider%%@*}" current premark
   current=$(_setup_existing_models "$provider" | paste -sd, - | sed 's/,/, /g')
   [[ -n "$current" ]] && printf 'Current models: %s\n' "$current"
+  premark="${seed:-$(_setup_existing_models "$provider")}"
 
-  # Union: current pins first (labelled "(current)"), then the suggestion rows.
+  # Union: pre-marked pins first (labelled "(current)"), then the suggestion rows.
   local rows="" seen=$'\n' lbl preselect=""
   while IFS= read -r m; do
     [[ -n "$m" && "$seen" != *$'\n'"$m"$'\n'* ]] || continue
     seen+="$m"$'\n'
     rows+="${m}|${m} (current)"$'\n'
     preselect="$SETUP_PRESELECT_CURRENT"
-  done < <(_setup_existing_models "$provider")
+  done <<<"$premark"
   while IFS='|' read -r m lbl; do
     [[ -n "$m" && "$seen" != *$'\n'"$m"$'\n'* ]] || continue
     [[ "$m" != '=custom=' ]] && seen+="$m"$'\n'
     rows+="${m}|${lbl}"$'\n'
-  done < <(_setup_model_rows "$provider" "$(_setup_suggest_models "$provider")")
+  done < <(_setup_model_rows "$base" "$(_setup_suggest_models "$base")")
+
+  # Nothing pinned and nothing inherited (a provider being set up, or one
+  # deliberately emptied): fall back to the recommended rows, so a bare Enter
+  # still lands on a usable pin instead of pinning nothing.
+  local header='Current pins start marked'
+  if [[ -z "$preselect" ]]; then
+    preselect="$SETUP_PRESELECT_RECOMMENDED"
+    header='Recommended start marked'
+  fi
 
   local -a picked=()
   local selected want_custom="" line pseen=$'\n' st
   selected=$(_setup_multiselect "models for $(provider_display_name "$provider")> " \
-    'Current pins start marked — Tab to add/drop; Enter saves the marked set; Esc keeps current' \
+    "${header} — Tab to add/drop; Enter saves the marked set; Esc keeps current" \
     '— none: unpin every model —' "$rows" "$preselect")
   st=$?
   if [[ $st -ne 0 ]]; then
-    printf 'Models unchanged%s.\n' "${current:+: $current}"
+    if [[ -z "$current" ]]; then
+      printf 'No models pinned for %s — hidden from the picker until you add one.\n' \
+        "$(provider_display_name "$provider")"
+    else
+      printf 'Models unchanged: %s\n' "$current"
+    fi
     return 0
   fi
   while IFS= read -r m; do
@@ -410,8 +440,8 @@ _setup_change_models() {
       printf 'No models pinned for %s.\n' "$(provider_display_name "$provider")"
       return 0
     fi
-    if [[ "$provider" == vertex ]]; then
-      _setup_write_vertex_models "$conf"
+    if [[ "$base" == vertex ]]; then
+      _setup_write_vertex_models "$conf" "$provider"
     else
       _conf_apply "$conf" conf_set_section_models "$provider"
     fi &&
@@ -429,8 +459,8 @@ _setup_change_models() {
     return 0
   fi
 
-  if [[ "$provider" == vertex ]]; then
-    _setup_write_vertex_models "$conf" "${picked[@]}"
+  if [[ "$base" == vertex ]]; then
+    _setup_write_vertex_models "$conf" "$provider" "${picked[@]}"
   else
     _conf_apply "$conf" conf_set_section_models "$provider" "${picked[@]}"
   fi &&
@@ -439,11 +469,17 @@ _setup_change_models() {
 }
 
 # Change an existing provider's models (replace-style — see _setup_change_models).
+# Vertex AI with several projects picks a scope first: one project's pins, or
+# the same set across all of them.
 _setup_action_models() {
   local conf="$1" p
   local -a secs=()
   while IFS= read -r p; do secs+=("$p"); done < <(_setup_conf_wizard_providers "$conf")
-  local provider
+  local provider scope
   provider=$(_setup_choose_provider 'Change models for which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+  if [[ "$provider" == vertex ]]; then
+    scope=$(_setup_pick_vertex_scope "$conf") || { printf 'Cancelled.\n'; return 0; }
+    provider="$scope"
+  fi
   _setup_change_models "$conf" "$provider"
 }

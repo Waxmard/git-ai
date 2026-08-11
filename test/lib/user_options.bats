@@ -352,6 +352,65 @@ EOF
   assert_output --partial "vertex-gemini@example-sandbox:gemini-3.5-flash|gemini-3.5-flash · Vertex AI [example-sandbox]"
 }
 
+# --- vertex_section_projects (per-project pins) ---
+
+@test "vertex_section_projects: lists each profile section's project once" {
+  cat >"$CONF" <<'EOF'
+[vertex-gemini@proj-a]
+gemini-3.5-flash
+
+[vertex-anthropic@proj-a]
+claude-sonnet-4-6
+
+[vertex-gemini@proj-b]
+gemini-3.1-pro-preview
+EOF
+  run vertex_section_projects
+  assert_success
+  assert_line --index 0 "proj-a"
+  assert_line --index 1 "proj-b"
+  assert_equal "${#lines[@]}" "2"
+}
+
+@test "vertex_section_projects: base sections and a projects list name no section" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run vertex_section_projects
+  assert_success
+  assert_output ""
+}
+
+@test "parse_user_options: per-project sections pin different models per project" {
+  cat >"$CONF" <<'EOF'
+[vertex-gemini@proj-a]
+gemini-3.1-pro-preview
+
+[vertex-gemini@proj-b]
+gemini-3.5-flash
+EOF
+  run parse_user_options
+  assert_success
+  assert_line "vertex-gemini@proj-a:gemini-3.1-pro-preview"
+  assert_line "vertex-gemini@proj-b:gemini-3.5-flash"
+  refute_line "vertex-gemini@proj-a:gemini-3.5-flash"
+  refute_line "vertex-gemini@proj-b:gemini-3.1-pro-preview"
+}
+
+@test "provider_ready: a per-project section satisfies the project requirement" {
+  printf '[vertex-gemini@proj-a]\ngemini-3.5-flash\n' >"$CONF"
+  run env -u GOOGLE_VERTEX_PROJECT -u GOOGLE_CLOUD_PROJECT bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    _vertex_has_auth() { return 0; }
+    provider_ready vertex
+  '
+  assert_success
+}
+
 # --- vertex_resolve layered lookup ---
 
 @test "vertex_resolve: inherits account from shared [vertex], project from name" {
