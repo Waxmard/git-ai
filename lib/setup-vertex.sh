@@ -252,6 +252,24 @@ _setup_section_lines() {
   return 0
 }
 
+# True when CONF's literal [SECTION] contains a whole-line comment. Unlike
+# _setup_section_lines (which strips comments before it looks at a line), this
+# reads the raw line — the point is to detect the comment, not discard it.
+_setup_section_has_comment() {
+  local conf="$1" target="$2" line trimmed section=""
+  [[ -r "$conf" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed=$(_trim "$line")
+    if [[ "$trimmed" =~ ^\[([^][]+)\]$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      continue
+    fi
+    [[ "$section" == "$target" ]] || continue
+    [[ "$trimmed" == \#* ]] && return 0
+  done <"$conf"
+  return 1
+}
+
 # True when CONF holds a literal [NAME] provider section.
 _setup_conf_has_section() {
   local conf="$1" name="$2" s
@@ -350,9 +368,13 @@ _setup_vertex_normalize() {
       _setup_upsert_section_models "$conf" "${base}@${p}" ${models[@]+"${models[@]}"} || return 1
     done
     _setup_conf_has_section "$conf" "$base" || continue
-    # A base section carrying settings keeps them for its profiles to inherit;
-    # one that held only models has nothing left to say.
-    if [[ -n "$(_setup_section_lines "$conf" "$base" settings)" ]]; then
+    # A base section carrying settings or comments keeps the header (settings
+    # for its profiles to inherit, comments because they're the user's words,
+    # not the expansion's); conf_set_section_models already keeps both and
+    # drops only the model lines. A section with neither has nothing left to
+    # say once its models are gone.
+    if [[ -n "$(_setup_section_lines "$conf" "$base" settings)" ]] ||
+      _setup_section_has_comment "$conf" "$base"; then
       _conf_apply "$conf" conf_set_section_models "$base"
     else
       _conf_apply "$conf" conf_remove_section "$base"

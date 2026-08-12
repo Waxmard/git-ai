@@ -571,6 +571,34 @@ EOF
   assert_output "proj-a"
 }
 
+@test "_setup_vertex_normalize: a comment-only base section keeps its comment" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a
+
+[vertex-gemini]
+# cheapest model, keep this one first
+gemini-3.5-flash
+EOF
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  run cat "$CONF"
+  assert_line "[vertex-gemini]"
+  assert_line "# cheapest model, keep this one first"
+  # The base section keeps its comment but loses its model to the new profile.
+  [ "$(printf '%s\n' "$output" | sed -n '/^\[vertex-gemini\]$/,/^\[/p' | grep -c '^gemini-3.5-flash$')" -eq 0 ]
+  assert_line "[vertex-gemini@proj-a]"
+  [ "$(grep -c '^gemini-3.5-flash$' <<<"$output")" -eq 1 ]
+}
+
+@test "_setup_vertex_normalize: a base section with neither settings nor comments is dropped" {
+  printf '[vertex]\nprojects = proj-a\n\n[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  run cat "$CONF"
+  refute_line "[vertex-gemini]"
+}
+
 @test "_setup_write_vertex_models: a project scope leaves its siblings alone" {
   cat >"$CONF" <<'EOF'
 [vertex]
