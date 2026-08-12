@@ -17,7 +17,7 @@ Type rules from this POV:
   the git_ai public API → refactor
 - BATS or pytest changes only → test
 - shellcheck, lefthook, line-limit, release tooling, or CI workflows → ci or build
-- docs/src templates and the generated guides (README/AGENTS/CLAUDE/CONTRIBUTING) → docs
+- README, the AGENTS.md guides, or CONTRIBUTING → docs
 
 Breaking (!) from this POV: removing or renaming an __all__ export, or changing what an
 argument existing callers already pass is taken to mean. A signature that still accepts the

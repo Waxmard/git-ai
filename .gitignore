@@ -9,7 +9,6 @@ __pycache__/
 .pytest_cache/
 .dmypy.json
 dist/
-docs/src/CLAUDE.md
 # Build output: bin/ + lib/ copied into the package by _build_backend.py
 python/git_ai/_sh/
 !CLAUDE.md
