@@ -335,6 +335,7 @@ EOF
     export PATH="'"${stub}"':$PATH"
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_suggest_models() { :; }  # no network — seed already carries the pins to inherit
     printf "new-proj\n" | GIT_AI_NO_FZF=1 _setup_choose_vertex_projects vertex "'"$CONF"'"
   '
   rm -rf "$stub"
@@ -357,6 +358,7 @@ EOF
     export PATH="'"${stub}"':$PATH"
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_suggest_models() { :; }  # no network — seed already carries the pins to inherit
     printf "4\nc\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
   '
   rm -rf "$stub"
@@ -1048,6 +1050,7 @@ EOF
     export PATH="'"${stub}"':$PATH"
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_suggest_models() { :; }  # no network — seed already carries the pins to inherit
     printf "3\nnew-proj\n\n\n\n\n" | GIT_AI_NO_FZF=1 _setup_action_add "'"$CONF"'"
   '
   rm -rf "$stub"
@@ -1134,6 +1137,7 @@ SH
     unset GIT_AI_NO_FZF
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_suggest_models() { :; }  # no network — the model prompt is cancelled anyway
     printf "typed-proj\n" | _setup_change_vertex_projects "'"$CONF"'"
   '
   rm -rf "$stub"
