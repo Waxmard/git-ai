@@ -463,6 +463,87 @@ EOF
   assert_line "[vertex-gemini@proj-b]"
 }
 
+@test "_setup_vertex_normalize: a hybrid config folds base models into the explicit profile" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+
+[vertex-gemini]
+gemini-base
+
+[vertex-gemini@proj-b]
+gemini-special
+EOF
+  local before; before="$(parse_user_options | sort)"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  assert_equal "$(parse_user_options | sort)" "$before"
+  # The shared-only project gets a real section, and the explicit one absorbs
+  # what the base section used to expand into it.
+  run cat "$CONF"
+  assert_line "[vertex-gemini@proj-a]"
+  refute_line "[vertex-gemini]"
+  refute_line "projects = proj-a, proj-b"
+}
+
+@test "_setup_vertex_normalize: folding a hybrid makes a scoped unpin actually unpin" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+
+[vertex-gemini]
+gemini-base
+
+[vertex-gemini@proj-b]
+gemini-special
+EOF
+  run _setup_write_vertex_models "$CONF" vertex@proj-b gemini-special
+  assert_success
+  run parse_user_options
+  assert_line "vertex-gemini@proj-b:gemini-special"
+  # Inherited through the base cross-product before the fold — must be gone now.
+  refute_line "vertex-gemini@proj-b:gemini-base"
+  assert_line "vertex-gemini@proj-a:gemini-base"
+}
+
+@test "_setup_current_vertex_projects: unions section projects with the shared list" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a
+
+[vertex-gemini@proj-b]
+gemini-special
+EOF
+  run _setup_current_vertex_projects "$CONF"
+  assert_success
+  assert_output --partial "proj-a"
+  assert_output --partial "proj-b"
+}
+
+@test "_setup_vertex_normalize: an already-folded config is left alone" {
+  printf '[vertex-gemini@proj-a]\ngemini-y\n\n[vertex-anthropic@proj-a]\nclaude-x\n' >"$CONF"
+  local before; before="$(cat "$CONF")"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  assert_output ""
+  assert_equal "$(cat "$CONF")" "$before"
+}
+
+@test "_setup_vertex_normalize: a base project= that would override a profile is removed" {
+  cat >"$CONF" <<'EOF'
+[vertex-gemini]
+project = wrong-proj
+
+[vertex-gemini@proj-a]
+gemini-y
+EOF
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  # Left in place it would win over the profile name for every gemini profile.
+  run vertex_resolve "vertex-gemini@proj-a" project
+  assert_output "proj-a"
+}
+
 @test "_setup_vertex_normalize: no project named anywhere leaves the file untouched" {
   printf '[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
   local before; before="$(cat "$CONF")"

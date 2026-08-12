@@ -273,49 +273,83 @@ _setup_split_projects() {
   done < <(printf '%s\n' "$1" | tr ', ' '\n')
 }
 
-# The GCP projects vertex is configured for, as a comma list. Per-project
-# sections are canonical; the shared `projects =` / `project =` keys are read
-# only for a config normalization hasn't converted yet.
+# The GCP projects vertex is configured for, as a comma list: the per-project
+# sections plus whatever the legacy `projects =` / `project =` keys still name.
+# Both, not either — a config can carry an explicit profile *and* a shared list
+# that expands the base sections across other projects, and a project named only
+# by the key is just as configured as one with a section.
 _setup_current_vertex_projects() {
-  local conf="${1:-$(user_options_path)}" cur s
-  cur=$(vertex_section_projects "$conf" | paste -sd, - | sed 's/,/, /g')
-  [[ -n "$cur" ]] && { printf '%s' "$cur"; return 0; }
-  cur=$(vertex_config_value vertex projects)
-  if [[ -z "$cur" ]]; then
+  local conf="${1:-$(user_options_path)}" p s legacy=""
+  local seen=$'\n'
+  local -a all=()
+  while IFS= read -r p; do
+    [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
+    seen+="$p"$'\n'
+    all+=("$p")
+  done < <(vertex_section_projects "$conf")
+
+  legacy=$(vertex_config_value vertex projects)
+  if [[ -z "$legacy" ]]; then
     for s in vertex vertex-anthropic vertex-gemini; do
-      cur=$(vertex_resolve "$s" project)
-      [[ -n "$cur" ]] && break
+      legacy=$(vertex_resolve "$s" project)
+      [[ -n "$legacy" ]] && break
     done
   fi
-  printf '%s' "$cur"
+  while IFS= read -r p; do
+    [[ "$seen" != *$'\n'"$p"$'\n'* ]] || continue
+    seen+="$p"$'\n'
+    all+=("$p")
+  done < <(_setup_split_projects "$legacy")
+
+  [[ ${#all[@]} -gt 0 ]] && _join_comma "${all[@]}"
 }
 
-# Convert a shared-shape vertex config to per-project sections: each base
-# section's models are copied into [<base>@<project>] for every configured
-# project, then the base sections and the project keys that drove the expansion
-# are dropped. Expansion-equivalent by construction. Returns without touching
-# the file once per-project sections exist, or when no project is named
-# anywhere — a base-only config takes its project from the environment at run
-# time and must keep working.
+# Convert a shared-shape vertex config to per-project sections: every model a
+# base section expands into [<base>@<project>] is written there for real, then
+# the base sections and the project keys that drove the expansion are dropped.
+# Expansion-equivalent by construction. Returns without touching the file once
+# nothing is left to fold, or when no project is named anywhere — a base-only
+# config takes its project from the environment at run time and must keep
+# working. Explicit profiles are folded INTO, not skipped: a config can mix the
+# two shapes, and leaving a base model expanding across a project that also has
+# its own section is what makes a per-project unpin silently fail.
 _setup_vertex_normalize() {
   local conf="$1" base p m s moved=""
   [[ -r "$conf" ]] || return 0
-  [[ -z "$(vertex_section_projects "$conf")" ]] || return 0
 
   local -a projects=()
   while IFS= read -r p; do projects+=("$p"); done \
     < <(_setup_split_projects "$(_setup_current_vertex_projects "$conf")")
   [[ ${#projects[@]} -gt 0 ]] || return 0
 
+  # Already folded: no base section still holds models, and no project key is
+  # left to override a profile's own project.
+  local pending=""
   for base in vertex-gemini vertex-anthropic; do
-    _setup_conf_has_section "$conf" "$base" || continue
-    local -a models=()
-    while IFS= read -r m; do [[ -n "$m" ]] && models+=("$m"); done \
-      < <(_setup_section_lines "$conf" "$base" models)
-    [[ ${#models[@]} -gt 0 ]] && moved=1
+    [[ -n "$(_setup_section_lines "$conf" "$base" models)" ]] && pending=1
+  done
+  for s in vertex vertex-gemini vertex-anthropic; do
+    [[ -n "$(vertex_config_value "$s" projects)$(vertex_config_value "$s" project)" ]] && pending=1
+  done
+  [[ -n "$pending" ]] || return 0
+
+  # What the config resolves to right now is, for each (family, project) pair,
+  # exactly the post-fold pin set — base expansion and explicit section unioned
+  # and deduped in file order. Snapshot it before the first write, since every
+  # write changes what the next read would report.
+  local parsed
+  parsed=$(parse_user_options)
+
+  for base in vertex-gemini vertex-anthropic; do
+    [[ -n "$(_setup_section_lines "$conf" "$base" models)" ]] && moved=1
     for p in "${projects[@]}"; do
-      _conf_apply "$conf" conf_add_section "${base}@${p}" ${models[@]+"${models[@]}"} || return 1
+      local -a models=()
+      while IFS= read -r m; do [[ -n "$m" ]] && models+=("$m"); done < <(
+        printf '%s\n' "$parsed" | awk -F: -v k="${base}@${p}" '$1 == k { print $2 }'
+      )
+      _setup_upsert_section_models "$conf" "${base}@${p}" ${models[@]+"${models[@]}"} || return 1
     done
+    _setup_conf_has_section "$conf" "$base" || continue
     # A base section carrying settings keeps them for its profiles to inherit;
     # one that held only models has nothing left to say.
     if [[ -n "$(_setup_section_lines "$conf" "$base" settings)" ]]; then
