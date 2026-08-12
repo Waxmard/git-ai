@@ -7,8 +7,8 @@ directives so wording that must stay in lockstep across prompts lives once.
 A ``{{ var:<name> }}`` directive resolves to a partial chosen per output, so
 one template can render several prompts that differ in a single passage.
 
-Unlike scripts/build_docs.py, NO header comment is prepended: a generated
-prompt is fed verbatim to an LLM, so any extra text would alter behavior.
+NO header comment is prepended: a generated prompt is fed verbatim to an LLM,
+so any extra text would alter behavior.
 
 Usage:
     build_prompts.py --write    # render every template to its output
