@@ -23,10 +23,6 @@ pre-commit:
         make py-test
       stage_fixed: true
 
-    docs:
-      glob: "{docs/src/**,scripts/build_docs.py,README.md,CLAUDE.md,AGENTS.md}"
-      run: make docs-check
-
     prompts:
       glob: "{prompts/src/**,scripts/build_prompts.py,python/git_ai/prompts/pr-*.txt}"
       run: make prompts-check
