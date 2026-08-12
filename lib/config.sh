@@ -117,7 +117,7 @@ render_options_conf() {
   done
 }
 
-# The next four helpers are surgical, in-place editors over an existing
+# The helpers below are surgical, in-place editors over an existing
 # options.conf: each reads the file on stdin and writes the edited file to
 # stdout, touching only the targeted [provider] section and preserving every
 # other line verbatim (comments, vertex `account=`/`projects=` settings, the
@@ -192,6 +192,27 @@ conf_set_section_models() {
         printf '%s\n' "$line"
       fi
       continue
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
+# conf_remove_section_setting PROVIDER KEY
+# Drop the `KEY = …` line from inside [PROVIDER]. Passes the file through
+# unchanged when the section or key isn't there.
+conf_remove_section_setting() {
+  local target="$1" key="$2"
+  local line in_target=0 k
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+      in_target=0
+      [[ "${BASH_REMATCH[1]}" == "$target" ]] && in_target=1
+      printf '%s\n' "$line"
+      continue
+    fi
+    if [[ $in_target -eq 1 && "$line" == *=* ]]; then
+      k=$(_trim "${line%%=*}")
+      [[ "$k" == "$key" ]] && continue
     fi
     printf '%s\n' "$line"
   done
@@ -359,6 +380,24 @@ vertex_config_value() {
     fi
   done <"$path"
   return 0
+}
+
+# vertex_section_projects [CONF]
+# Emit the project id of every [vertex-<family>@<project>] section, deduped, in
+# file order. These sections are the wizard's record of which GCP projects are
+# configured — it pins models per project, so the headers themselves are the
+# list (no `projects =` key to keep in sync).
+vertex_section_projects() {
+  local path="${1:-$(user_options_path)}" p
+  [[ -r "$path" ]] || return 0
+  local seen=$'\n'
+  while IFS= read -r p; do
+    case "$p" in vertex-gemini@* | vertex-anthropic@*) ;; *) continue ;; esac
+    p="${p#*@}"
+    case "$seen" in *$'\n'"$p"$'\n'*) continue ;; esac
+    seen+="$p"$'\n'
+    printf '%s\n' "$p"
+  done < <(conf_section_providers <"$path")
 }
 
 # vertex_resolve TOKEN KEY
