@@ -75,11 +75,19 @@ _setup_vertex_summary_detail() {
 # Vertex AI summarises as one row per GCP project, since each project carries
 # its own pins.
 _setup_vertex_summary_rows() {
-  local conf="$1" pr models
+  local conf="$1" pr models resolved label
   printf '  • %s%s\n' "$(provider_display_name vertex)" "$(_setup_vertex_account_detail)"
   while IFS= read -r pr; do
     models=$(_setup_existing_models "vertex@${pr}" | paste -sd, - | sed 's/,/, /g')
-    printf '      %s — %s\n' "$pr" \
+    resolved=$(_setup_vertex_resolved_project "$conf" "$pr")
+    # A profile's section suffix is its address, not necessarily the real GCP
+    # project — a hand-written `project =` override can point it elsewhere.
+    if [[ "$resolved" != "$pr" ]]; then
+      label="${pr} (project: ${resolved})"
+    else
+      label="$pr"
+    fi
+    printf '      %s — %s\n' "$label" \
       "${models:-no models pinned (hidden from the picker until you add one)}"
   done < <(vertex_section_projects "$conf")
 }

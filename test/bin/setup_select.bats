@@ -599,6 +599,57 @@ EOF
   refute_line "[vertex-gemini]"
 }
 
+@test "_setup_vertex_resolved_project: falls back to the profile name with no override" {
+  printf '[vertex-gemini@acme]\ngemini-x\n' >"$CONF"
+  run _setup_vertex_resolved_project "$CONF" acme
+  assert_success
+  assert_output "acme"
+}
+
+@test "_setup_vertex_resolved_project: an explicit override wins, checked in either family" {
+  printf '[vertex-anthropic@acme]\nproject = acme-prod\nclaude-x\n' >"$CONF"
+  run _setup_vertex_resolved_project "$CONF" acme
+  assert_success
+  assert_output "acme-prod"
+}
+
+@test "_setup_vertex_add_project: re-adding the real id an alias already targets is a no-op" {
+  printf '[vertex-anthropic@acme]\nproject = acme-prod\nclaude-x\n' >"$CONF"
+  run _setup_vertex_add_project "$CONF" acme-prod
+  assert_success
+  run cat "$CONF"
+  assert_line "[vertex-anthropic@acme]"
+  refute_line "[vertex-anthropic@acme-prod]"
+  refute_line "[vertex-gemini@acme-prod]"
+}
+
+@test "_setup_print_summary: an aliased profile shows its resolved project" {
+  printf '[vertex-anthropic@acme]\nproject = acme-prod\nclaude-x\n' >"$CONF"
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "acme (project: acme-prod)"
+}
+
+@test "_setup_fast_path: reset preserves a profile's project= override" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic@acme]
+project = acme-prod
+claude-x
+
+[vertex-gemini@acme]
+gemini-y
+EOF
+  run env -u GOOGLE_VERTEX_PROJECT -u GOOGLE_CLOUD_PROJECT bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    GIT_AI_NO_FZF=1 _setup_fast_path "'"$CONF"'" vertex </dev/null
+  '
+  assert_success
+  source "${REPO_ROOT}/lib/ai-common.sh"
+  run vertex_resolve "vertex-anthropic@acme" project
+  assert_output "acme-prod"
+}
+
 @test "_setup_write_vertex_models: a project scope leaves its siblings alone" {
   cat >"$CONF" <<'EOF'
 [vertex]

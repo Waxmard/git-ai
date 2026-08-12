@@ -399,13 +399,34 @@ _setup_vertex_normalize() {
   return 0
 }
 
+# _setup_vertex_resolved_project CONF PROFILE
+# The actual GCP project PROFILE targets: an explicit `project =` override in
+# either family's [vertex-<x>@PROFILE] section, else the profile name itself
+# (vertex_resolve's own fallback). A profile's address (the @suffix used in
+# section headers) and the GCP project it runs against are two different things
+# once a hand-written override is in play — conflating them is what let
+# re-picking the real project id create a duplicate profile alongside an
+# existing alias instead of recognizing it as the same project.
+_setup_vertex_resolved_project() {
+  local conf="$1" profile="$2" v
+  v=$(vertex_resolve "vertex-gemini@${profile}" project)
+  [[ "$v" == "$profile" ]] && v=$(vertex_resolve "vertex-anthropic@${profile}" project)
+  printf '%s' "$v"
+}
+
 # Record PROJECT by giving it its own sections. Sections ARE the record of a
-# configured project, so one with nothing pinned still gets an empty pair.
+# configured project, so one with nothing pinned still gets an empty pair. A
+# project that an existing profile already targets under an alias (its section
+# suffix differs from the real id via `project =`) is recognized as already
+# configured rather than duplicated under a second, id-named profile.
 # The three writers below normalize first, and nothing else does: a wizard action
 # the user backs out of must leave the file untouched.
 _setup_vertex_add_project() {
-  local conf="$1" project="$2"
+  local conf="$1" project="$2" p
   _setup_vertex_normalize "$conf"
+  while IFS= read -r p; do
+    [[ "$(_setup_vertex_resolved_project "$conf" "$p")" == "$project" ]] && return 0
+  done < <(vertex_section_projects "$conf")
   _setup_conf_has_section "$conf" "vertex-gemini@${project}" && return 0
   _setup_conf_has_section "$conf" "vertex-anthropic@${project}" && return 0
   _conf_apply "$conf" conf_add_section "vertex-gemini@${project}" &&

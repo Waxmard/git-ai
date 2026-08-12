@@ -529,6 +529,19 @@ _setup_fast_path() {
     ;;
   esac
 
+  # A profile carried above by its section suffix may target a different real
+  # GCP project via a hand-written `project =` override — capture that BEFORE
+  # the overwrite below, or the rewritten profile would silently point at the
+  # suffix itself instead of the project it used to run against.
+  local -a carry_overrides=()
+  local fam ov
+  for pr in "${projects[@]}"; do
+    for fam in vertex-gemini vertex-anthropic; do
+      ov=$(vertex_config_value "${fam}@${pr}" project)
+      [[ -n "$ov" && "$ov" != "$pr" ]] && carry_overrides+=("${fam}@${pr}"$'\t'"${ov}")
+    done
+  done
+
   printf 'Detected providers you can use right now — enabling them with recommended models:\n\n'
   local combos=""
   for p in "${ready[@]}"; do
@@ -558,6 +571,15 @@ _setup_fast_path() {
   # every per-project section inherits from.
   [[ -n "$carry_account" ]] && _conf_apply "$conf" conf_set_section_setting vertex account "$carry_account"
   [[ -n "$carry_region" ]] && _conf_apply "$conf" conf_set_section_setting vertex region "$carry_region"
+
+  # Restore any per-profile project override onto the freshly written section —
+  # the profile was carried above by its suffix, so without this the rewrite
+  # would target that suffix as the project instead of what it actually named.
+  local entry
+  for entry in ${carry_overrides[@]+"${carry_overrides[@]}"}; do
+    _setup_conf_has_section "$conf" "${entry%%$'\t'*}" &&
+      _conf_apply "$conf" conf_set_section_setting "${entry%%$'\t'*}" project "${entry#*$'\t'}"
+  done
 
   printf '\nWrote %s\n' "$conf"
 
