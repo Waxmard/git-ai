@@ -1,5 +1,3 @@
-<!-- Generated from docs/src/python-AGENTS.md by scripts/build_docs.py. Run `make docs-build` to regenerate. Do not edit directly. -->
-
 # AGENTS.md — `python/`
 
 Guidance for AI coding agents working under `python/`. The repo-wide guide is the root `AGENTS.md`.

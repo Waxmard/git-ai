@@ -1,4 +1,4 @@
-name: Docs
+name: Prompts
 
 on:
   push:
@@ -11,15 +11,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  docs-check:
-    name: Check generated docs are up to date
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Check docs (make docs-check)
-        run: make docs-check
-
   prompts-check:
     name: Check generated prompts are up to date
     runs-on: ubuntu-latest

@@ -1,5 +1,3 @@
-<!-- Generated from docs/src/test-AGENTS.md by scripts/build_docs.py. Run `make docs-build` to regenerate. Do not edit directly. -->
-
 # AGENTS.md — `test/`
 
 Guidance for AI coding agents working under `test/`. The repo-wide guide is the root `AGENTS.md`.

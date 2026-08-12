@@ -1,5 +1,3 @@
-<!-- Generated from docs/src/README.md by scripts/build_docs.py. Run `make docs-build` to regenerate. Do not edit directly. -->
-
 # git-ai
 
 LLM-powered git workflow tools. Generate Conventional Commits messages and PR descriptions from your staged changes and branch — in the CLI, Lazygit, or any git environment.
