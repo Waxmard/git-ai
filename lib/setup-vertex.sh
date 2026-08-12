@@ -384,15 +384,15 @@ _setup_vertex_normalize() {
   for p in "${projects[@]}"; do
     _setup_conf_has_section "$conf" "vertex-gemini@${p}" ||
       _setup_conf_has_section "$conf" "vertex-anthropic@${p}" ||
-      _conf_apply "$conf" conf_add_section "vertex-gemini@${p}"
+      _conf_apply "$conf" conf_add_section "vertex-gemini@${p}" || return 1
   done
 
   # project=/projects= are what the expansion consumed. Leaving them behind would
   # override every profile's own project — vertex_resolve prefers a base
   # section's key over the profile name.
   for s in vertex vertex-gemini vertex-anthropic; do
-    _conf_apply "$conf" conf_remove_section_setting "$s" projects
-    _conf_apply "$conf" conf_remove_section_setting "$s" project
+    _conf_apply "$conf" conf_remove_section_setting "$s" projects || return 1
+    _conf_apply "$conf" conf_remove_section_setting "$s" project || return 1
   done
   [[ -n "$moved" ]] &&
     printf 'Vertex AI models are now pinned per project (%s).\n' "$(_join_comma "${projects[@]}")"
