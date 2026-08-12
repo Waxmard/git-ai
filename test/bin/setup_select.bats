@@ -452,7 +452,18 @@ EOF
   refute_line "projects = proj-a, proj-b"
 }
 
-@test "_setup_vertex_normalize: no project named anywhere is a no-op" {
+@test "_setup_vertex_normalize: a space-separated projects list splits like parse_user_options" {
+  printf '[vertex]\nprojects = proj-a proj-b\n\n[vertex-gemini]\ngemini-y\n' >"$CONF"
+  local before; before="$(parse_user_options | sort)"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  assert_equal "$(parse_user_options | sort)" "$before"
+  run cat "$CONF"
+  assert_line "[vertex-gemini@proj-a]"
+  assert_line "[vertex-gemini@proj-b]"
+}
+
+@test "_setup_vertex_normalize: no project named anywhere leaves the file untouched" {
   printf '[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
   local before; before="$(cat "$CONF")"
   run _setup_vertex_normalize "$CONF"

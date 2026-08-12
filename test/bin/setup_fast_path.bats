@@ -100,6 +100,17 @@ EOF
   refute_output --partial "projects ="
 }
 
+@test "_setup_fast_path: a space-separated projects list carries as separate profiles" {
+  printf '[vertex]\nprojects = proj-a proj-b\n\n[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
+  run _fast "$CONF" vertex
+  assert_success
+  run cat "$CONF"
+  assert_line "[vertex-gemini@proj-a]"
+  assert_line "[vertex-gemini@proj-b]"
+  # One mangled profile id would take vertex down with the old config gone.
+  refute_line "[vertex-gemini@proj-a proj-b]"
+}
+
 @test "_setup_fast_path: detected vertex project is written when nothing else resolves" {
   # The host shell may export a real GCP project — unset both env fallbacks so
   # only the stashed detection result can resolve.

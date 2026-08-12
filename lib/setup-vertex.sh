@@ -262,6 +262,17 @@ _setup_conf_has_section() {
   return 1
 }
 
+# Split a project list into one id per line. The wizard joins with ", ", but the
+# legacy `projects =` key takes commas OR spaces — parse_user_options splits on
+# both, so every reader of that key has to as well.
+_setup_split_projects() {
+  local p
+  while IFS= read -r p; do
+    p=$(_trim "$p")
+    [[ -n "$p" ]] && printf '%s\n' "$p"
+  done < <(printf '%s\n' "$1" | tr ', ' '\n')
+}
+
 # The GCP projects vertex is configured for, as a comma list. Per-project
 # sections are canonical; the shared `projects =` / `project =` keys are read
 # only for a config normalization hasn't converted yet.
@@ -292,10 +303,8 @@ _setup_vertex_normalize() {
   [[ -z "$(vertex_section_projects "$conf")" ]] || return 0
 
   local -a projects=()
-  while IFS= read -r p; do
-    p=$(_trim "$p")
-    [[ -n "$p" ]] && projects+=("$p")
-  done < <(printf '%s\n' "$(_setup_current_vertex_projects "$conf")" | tr ', ' '\n')
+  while IFS= read -r p; do projects+=("$p"); done \
+    < <(_setup_split_projects "$(_setup_current_vertex_projects "$conf")")
   [[ ${#projects[@]} -gt 0 ]] || return 0
 
   for base in vertex-gemini vertex-anthropic; do
@@ -394,10 +403,8 @@ _setup_write_vertex_models() {
 _setup_pick_vertex_scope() {
   local conf="$1" p menu pins
   local -a projects=()
-  while IFS= read -r p; do
-    p=$(_trim "$p")
-    [[ -n "$p" ]] && projects+=("$p")
-  done < <(printf '%s\n' "$(_setup_current_vertex_projects "$conf")" | tr ', ' '\n')
+  while IFS= read -r p; do projects+=("$p"); done \
+    < <(_setup_split_projects "$(_setup_current_vertex_projects "$conf")")
   [[ ${#projects[@]} -gt 1 ]] || { printf 'vertex\n'; return 0; }
 
   menu=$'vertex\tAll projects — one set of models everywhere\n'

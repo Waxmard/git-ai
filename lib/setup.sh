@@ -520,10 +520,8 @@ _setup_fast_path() {
     carry_projects=$(_setup_current_vertex_projects "$conf")
     carry_projects="${carry_projects:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
     carry_projects="${carry_projects:-${SETUP_VERTEX_DETECTED:-}}"
-    while IFS= read -r pr; do
-      pr=$(_trim "$pr")
-      [[ -n "$pr" ]] && projects+=("$pr")
-    done < <(printf '%s\n' "${carry_projects//,/$'\n'}")
+    while IFS= read -r pr; do projects+=("$pr"); done \
+      < <(_setup_split_projects "$carry_projects")
     for s in vertex vertex-anthropic vertex-gemini; do
       [[ -z "$carry_account" ]] && carry_account=$(vertex_resolve "$s" account)
       [[ -z "$carry_region" ]] && carry_region=$(vertex_resolve "$s" region)

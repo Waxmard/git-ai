@@ -63,7 +63,7 @@ _setup_vertex_summary_detail() {
 
   raw=$(_setup_current_vertex_projects)
   local -a projs=()
-  while IFS= read -r pr || [[ -n "$pr" ]]; do [[ -n "$pr" ]] && projs+=("$pr"); done < <(printf '%s' "$raw" | tr ', ' '\n')
+  while IFS= read -r pr; do projs+=("$pr"); done < <(_setup_split_projects "$raw")
   if [[ ${#projs[@]} -gt 1 ]]; then
     detail+=" (projects: $(_join_comma "${projs[@]}"))"
   elif [[ ${#projs[@]} -eq 1 ]]; then
@@ -183,10 +183,7 @@ _setup_choose_vertex_projects() {
 
   local -a added=()
   local cseen=$'\n'
-  while IFS= read -r pr; do
-    pr=$(_trim "$pr")
-    [[ -n "$pr" ]] && cseen+="$pr"$'\n'
-  done < <(printf '%s\n' "${current//,/$'\n'}")
+  while IFS= read -r pr; do cseen+="$pr"$'\n'; done < <(_setup_split_projects "$current")
   for pr in "${projs[@]}"; do
     case "$cseen" in *$'\n'"$pr"$'\n'*) continue ;; esac
     cseen+="$pr"$'\n'
@@ -247,13 +244,12 @@ _setup_change_vertex_projects() {
   local rows="" seen=$'\n' preselect="" discovered
   local -a cur_list=()
   while IFS= read -r p; do
-    p=$(_trim "$p")
-    [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
+    [[ "$seen" != *$'\n'"$p"$'\n'* ]] || continue
     seen+="$p"$'\n'
     cur_list+=("$p")
     rows+="${p}|${p} (current)"$'\n'
     preselect="$SETUP_PRESELECT_CURRENT"
-  done < <(printf '%s\n' "${current//,/$'\n'}")
+  done < <(_setup_split_projects "$current")
   discovered=$(_setup_project_rows "$seen" "$sweep")
   [[ -n "$discovered" ]] && rows+="${discovered}"$'\n'
   rows+="$SETUP_CUSTOM_PROJECT_ROW"
