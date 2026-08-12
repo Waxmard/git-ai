@@ -87,7 +87,7 @@ _fetch_models_modelsdev() {
 
   if [[ ! -s "$cache_json" || -n "$(find "$cache_json" -mmin +"$ttl" 2>/dev/null)" ]]; then
     tmp=$(mktemp "${TMPDIR:-/tmp}/git-ai-md.XXXXXX") || return 1
-    if curl -sf "https://models.dev/api.json" -o "$tmp"; then
+    if curl -sf -m 10 "https://models.dev/api.json" -o "$tmp"; then
       mkdir -p "$(_models_cache_dir)" 2>/dev/null || true
       mv "$tmp" "$cache_json" 2>/dev/null || rm -f "$tmp"
     else
@@ -142,7 +142,7 @@ _fetch_models_gemini_api() {
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
   trap 'rm -f "$cfg"' EXIT # safety net: an interrupt mid-curl must not leak the key file
   printf 'url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=%s"\n' "$key" >"$cfg"
-  resp=$(curl -sf -K "$cfg")
+  resp=$(curl -sf -m 10 -K "$cfg")
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
@@ -163,7 +163,7 @@ _fetch_models_anthropic_api() {
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
   trap 'rm -f "$cfg"' EXIT # safety net: an interrupt mid-curl must not leak the key file
   printf 'header = "x-api-key: %s"\n' "$key" >"$cfg"
-  resp=$(curl -sf -K "$cfg" -H "anthropic-version: 2023-06-01" \
+  resp=$(curl -sf -m 10 -K "$cfg" -H "anthropic-version: 2023-06-01" \
     "https://api.anthropic.com/v1/models?limit=1000")
   st=$?
   rm -f "$cfg"
@@ -185,7 +185,7 @@ _fetch_models_openai_api() {
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
   trap 'rm -f "$cfg"' EXIT # safety net: an interrupt mid-curl must not leak the key file
   printf 'header = "Authorization: Bearer %s"\n' "$key" >"$cfg"
-  resp=$(curl -sf -K "$cfg" "https://api.openai.com/v1/models")
+  resp=$(curl -sf -m 10 -K "$cfg" "https://api.openai.com/v1/models")
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
@@ -239,7 +239,7 @@ _fetch_models_vertex() {
   while ((page < 5)); do
     url="https://${host}/v1beta1/publishers/${publisher}/models?pageSize=300"
     [[ -n "$page_token" ]] && url+="&pageToken=${page_token}"
-    resp=$(curl -sf -K "$cfg" "$url")
+    resp=$(curl -sf -m 10 -K "$cfg" "$url")
     st=$?
     [[ $st -eq 0 ]] || break
     parsed=$(GIT_AI_PUB="$publisher" GIT_AI_JSON="$resp" python3 -c '

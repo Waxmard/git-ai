@@ -220,11 +220,282 @@ _setup_pick_projects() {
   done < <(printf '%s\n' "${line//,/$'\n'}")
 }
 
-# Interactive vertex auth assist: offer ADC login, then prompt for the common
-# per-section settings (project required, region/account optional) and write
-# them into [PROVIDER] via conf_set_section_setting — for the wizard's `vertex`
-# token that is the shared [vertex] block. [vertex-x@profile] profiles and
-# service-account credentials= stay manual (see the README).
+# ---------------------------------------------------------------------------
+# Vertex config shape. The wizard pins models PER PROJECT, in
+# [vertex-<family>@<project>] sections, so two GCP projects can run different
+# models. The older shared shape — base [vertex-gemini]/[vertex-anthropic]
+# sections multiplied across a [vertex] `projects =` list — still parses (see
+# parse_user_options); _setup_vertex_normalize converts it in place the first
+# time a vertex edit actually writes.
+# ---------------------------------------------------------------------------
+
+# _setup_section_lines CONF SECTION models|settings
+# The model IDs (or the key=value settings) written inside a literal [SECTION].
+# Literal is the point: parse_user_options expands base vertex sections across
+# the projects list, and normalization needs what the base section itself holds.
+_setup_section_lines() {
+  local conf="$1" target="$2" kind="$3" line trimmed section=""
+  [[ -r "$conf" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed=$(_trim "${line%%#*}")
+    [[ -n "$trimmed" ]] || continue
+    if [[ "$trimmed" =~ ^\[([^][]+)\]$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      continue
+    fi
+    [[ "$section" == "$target" ]] || continue
+    case "$kind" in
+      settings) [[ "$trimmed" == *=* ]] && printf '%s\n' "$trimmed" ;;
+      *) [[ "$trimmed" != *=* ]] && printf '%s\n' "$trimmed" ;;
+    esac
+  done <"$conf"
+  return 0
+}
+
+# True when CONF's literal [SECTION] contains a whole-line comment. Unlike
+# _setup_section_lines (which strips comments before it looks at a line), this
+# reads the raw line — the point is to detect the comment, not discard it.
+_setup_section_has_comment() {
+  local conf="$1" target="$2" line trimmed section=""
+  [[ -r "$conf" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed=$(_trim "$line")
+    if [[ "$trimmed" =~ ^\[([^][]+)\]$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      continue
+    fi
+    [[ "$section" == "$target" ]] || continue
+    [[ "$trimmed" == \#* ]] && return 0
+  done <"$conf"
+  return 1
+}
+
+# True when CONF holds a literal [NAME] provider section.
+_setup_conf_has_section() {
+  local conf="$1" name="$2" s
+  [[ -r "$conf" ]] || return 1
+  while IFS= read -r s; do
+    [[ "$s" == "$name" ]] && return 0
+  done < <(conf_section_providers <"$conf")
+  return 1
+}
+
+# Split a project list into one id per line. The wizard joins with ", ", but the
+# legacy `projects =` key takes commas OR spaces — parse_user_options splits on
+# both, so every reader of that key has to as well.
+_setup_split_projects() {
+  local p
+  while IFS= read -r p; do
+    p=$(_trim "$p")
+    [[ -n "$p" ]] && printf '%s\n' "$p"
+  done < <(printf '%s\n' "$1" | tr ', ' '\n')
+}
+
+# The GCP projects vertex is configured for, as a comma list: the per-project
+# sections plus whatever the legacy `projects =` / `project =` keys still name.
+# Both, not either — a config can carry an explicit profile *and* a shared list
+# that expands the base sections across other projects, and a project named only
+# by the key is just as configured as one with a section.
+_setup_current_vertex_projects() {
+  local conf="${1:-$(user_options_path)}" p s legacy=""
+  local seen=$'\n'
+  local -a all=()
+  while IFS= read -r p; do
+    [[ -n "$p" && "$seen" != *$'\n'"$p"$'\n'* ]] || continue
+    seen+="$p"$'\n'
+    all+=("$p")
+  done < <(vertex_section_projects "$conf")
+
+  legacy=$(vertex_config_value vertex projects)
+  if [[ -z "$legacy" ]]; then
+    for s in vertex vertex-anthropic vertex-gemini; do
+      legacy=$(vertex_resolve "$s" project)
+      [[ -n "$legacy" ]] && break
+    done
+  fi
+  while IFS= read -r p; do
+    [[ "$seen" != *$'\n'"$p"$'\n'* ]] || continue
+    seen+="$p"$'\n'
+    all+=("$p")
+  done < <(_setup_split_projects "$legacy")
+
+  [[ ${#all[@]} -gt 0 ]] && _join_comma "${all[@]}"
+}
+
+# Convert a shared-shape vertex config to per-project sections: every model a
+# base section expands into [<base>@<project>] is written there for real, then
+# the base sections and the project keys that drove the expansion are dropped.
+# Expansion-equivalent by construction. Returns without touching the file once
+# nothing is left to fold, or when no project is named anywhere — a base-only
+# config takes its project from the environment at run time and must keep
+# working. Explicit profiles are folded INTO, not skipped: a config can mix the
+# two shapes, and leaving a base model expanding across a project that also has
+# its own section is what makes a per-project unpin silently fail.
+_setup_vertex_normalize() {
+  local conf="$1" base p m s moved=""
+  [[ -r "$conf" ]] || return 0
+
+  local -a projects=()
+  while IFS= read -r p; do projects+=("$p"); done \
+    < <(_setup_split_projects "$(_setup_current_vertex_projects "$conf")")
+  [[ ${#projects[@]} -gt 0 ]] || return 0
+
+  # Already folded: no base section still holds models, and no project key is
+  # left to override a profile's own project.
+  local pending=""
+  for base in vertex-gemini vertex-anthropic; do
+    [[ -n "$(_setup_section_lines "$conf" "$base" models)" ]] && pending=1
+  done
+  for s in vertex vertex-gemini vertex-anthropic; do
+    [[ -n "$(vertex_config_value "$s" projects)$(vertex_config_value "$s" project)" ]] && pending=1
+  done
+  [[ -n "$pending" ]] || return 0
+
+  # What the config resolves to right now is, for each (family, project) pair,
+  # exactly the post-fold pin set — base expansion and explicit section unioned
+  # and deduped in file order. Snapshot it before the first write, since every
+  # write changes what the next read would report.
+  local parsed
+  parsed=$(parse_user_options)
+
+  for base in vertex-gemini vertex-anthropic; do
+    [[ -n "$(_setup_section_lines "$conf" "$base" models)" ]] && moved=1
+    for p in "${projects[@]}"; do
+      local -a models=()
+      while IFS= read -r m; do [[ -n "$m" ]] && models+=("$m"); done < <(
+        printf '%s\n' "$parsed" | awk -F: -v k="${base}@${p}" '$1 == k { print $2 }'
+      )
+      _setup_upsert_section_models "$conf" "${base}@${p}" ${models[@]+"${models[@]}"} || return 1
+    done
+    _setup_conf_has_section "$conf" "$base" || continue
+    # A base section carrying settings or comments keeps the header (settings
+    # for its profiles to inherit, comments because they're the user's words,
+    # not the expansion's); conf_set_section_models already keeps both and
+    # drops only the model lines. A section with neither has nothing left to
+    # say once its models are gone.
+    if [[ -n "$(_setup_section_lines "$conf" "$base" settings)" ]] ||
+      _setup_section_has_comment "$conf" "$base"; then
+      _conf_apply "$conf" conf_set_section_models "$base"
+    else
+      _conf_apply "$conf" conf_remove_section "$base"
+    fi || return 1
+  done
+  # A projects list with no base section at all still names configured projects.
+  for p in "${projects[@]}"; do
+    _setup_conf_has_section "$conf" "vertex-gemini@${p}" ||
+      _setup_conf_has_section "$conf" "vertex-anthropic@${p}" ||
+      _conf_apply "$conf" conf_add_section "vertex-gemini@${p}" || return 1
+  done
+
+  # project=/projects= are what the expansion consumed. Leaving them behind would
+  # override every profile's own project — vertex_resolve prefers a base
+  # section's key over the profile name.
+  for s in vertex vertex-gemini vertex-anthropic; do
+    _conf_apply "$conf" conf_remove_section_setting "$s" projects || return 1
+    _conf_apply "$conf" conf_remove_section_setting "$s" project || return 1
+  done
+  [[ -n "$moved" ]] &&
+    printf 'Vertex AI models are now pinned per project (%s).\n' "$(_join_comma "${projects[@]}")"
+  return 0
+}
+
+# _setup_vertex_resolved_project CONF PROFILE
+# The actual GCP project PROFILE targets: an explicit `project =` override in
+# either family's [vertex-<x>@PROFILE] section, else the profile name itself
+# (vertex_resolve's own fallback). A profile's address (the @suffix used in
+# section headers) and the GCP project it runs against are two different things
+# once a hand-written override is in play — conflating them is what let
+# re-picking the real project id create a duplicate profile alongside an
+# existing alias instead of recognizing it as the same project.
+_setup_vertex_resolved_project() {
+  local conf="$1" profile="$2" v
+  v=$(vertex_resolve "vertex-gemini@${profile}" project)
+  [[ "$v" == "$profile" ]] && v=$(vertex_resolve "vertex-anthropic@${profile}" project)
+  printf '%s' "$v"
+}
+
+# Record PROJECT by giving it its own sections. Sections ARE the record of a
+# configured project, so one with nothing pinned still gets an empty pair. A
+# project that an existing profile already targets under an alias (its section
+# suffix differs from the real id via `project =`) is recognized as already
+# configured rather than duplicated under a second, id-named profile.
+# The three writers below normalize first, and nothing else does: a wizard action
+# the user backs out of must leave the file untouched.
+_setup_vertex_add_project() {
+  local conf="$1" project="$2" p
+  _setup_vertex_normalize "$conf"
+  while IFS= read -r p; do
+    [[ "$(_setup_vertex_resolved_project "$conf" "$p")" == "$project" ]] && return 0
+  done < <(vertex_section_projects "$conf")
+  _setup_conf_has_section "$conf" "vertex-gemini@${project}" && return 0
+  _setup_conf_has_section "$conf" "vertex-anthropic@${project}" && return 0
+  _conf_apply "$conf" conf_add_section "vertex-gemini@${project}" &&
+    _conf_apply "$conf" conf_add_section "vertex-anthropic@${project}"
+}
+
+_setup_vertex_drop_project() {
+  local conf="$1" project="$2"
+  _setup_vertex_normalize "$conf"
+  _conf_apply "$conf" conf_remove_section "vertex-gemini@${project}" &&
+    _conf_apply "$conf" conf_remove_section "vertex-anthropic@${project}"
+}
+
+# _setup_write_vertex_models CONF SCOPE [MODEL...]
+# Write MODELS as SCOPE's pins — `vertex@<project>` for one project, `vertex`
+# for every configured project at once (falling back to the base sections when
+# none is configured). Each model is routed to its family's section by id, which
+# is how the wizard's single "Vertex AI" hides the gemini/anthropic split.
+_setup_write_vertex_models() {
+  local conf="$1" scope="$2" m p
+  shift 2
+  local -a anth=() gem=() targets=()
+  for m in "$@"; do
+    case "$(_setup_provider_for_model vertex "$m")" in
+      vertex-anthropic) anth+=("$m") ;;
+      *) gem+=("$m") ;;
+    esac
+  done
+  case "$scope" in
+    *@*)
+      # Pinning one project only means something once the base sections have
+      # been folded down — otherwise their models still apply to every project.
+      _setup_vertex_normalize "$conf"
+      targets=("@${scope#*@}")
+      ;;
+    *)
+      while IFS= read -r p; do [[ -n "$p" ]] && targets+=("@${p}"); done \
+        < <(vertex_section_projects "$conf")
+      [[ ${#targets[@]} -gt 0 ]] || targets=("")
+      ;;
+  esac
+  for p in "${targets[@]}"; do
+    _setup_upsert_section_models "$conf" "vertex-anthropic${p}" ${anth[@]+"${anth[@]}"} &&
+      _setup_upsert_section_models "$conf" "vertex-gemini${p}" ${gem[@]+"${gem[@]}"} || return 1
+  done
+}
+
+# Which projects a Vertex AI model edit writes to. One project (or none — a
+# base-only config) has nothing to choose, so the scope is the whole provider;
+# several offer "all projects" as a bulk write alongside each project's own pins.
+_setup_pick_vertex_scope() {
+  local conf="$1" p menu pins
+  local -a projects=()
+  while IFS= read -r p; do projects+=("$p"); done \
+    < <(_setup_split_projects "$(_setup_current_vertex_projects "$conf")")
+  [[ ${#projects[@]} -gt 1 ]] || { printf 'vertex\n'; return 0; }
+
+  menu=$'vertex\tAll projects — one set of models everywhere\n'
+  for p in "${projects[@]}"; do
+    pins=$(_setup_existing_models "vertex@${p}" | paste -sd, - | sed 's/,/, /g')
+    menu+="vertex@${p}"$'\t'"${p} — ${pins:-no models pinned}"$'\n'
+  done
+  _setup_select 'Models for> ' "$menu"
+}
+
+# Interactive vertex auth assist: offer ADC login, then prompt for what vertex
+# needs — a project (which becomes its own [vertex-<family>@<project>] sections)
+# plus optional region/account written into the shared [vertex] block.
+# Service-account credentials= stays manual (see the README).
 _setup_vertex_assist() {
   local provider="$1" conf="$2"
   local label account project region input ans
@@ -248,7 +519,7 @@ _setup_vertex_assist() {
   fi
 
   # 2. Project (required). Default-fill from gcloud's active config.
-  project=$(vertex_resolve "$provider" project)
+  project=$(_setup_current_vertex_projects "$conf")
   project="${project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
   if [[ -z "$project" ]]; then
     local default_project
@@ -256,7 +527,11 @@ _setup_vertex_assist() {
     read -rp "  GCP project${default_project:+ [$default_project]}: " input
     input="${input:-$default_project}"
     if [[ -n "$input" ]]; then
-      _conf_apply "$conf" conf_set_section_setting "$provider" project "$input" &&
+      # Recorded as the shared key, then normalized — that is the one path that
+      # also folds any models already pinned on the base sections into the new
+      # project's own sections (a bare add_project would strand them).
+      _conf_apply "$conf" conf_set_section_setting vertex projects "$input" &&
+        _setup_vertex_normalize "$conf" &&
         printf '  Set project = %s\n' "$input"
     else
       printf '  No project set — vertex requires one to run.\n'

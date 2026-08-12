@@ -121,26 +121,6 @@ EOF
   assert_line "proj-b"
 }
 
-# --- _merge_vertex_projects (additive project attach) ---
-
-@test "_merge_vertex_projects: new project appended to current list" {
-  run _merge_vertex_projects "example-sandbox" "example-project"
-  assert_success
-  assert_output "example-sandbox, example-project"
-}
-
-@test "_merge_vertex_projects: re-picking an existing project dedupes" {
-  run _merge_vertex_projects "proj-a, proj-b" "proj-b" "proj-c"
-  assert_success
-  assert_output "proj-a, proj-b, proj-c"
-}
-
-@test "_merge_vertex_projects: empty current list yields just the picks" {
-  run _merge_vertex_projects "" "proj-a" "proj-b"
-  assert_success
-  assert_output "proj-a, proj-b"
-}
-
 # --- vertex unification (one user-facing "Vertex AI") ---
 
 @test "_setup_expand_provider: vertex expands to both internal providers" {
@@ -346,7 +326,7 @@ EOF
   assert_output "solo"
 }
 
-@test "_setup_choose_vertex_projects: additive merge seeds from a singular project=" {
+@test "_setup_choose_vertex_projects: attaching a project keeps the one already configured" {
   printf '[vertex]\nproject = old-proj\n\n[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
   local stub; stub="$(mktemp -d)"
   printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"  # free-text fallback path
@@ -355,11 +335,17 @@ EOF
     export PATH="'"${stub}"':$PATH"
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_suggest_models() { :; }  # no network — seed already carries the pins to inherit
     printf "new-proj\n" | GIT_AI_NO_FZF=1 _setup_choose_vertex_projects vertex "'"$CONF"'"
   '
   rm -rf "$stub"
   assert_success
-  assert_output --partial "Set vertex projects: old-proj, new-proj"
+  assert_output --partial "Added vertex project(s): new-proj"
+  run cat "$CONF"
+  assert_line "[vertex-gemini@old-proj]"
+  assert_line "[vertex-gemini@new-proj]"
+  # The singular key drove the old expansion; the sections are the record now.
+  refute_line "project = old-proj"
 }
 
 # Numbered rows here are: 1) sentinel  2) a (current)  3) b (current)  4) custom.
@@ -372,13 +358,17 @@ EOF
     export PATH="'"${stub}"':$PATH"
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_suggest_models() { :; }  # no network — seed already carries the pins to inherit
     printf "4\nc\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
   '
   rm -rf "$stub"
   assert_success
   assert_output --partial "Set vertex projects: c"
+  assert_output --partial "Dropped: a, b"
   run cat "$CONF"
-  assert_line "projects = c"
+  assert_line "[vertex-gemini@c]"
+  refute_line "[vertex-gemini@a]"
+  refute_line "projects = a, b"
 }
 
 @test "_setup_change_vertex_projects: cancelling keeps the current list" {
@@ -435,6 +425,302 @@ EOF
   assert_output --partial "Vertex projects unchanged: a, b"
   run cat "$CONF"
   assert_line "projects = a, b"
+}
+
+# --- per-project vertex models (normalization + scoped writes) ---
+
+@test "_setup_vertex_normalize: shared shape converts to per-project sections" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+account  = me@acme.com
+projects = proj-a, proj-b
+
+[vertex-gemini]
+gemini-3.5-flash
+
+[vertex-anthropic]
+claude-sonnet-4-6
+EOF
+  local before; before="$(parse_user_options | sort)"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  # The conversion must not change which provider:model combos exist.
+  assert_equal "$(parse_user_options | sort)" "$before"
+  run cat "$CONF"
+  assert_line "[vertex-gemini@proj-a]"
+  assert_line "[vertex-anthropic@proj-b]"
+  assert_line "account  = me@acme.com"
+  refute_line "[vertex-gemini]"
+  refute_line "projects = proj-a, proj-b"
+}
+
+@test "_setup_vertex_normalize: a space-separated projects list splits like parse_user_options" {
+  printf '[vertex]\nprojects = proj-a proj-b\n\n[vertex-gemini]\ngemini-y\n' >"$CONF"
+  local before; before="$(parse_user_options | sort)"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  assert_equal "$(parse_user_options | sort)" "$before"
+  run cat "$CONF"
+  assert_line "[vertex-gemini@proj-a]"
+  assert_line "[vertex-gemini@proj-b]"
+}
+
+@test "_setup_vertex_normalize: a hybrid config folds base models into the explicit profile" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+
+[vertex-gemini]
+gemini-base
+
+[vertex-gemini@proj-b]
+gemini-special
+EOF
+  local before; before="$(parse_user_options | sort)"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  assert_equal "$(parse_user_options | sort)" "$before"
+  # The shared-only project gets a real section, and the explicit one absorbs
+  # what the base section used to expand into it.
+  run cat "$CONF"
+  assert_line "[vertex-gemini@proj-a]"
+  refute_line "[vertex-gemini]"
+  refute_line "projects = proj-a, proj-b"
+}
+
+@test "_setup_vertex_normalize: folding a hybrid makes a scoped unpin actually unpin" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+
+[vertex-gemini]
+gemini-base
+
+[vertex-gemini@proj-b]
+gemini-special
+EOF
+  run _setup_write_vertex_models "$CONF" vertex@proj-b gemini-special
+  assert_success
+  run parse_user_options
+  assert_line "vertex-gemini@proj-b:gemini-special"
+  # Inherited through the base cross-product before the fold — must be gone now.
+  refute_line "vertex-gemini@proj-b:gemini-base"
+  assert_line "vertex-gemini@proj-a:gemini-base"
+}
+
+@test "_setup_current_vertex_projects: unions section projects with the shared list" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a
+
+[vertex-gemini@proj-b]
+gemini-special
+EOF
+  run _setup_current_vertex_projects "$CONF"
+  assert_success
+  assert_output --partial "proj-a"
+  assert_output --partial "proj-b"
+}
+
+@test "_setup_vertex_normalize: an already-folded config is left alone" {
+  printf '[vertex-gemini@proj-a]\ngemini-y\n\n[vertex-anthropic@proj-a]\nclaude-x\n' >"$CONF"
+  local before; before="$(cat "$CONF")"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  assert_output ""
+  assert_equal "$(cat "$CONF")" "$before"
+}
+
+@test "_setup_vertex_normalize: a base project= that would override a profile is removed" {
+  cat >"$CONF" <<'EOF'
+[vertex-gemini]
+project = wrong-proj
+
+[vertex-gemini@proj-a]
+gemini-y
+EOF
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  # Left in place it would win over the profile name for every gemini profile.
+  run vertex_resolve "vertex-gemini@proj-a" project
+  assert_output "proj-a"
+}
+
+@test "_setup_vertex_normalize: no project named anywhere leaves the file untouched" {
+  printf '[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
+  local before; before="$(cat "$CONF")"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  assert_equal "$(cat "$CONF")" "$before"
+}
+
+@test "_setup_vertex_normalize: base-section settings survive for profiles to inherit" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a
+
+[vertex-gemini]
+region = us-east5
+gemini-3.5-flash
+EOF
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  run vertex_resolve "vertex-gemini@proj-a" region
+  assert_output "us-east5"
+  # The project keys that drove the expansion are gone, so the profile name is
+  # the project — a leftover project= would override every profile.
+  run vertex_resolve "vertex-gemini@proj-a" project
+  assert_output "proj-a"
+}
+
+@test "_setup_vertex_normalize: a comment-only base section keeps its comment" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a
+
+[vertex-gemini]
+# cheapest model, keep this one first
+gemini-3.5-flash
+EOF
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  run cat "$CONF"
+  assert_line "[vertex-gemini]"
+  assert_line "# cheapest model, keep this one first"
+  # The base section keeps its comment but loses its model to the new profile.
+  [ "$(printf '%s\n' "$output" | sed -n '/^\[vertex-gemini\]$/,/^\[/p' | grep -c '^gemini-3.5-flash$')" -eq 0 ]
+  assert_line "[vertex-gemini@proj-a]"
+  [ "$(grep -c '^gemini-3.5-flash$' <<<"$output")" -eq 1 ]
+}
+
+@test "_setup_vertex_normalize: a base section with neither settings nor comments is dropped" {
+  printf '[vertex]\nprojects = proj-a\n\n[vertex-gemini]\ngemini-3.5-flash\n' >"$CONF"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  run cat "$CONF"
+  refute_line "[vertex-gemini]"
+}
+
+@test "_setup_vertex_resolved_project: falls back to the profile name with no override" {
+  printf '[vertex-gemini@acme]\ngemini-x\n' >"$CONF"
+  run _setup_vertex_resolved_project "$CONF" acme
+  assert_success
+  assert_output "acme"
+}
+
+@test "_setup_vertex_resolved_project: an explicit override wins, checked in either family" {
+  printf '[vertex-anthropic@acme]\nproject = acme-prod\nclaude-x\n' >"$CONF"
+  run _setup_vertex_resolved_project "$CONF" acme
+  assert_success
+  assert_output "acme-prod"
+}
+
+@test "_setup_vertex_add_project: re-adding the real id an alias already targets is a no-op" {
+  printf '[vertex-anthropic@acme]\nproject = acme-prod\nclaude-x\n' >"$CONF"
+  run _setup_vertex_add_project "$CONF" acme-prod
+  assert_success
+  run cat "$CONF"
+  assert_line "[vertex-anthropic@acme]"
+  refute_line "[vertex-anthropic@acme-prod]"
+  refute_line "[vertex-gemini@acme-prod]"
+}
+
+@test "_setup_print_summary: an aliased profile shows its resolved project" {
+  printf '[vertex-anthropic@acme]\nproject = acme-prod\nclaude-x\n' >"$CONF"
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "acme (project: acme-prod)"
+}
+
+@test "_setup_fast_path: reset preserves a profile's project= override" {
+  cat >"$CONF" <<'EOF'
+[vertex-anthropic@acme]
+project = acme-prod
+claude-x
+
+[vertex-gemini@acme]
+gemini-y
+EOF
+  run env -u GOOGLE_VERTEX_PROJECT -u GOOGLE_CLOUD_PROJECT bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    GIT_AI_NO_FZF=1 _setup_fast_path "'"$CONF"'" vertex </dev/null
+  '
+  assert_success
+  source "${REPO_ROOT}/lib/ai-common.sh"
+  run vertex_resolve "vertex-anthropic@acme" project
+  assert_output "acme-prod"
+}
+
+@test "_setup_write_vertex_models: a project scope leaves its siblings alone" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+
+[vertex-gemini]
+gemini-3.5-flash
+EOF
+  run _setup_write_vertex_models "$CONF" "vertex@proj-b" gemini-3.1-pro-preview
+  assert_success
+  run parse_user_options
+  assert_line "vertex-gemini@proj-a:gemini-3.5-flash"
+  assert_line "vertex-gemini@proj-b:gemini-3.1-pro-preview"
+  refute_line "vertex-gemini@proj-b:gemini-3.5-flash"
+}
+
+@test "_setup_write_vertex_models: the vertex scope writes every project at once" {
+  printf '[vertex-gemini@proj-a]\nold\n\n[vertex-gemini@proj-b]\nold\n' >"$CONF"
+  run _setup_write_vertex_models "$CONF" vertex gemini-3.5-flash claude-sonnet-4-6
+  assert_success
+  run parse_user_options
+  assert_line "vertex-gemini@proj-a:gemini-3.5-flash"
+  assert_line "vertex-gemini@proj-b:gemini-3.5-flash"
+  assert_line "vertex-anthropic@proj-a:claude-sonnet-4-6"
+  refute_line "vertex-gemini@proj-a:old"
+}
+
+@test "_setup_pick_vertex_scope: one project needs no question" {
+  printf '[vertex-gemini@solo]\ngemini-3.5-flash\n' >"$CONF"
+  run _setup_pick_vertex_scope "$CONF" </dev/null
+  assert_success
+  assert_output "vertex"
+}
+
+@test "_setup_pick_vertex_scope: several projects offer all-or-one, with current pins" {
+  cat >"$CONF" <<'EOF'
+[vertex-gemini@proj-a]
+gemini-3.5-flash
+
+[vertex-gemini@proj-b]
+EOF
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "3\n" | GIT_AI_NO_FZF=1 _setup_pick_vertex_scope "'"$CONF"'" 2>&1
+  '
+  assert_success
+  assert_output --partial "All projects"
+  assert_output --partial "proj-a — gemini-3.5-flash"
+  assert_output --partial "proj-b — no models pinned"
+  assert_line "vertex@proj-b"
+}
+
+@test "_setup_print_summary: per-project pins list one row per project" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+account = me@acme.com
+
+[vertex-gemini@proj-a]
+gemini-3.5-flash
+
+[vertex-gemini@proj-b]
+gemini-3.1-pro-preview
+EOF
+  run _setup_print_summary "$CONF"
+  assert_success
+  assert_output --partial "Vertex AI [account: me@acme.com]"
+  assert_output --partial "proj-a — gemini-3.5-flash"
+  assert_output --partial "proj-b — gemini-3.1-pro-preview"
 }
 
 # --- _setup_change_models (replace-style model editing) ---
@@ -525,6 +811,27 @@ _models_env() {
   refute_line "claude-x"
   assert_line "gemini-z"
   refute_line "gemini-y"
+}
+
+@test "_setup_change_models: a project scope repins only that project" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+
+[vertex-gemini]
+gemini-y
+EOF
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    '"$(_models_env gemini-z)"'
+    printf "4\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" vertex@proj-b
+  '
+  assert_success
+  assert_output --partial "Set models for Vertex AI [proj-b]: gemini-z"
+  run parse_user_options
+  assert_line "vertex-gemini@proj-a:gemini-y"
+  assert_line "vertex-gemini@proj-b:gemini-z"
 }
 
 # --- _setup_action_reset (re-run fresh flow over an existing config) ---
@@ -723,7 +1030,7 @@ b|b"
 
 # --- _setup_action_add (re-adding vertex attaches a project, keeps models) ---
 
-@test "_setup_action_add: re-adding vertex skips the model picker and carries pins over" {
+@test "_setup_action_add: re-adding vertex attaches a project inheriting the current pins" {
   cat >"$CONF" <<'EOF'
 [vertex-anthropic]
 claude-sonnet-5
@@ -737,21 +1044,26 @@ EOF
   local stub; stub="$(mktemp -d)"
   printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
   chmod +x "${stub}/gcloud"
+  # "3" picks vertex, "new-proj" is the free-text project, the bare Enter accepts
+  # the inherited pins the model editor opens pre-marked with.
   run bash -c '
     export PATH="'"${stub}"':$PATH"
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_suggest_models() { :; }  # no network — seed already carries the pins to inherit
     printf "3\nnew-proj\n\n\n\n\n" | GIT_AI_NO_FZF=1 _setup_action_add "'"$CONF"'"
   '
   rm -rf "$stub"
   assert_success
-  assert_output --partial "Set vertex projects: old-proj, new-proj"
-  assert_output --partial "Models carried over to every project: claude-sonnet-5, gemini-3.6-flash"
-  refute_output --partial "Models to keep"
+  assert_output --partial "Added vertex project(s): new-proj"
+  assert_output --partial "Starting from the models pinned on your other projects."
   run cat "$CONF"
-  assert_line "claude-sonnet-5"
-  assert_line "gemini-3.6-flash"
-  assert_line "projects = old-proj, new-proj"
+  # Both projects keep the pins the base sections used to expand into.
+  assert_line "[vertex-anthropic@old-proj]"
+  assert_line "[vertex-gemini@new-proj]"
+  [ "$(grep -c '^claude-sonnet-5$' <<<"$output")" -eq 2 ]
+  [ "$(grep -c '^gemini-3.6-flash$' <<<"$output")" -eq 2 ]
+  refute_line "projects = old-proj"
 }
 
 # --- GCP project discovery / picking ---
@@ -810,9 +1122,13 @@ SH
   printf '[vertex]\nprojects = a\n' >"$CONF"
   local stub; stub="$(mktemp -d)"
   printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
-  cat >"${stub}/fzf" <<'SH'
+  # Only the project picker is answered; the model prompt that follows a newly
+  # attached project is cancelled, which leaves its pins alone.
+  cat >"${stub}/fzf" <<SH
 #!/bin/sh
 cat >/dev/null
+[ -e "${stub}/picked" ] && exit 130
+: >"${stub}/picked"
 printf 'a|a (current)\n=custom=|custom\n'
 SH
   chmod +x "${stub}/gcloud" "${stub}/fzf"
@@ -821,13 +1137,15 @@ SH
     unset GIT_AI_NO_FZF
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_suggest_models() { :; }  # no network — the model prompt is cancelled anyway
     printf "typed-proj\n" | _setup_change_vertex_projects "'"$CONF"'"
   '
   rm -rf "$stub"
   assert_success
   assert_output --partial "Set vertex projects: a, typed-proj"
   run cat "$CONF"
-  assert_line "projects = a, typed-proj"
+  assert_line "[vertex-gemini@typed-proj]"
+  assert_line "[vertex-anthropic@typed-proj]"
 }
 
 @test "_setup_gcloud_projects: names the logins whose project listing failed" {
