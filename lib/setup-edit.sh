@@ -306,14 +306,24 @@ _setup_change_vertex_projects() {
   for p in ${dropped[@]+"${dropped[@]}"}; do
     _setup_vertex_drop_project "$conf" "$p" || return 1
   done
+  # Only suffixes that were actually created get pinned below — status 2 means
+  # an existing profile already targets that project under another name, and
+  # pinning it would write the duplicate sections the add path just refused.
+  local -a attached=()
   for p in ${added[@]+"${added[@]}"}; do
-    _setup_vertex_add_project "$conf" "$p" || return 1
+    _setup_vertex_add_project "$conf" "$p"
+    st=$?
+    case $st in
+      0) attached+=("$p") ;;
+      2) ;;
+      *) return 1 ;;
+    esac
   done
   printf 'Set vertex projects: %s\n' "$(_join_comma "${picked[@]}")"
   [[ ${#dropped[@]} -gt 0 ]] && printf 'Dropped: %s\n' "$(_join_comma "${dropped[@]}")"
-  [[ ${#added[@]} -gt 0 ]] || return 0
-  _setup_pin_new_projects "$conf" "$seed" "${added[@]}"
-  _setup_offer_account_pin "$conf" "$sweep" "${added[@]}"
+  [[ ${#attached[@]} -gt 0 ]] || return 0
+  _setup_pin_new_projects "$conf" "$seed" "${attached[@]}"
+  _setup_offer_account_pin "$conf" "$sweep" "${attached[@]}"
 }
 
 # Remove a provider section (preserving the rest of the file). Removing the

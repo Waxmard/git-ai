@@ -332,8 +332,9 @@ _setup_current_vertex_projects() {
 # two shapes, and leaving a base model expanding across a project that also has
 # its own section is what makes a per-project unpin silently fail.
 _setup_vertex_normalize() {
-  local conf="$1" base p m s moved=""
+  local conf="$1" base p m s moved="" shared
   [[ -r "$conf" ]] || return 0
+  shared=$(vertex_config_value vertex projects)
 
   local -a projects=()
   while IFS= read -r p; do projects+=("$p"); done \
@@ -359,11 +360,33 @@ _setup_vertex_normalize() {
   parsed=$(parse_user_options)
 
   for base in vertex-gemini vertex-anthropic; do
-    [[ -n "$(_setup_section_lines "$conf" "$base" models)" ]] && moved=1
+    local -a base_models=()
+    while IFS= read -r m; do [[ -n "$m" ]] && base_models+=("$m"); done \
+      < <(_setup_section_lines "$conf" "$base" models)
+
+    # Only a shared `projects =` list expands a base section, so without one the
+    # base models are still under the bare name in `parsed` and would fold into
+    # nothing. They belong to the single project the section's own `project =`
+    # resolves to; with no project named either they are resolved from the
+    # environment at run time, and the section has to stay as it is.
+    local literal=""
+    if [[ ${#base_models[@]} -gt 0 && -z "$shared" ]]; then
+      literal=$(vertex_config_value "$base" project)
+      [[ -n "$literal" ]] || literal=$(vertex_config_value vertex project)
+      [[ -n "$literal" ]] || continue
+    fi
+    [[ ${#base_models[@]} -gt 0 ]] && moved=1
+
     for p in "${projects[@]}"; do
       local -a models=()
-      while IFS= read -r m; do [[ -n "$m" ]] && models+=("$m"); done < <(
+      local seen=$'\n'
+      while IFS= read -r m; do
+        [[ -n "$m" && "$seen" != *$'\n'"$m"$'\n'* ]] || continue
+        seen+="$m"$'\n'
+        models+=("$m")
+      done < <(
         printf '%s\n' "$parsed" | awk -F: -v k="${base}@${p}" '$1 == k { print $2 }'
+        [[ "$p" == "$literal" ]] && printf '%s\n' ${base_models[@]+"${base_models[@]}"}
       )
       _setup_upsert_section_models "$conf" "${base}@${p}" ${models[@]+"${models[@]}"} || return 1
     done
@@ -372,9 +395,14 @@ _setup_vertex_normalize() {
     # for its profiles to inherit, comments because they're the user's words,
     # not the expansion's); conf_set_section_models already keeps both and
     # drops only the model lines. A section with neither has nothing left to
-    # say once its models are gone.
-    if [[ -n "$(_setup_section_lines "$conf" "$base" settings)" ]] ||
-      _setup_section_has_comment "$conf" "$base"; then
+    # say once its models are gone — and project=/projects= do not count, since
+    # the sweep below strips them and would leave a bare header behind.
+    local kept=""
+    while IFS= read -r s; do
+      case "$(_trim "${s%%=*}")" in project | projects) continue ;; esac
+      kept=1
+    done < <(_setup_section_lines "$conf" "$base" settings)
+    if [[ -n "$kept" ]] || _setup_section_has_comment "$conf" "$base"; then
       _conf_apply "$conf" conf_set_section_models "$base"
     else
       _conf_apply "$conf" conf_remove_section "$base"
@@ -419,16 +447,19 @@ _setup_vertex_resolved_project() {
 # project that an existing profile already targets under an alias (its section
 # suffix differs from the real id via `project =`) is recognized as already
 # configured rather than duplicated under a second, id-named profile.
+# Returns 2 — not 0 — for that case: callers pin models on what they treat as
+# newly added suffixes, so "already configured" reported as success is what
+# recreates the duplicate the guard above just declined to write.
 # The three writers below normalize first, and nothing else does: a wizard action
 # the user backs out of must leave the file untouched.
 _setup_vertex_add_project() {
   local conf="$1" project="$2" p
   _setup_vertex_normalize "$conf"
   while IFS= read -r p; do
-    [[ "$(_setup_vertex_resolved_project "$conf" "$p")" == "$project" ]] && return 0
+    [[ "$(_setup_vertex_resolved_project "$conf" "$p")" == "$project" ]] && return 2
   done < <(vertex_section_projects "$conf")
-  _setup_conf_has_section "$conf" "vertex-gemini@${project}" && return 0
-  _setup_conf_has_section "$conf" "vertex-anthropic@${project}" && return 0
+  _setup_conf_has_section "$conf" "vertex-gemini@${project}" && return 2
+  _setup_conf_has_section "$conf" "vertex-anthropic@${project}" && return 2
   _conf_apply "$conf" conf_add_section "vertex-gemini@${project}" &&
     _conf_apply "$conf" conf_add_section "vertex-anthropic@${project}"
 }

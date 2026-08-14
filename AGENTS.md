@@ -68,5 +68,6 @@ Keep command logic in `bin/git-ai` and reusable helpers in `lib/`. Everything lo
 
 - Conventional Commits required (`feat:`, `fix:`, `chore:`, …).
 - release-please automates releases (`release-please-config.json`; version in `package.json` + `pyproject.toml`). npm and PyPI (`waxmard-git-ai`) publish on release tag push.
+- **`internal:`** is the type for work that must not reach the changelog — fixing a `feat:` that is still unreleased, where a "Bug Fixes" line describes a bug no user could hit. It is declared `hidden` in `changelog-sections`, and like every type other than `feat`/`fix`/breaking it bumps nothing. Note release-please only runs on pushes to `main`, so on a squash merge it is the **PR title** that needs the prefix, not the commit.
 - lefthook (`lefthook.yml`) runs shell-lint, line-limit, BATS, python (ruff + `dmypy` + pytest, serialized to avoid autofix/read races), and prompts. `stage_fixed: true` re-stages ruff-formatted files. Install with `make hooks`.
 - Tool versions pinned via mise (`mise.toml`): node, uv, lefthook, shellcheck. Run `mise install` once after cloning.

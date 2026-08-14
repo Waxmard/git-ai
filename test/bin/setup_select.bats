@@ -601,6 +601,46 @@ EOF
   refute_line "[vertex-gemini]"
 }
 
+@test "_setup_vertex_normalize: a singular [vertex] project= keeps the base pins" {
+  printf '[vertex]\nproject = proj-a\n\n[vertex-gemini]\ngemini-x\n\n[vertex-anthropic]\nclaude-x\n' >"$CONF"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  # Only `projects =` expands the base sections, so the fold has to copy the
+  # literal models — reading them back out of parse_user_options finds nothing.
+  run parse_user_options
+  assert_line "vertex-gemini@proj-a:gemini-x"
+  assert_line "vertex-anthropic@proj-a:claude-x"
+}
+
+@test "_setup_vertex_normalize: a base-section project= keeps the base pins" {
+  printf '[vertex-anthropic]\nproject = acme-prod\nregion = us-east5\nclaude-x\n' >"$CONF"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  run parse_user_options
+  assert_line "vertex-anthropic@acme-prod:claude-x"
+  run vertex_resolve "vertex-anthropic@acme-prod" region
+  assert_output "us-east5"
+}
+
+@test "_setup_vertex_normalize: base pins with no project of their own are left alone" {
+  printf '[vertex-gemini]\ngemini-base\n\n[vertex-gemini@p1]\ngemini-p1\n' >"$CONF"
+  local before; before="$(cat "$CONF")"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  # Nothing names a project for the base section, so its models still resolve
+  # theirs from the environment — folding them into p1 would be a guess.
+  assert_equal "$(cat "$CONF")" "$before"
+}
+
+@test "_setup_vertex_normalize: an overlapping base pin is not duplicated in the profile" {
+  printf '[vertex]\nproject = proj-a\n\n[vertex-gemini]\ngemini-x\n\n[vertex-gemini@proj-a]\ngemini-x\ngemini-y\n' >"$CONF"
+  run _setup_vertex_normalize "$CONF"
+  assert_success
+  run cat "$CONF"
+  [ "$(grep -c '^gemini-x$' <<<"$output")" -eq 1 ]
+  assert_line "gemini-y"
+}
+
 @test "_setup_vertex_resolved_project: falls back to the profile name with no override" {
   printf '[vertex-gemini@acme]\ngemini-x\n' >"$CONF"
   run _setup_vertex_resolved_project "$CONF" acme
@@ -618,6 +658,28 @@ EOF
 @test "_setup_vertex_add_project: re-adding the real id an alias already targets is a no-op" {
   printf '[vertex-anthropic@acme]\nproject = acme-prod\nclaude-x\n' >"$CONF"
   run _setup_vertex_add_project "$CONF" acme-prod
+  # 2, not 0: callers pin models on every suffix they see reported as added.
+  assert_equal "$status" 2
+  run cat "$CONF"
+  assert_line "[vertex-anthropic@acme]"
+  refute_line "[vertex-anthropic@acme-prod]"
+  refute_line "[vertex-gemini@acme-prod]"
+}
+
+# Numbered rows here are: 1) sentinel  2) acme (current)  3) custom.
+@test "_setup_change_vertex_projects: picking the id an alias targets adds nothing" {
+  printf '[vertex-anthropic@acme]\nproject = acme-prod\nclaude-x\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
+  chmod +x "${stub}/gcloud"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_suggest_models() { :; }
+    printf "2 3\nacme-prod\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
+  '
+  rm -rf "$stub"
   assert_success
   run cat "$CONF"
   assert_line "[vertex-anthropic@acme]"
