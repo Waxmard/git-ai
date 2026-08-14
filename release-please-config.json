@@ -23,7 +23,8 @@
         { "type": "test", "section": "Tests" },
         { "type": "build", "section": "Build System" },
         { "type": "ci", "section": "Continuous Integration" },
-        { "type": "chore", "section": "Miscellaneous Chores" }
+        { "type": "chore", "section": "Miscellaneous Chores" },
+        { "type": "internal", "section": "Internal", "hidden": true }
       ]
     }
   }

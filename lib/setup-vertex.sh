@@ -308,10 +308,15 @@ _setup_current_vertex_projects() {
 
   legacy=$(vertex_config_value vertex projects)
   if [[ -z "$legacy" ]]; then
+    # Each base section can carry its own singular `project =`, and they need not
+    # agree. Taking only the first drops the other's project — and, once the fold
+    # finds no target for its models, the section and its pins with it.
+    local -a singles=()
     for s in vertex vertex-anthropic vertex-gemini; do
-      legacy=$(vertex_resolve "$s" project)
-      [[ -n "$legacy" ]] && break
+      p=$(vertex_resolve "$s" project)
+      [[ -n "$p" ]] && singles+=("$p")
     done
+    [[ ${#singles[@]} -gt 0 ]] && legacy=$(_join_comma "${singles[@]}")
   fi
   while IFS= read -r p; do
     [[ "$seen" != *$'\n'"$p"$'\n'* ]] || continue
@@ -320,6 +325,133 @@ _setup_current_vertex_projects() {
   done < <(_setup_split_projects "$legacy")
 
   [[ ${#all[@]} -gt 0 ]] && _join_comma "${all[@]}"
+}
+
+# "<project><TAB><suffix>" for each [vertex-<family>@<suffix>] section holding an
+# explicit `project =` that differs from its suffix. Only the section's own key
+# counts, never one inherited from a base section: an alias is a deliberate
+# second name for a project, and the fold's whole point is that inherited base
+# keys stop applying to profiles. A project already addressed by some alias must
+# be folded THERE, or it gets a second, id-named section alongside — the same
+# duplicate _setup_vertex_add_project declines to write. Suffixes that name a
+# project outright are skipped: that section is the project's own address, and
+# rerouting its pins to an alias would strand them.
+_setup_vertex_alias_map() {
+  local conf="$1" s suffix explicit suffixes=$'\n'
+  while IFS= read -r s; do suffixes+="$s"$'\n'; done < <(vertex_section_projects "$conf")
+  while IFS= read -r s; do
+    case "$s" in vertex-gemini@* | vertex-anthropic@*) ;; *) continue ;; esac
+    suffix="${s#*@}"
+    explicit=$(vertex_config_value "$s" project)
+    [[ -n "$explicit" && "$explicit" != "$suffix" ]] || continue
+    [[ "$suffixes" == *$'\n'"$explicit"$'\n'* ]] && continue
+    printf '%s\t%s\n' "$explicit" "$suffix"
+  done < <(conf_section_providers <"$conf")
+  return 0
+}
+
+# The address PROJECT's pins belong under per MAP, else PROJECT itself.
+_setup_vertex_canonical() {
+  local map="$1" want="$2" line
+  while IFS= read -r line; do
+    [[ "${line%%$'\t'*}" == "$want" ]] || continue
+    printf '%s' "${line#*$'\t'}"
+    return 0
+  done <<<"$map"
+  printf '%s' "$want"
+}
+
+# Every id whose pins belong at SUFFIX per MAP: SUFFIX itself, plus each project
+# that canonicalizes to it. parse_user_options keys a base section's expanded
+# pins under the project id the expansion used, never the alias they now live
+# at, so reading only "<base>@SUFFIX" drops them — and the loss guard misses it
+# whenever the same model is also pinned elsewhere.
+_setup_vertex_sources() {
+  local map="$1" suffix="$2" project alias
+  printf '%s\n' "$suffix"
+  while IFS=$'\t' read -r project alias; do
+    [[ "$alias" == "$suffix" && -n "$project" && "$project" != "$suffix" ]] &&
+      printf '%s\n' "$project"
+  done <<<"$map"
+  return 0
+}
+
+# Copy the `project =` a section's sibling family carries onto SECTION. The
+# wizard treats both families as one entry, so a model added to the other family
+# lands in a section with no override — but vertex_resolve never consults the
+# sibling, so that family would call the bare suffix while its twin calls the
+# real project. Only for sections the wizard just created: retargeting one the
+# user already had is the silent repoint the fold takes pains to avoid.
+_setup_vertex_mirror_alias() {
+  local conf="$1" section="$2" suffix sibling other
+  case "$section" in
+    vertex-gemini@*) sibling="vertex-anthropic@${section#*@}" ;;
+    vertex-anthropic@*) sibling="vertex-gemini@${section#*@}" ;;
+    *) return 0 ;;
+  esac
+  suffix="${section#*@}"
+  _setup_conf_has_section "$conf" "$section" || return 0
+  [[ -n "$(vertex_config_value "$section" project)" ]] && return 0
+  other=$(vertex_config_value "$sibling" project)
+  [[ -n "$other" && "$other" != "$suffix" ]] || return 0
+  _conf_apply "$conf" conf_set_section_setting "$section" project "$other"
+}
+
+# "<section><TAB><project>" for each [vertex-<family>@<suffix>] section with no
+# `project =` of its own that inherits one differing from its suffix. Deleting
+# the base key is what the fold is for — a base project= applies to every
+# profile at once, which is exactly what per-project pinning replaces — but it
+# does change where those profiles run, so the caller names them rather than
+# retargeting them in silence. Snapshot before the first write.
+_setup_vertex_inherited_projects() {
+  local conf="$1" s resolved
+  while IFS= read -r s; do
+    case "$s" in vertex-gemini@* | vertex-anthropic@*) ;; *) continue ;; esac
+    [[ -n "$(vertex_config_value "$s" project)" ]] && continue
+    resolved=$(vertex_resolve "$s" project)
+    [[ -n "$resolved" && "$resolved" != "${s#*@}" ]] || continue
+    printf '%s\t%s\n' "$s" "$resolved"
+  done < <(conf_section_providers <"$conf")
+  return 0
+}
+
+# Every model id pinned under any vertex section of CONF, sorted and deduped.
+_setup_vertex_model_ids() {
+  local conf="$1" s
+  {
+    while IFS= read -r s; do
+      case "$s" in vertex-gemini* | vertex-anthropic*) ;; *) continue ;; esac
+      _setup_section_lines "$conf" "$s" models
+    done < <(conf_section_providers <"$conf")
+  } | LC_ALL=C sort -u
+}
+
+# Fold a shared-shape vertex config down to per-project sections, restoring the
+# file untouched if any pinned model would go missing. The fold only ever moves
+# pins between sections, so a dropped id means a section was removed before its
+# models were copied out — silent, unrecoverable data loss without this guard.
+_setup_vertex_normalize() {
+  local conf="$1" backup rc=0 m
+  [[ -r "$conf" ]] || return 0
+  backup=$(mktemp "$(dirname "$conf")/git-ai-conf.XXXXXX") || return 1
+  cp "$conf" "$backup" || { rm -f "$backup"; return 1; }
+
+  local -a lost=()
+  if _setup_vertex_fold "$conf"; then
+    while IFS= read -r m; do [[ -n "$m" ]] && lost+=("$m"); done \
+      < <(LC_ALL=C comm -23 <(_setup_vertex_model_ids "$backup") <(_setup_vertex_model_ids "$conf"))
+  else
+    rc=1
+  fi
+
+  if [[ $rc -ne 0 || ${#lost[@]} -gt 0 ]]; then
+    mv "$backup" "$conf"
+    [[ ${#lost[@]} -gt 0 ]] && printf 'Vertex AI config left as-is: pinning per project would have dropped %s.\n' \
+      "$(_join_comma "${lost[@]}")" >&2
+    return 1
+  fi
+  rm -f "$backup"
+  return 0
 }
 
 # Convert a shared-shape vertex config to per-project sections: every model a
@@ -331,13 +463,21 @@ _setup_current_vertex_projects() {
 # working. Explicit profiles are folded INTO, not skipped: a config can mix the
 # two shapes, and leaving a base model expanding across a project that also has
 # its own section is what makes a per-project unpin silently fail.
-_setup_vertex_normalize() {
-  local conf="$1" base p m s moved=""
+_setup_vertex_fold() {
+  local conf="$1" base p m s src moved="" shared alias_map inherited
   [[ -r "$conf" ]] || return 0
+  shared=$(vertex_config_value vertex projects)
+  alias_map=$(_setup_vertex_alias_map "$conf")
+  inherited=$(_setup_vertex_inherited_projects "$conf")
 
   local -a projects=()
-  while IFS= read -r p; do projects+=("$p"); done \
-    < <(_setup_split_projects "$(_setup_current_vertex_projects "$conf")")
+  local seen_project=$'\n'
+  while IFS= read -r p; do
+    p=$(_setup_vertex_canonical "$alias_map" "$p")
+    [[ -n "$p" && "$seen_project" != *$'\n'"$p"$'\n'* ]] || continue
+    seen_project+="$p"$'\n'
+    projects+=("$p")
+  done < <(_setup_split_projects "$(_setup_current_vertex_projects "$conf")")
   [[ ${#projects[@]} -gt 0 ]] || return 0
 
   # Already folded: no base section still holds models, and no project key is
@@ -359,22 +499,57 @@ _setup_vertex_normalize() {
   parsed=$(parse_user_options)
 
   for base in vertex-gemini vertex-anthropic; do
-    [[ -n "$(_setup_section_lines "$conf" "$base" models)" ]] && moved=1
+    local -a base_models=()
+    while IFS= read -r m; do [[ -n "$m" ]] && base_models+=("$m"); done \
+      < <(_setup_section_lines "$conf" "$base" models)
+
+    # Only a shared `projects =` list expands a base section, so without one the
+    # base models are still under the bare name in `parsed` and would fold into
+    # nothing. They belong to the single project the section's own `project =`
+    # resolves to; with no project named either they are resolved from the
+    # environment at run time, and the section has to stay as it is.
+    local literal=""
+    if [[ ${#base_models[@]} -gt 0 && -z "$shared" ]]; then
+      literal=$(vertex_config_value "$base" project)
+      [[ -n "$literal" ]] || literal=$(vertex_config_value vertex project)
+      [[ -n "$literal" ]] || continue
+      literal=$(_setup_vertex_canonical "$alias_map" "$literal")
+    fi
+    [[ ${#base_models[@]} -gt 0 ]] && moved=1
+
     for p in "${projects[@]}"; do
       local -a models=()
-      while IFS= read -r m; do [[ -n "$m" ]] && models+=("$m"); done < <(
-        printf '%s\n' "$parsed" | awk -F: -v k="${base}@${p}" '$1 == k { print $2 }'
+      local seen=$'\n'
+      while IFS= read -r m; do
+        [[ -n "$m" && "$seen" != *$'\n'"$m"$'\n'* ]] || continue
+        seen+="$m"$'\n'
+        models+=("$m")
+      done < <(
+        while IFS= read -r src; do
+          printf '%s\n' "$parsed" | awk -F: -v k="${base}@${src}" '$1 == k { print $2 }'
+        done < <(_setup_vertex_sources "$alias_map" "$p")
+        [[ "$p" == "$literal" ]] && printf '%s\n' ${base_models[@]+"${base_models[@]}"}
       )
+      local existed=""
+      _setup_conf_has_section "$conf" "${base}@${p}" && existed=1
       _setup_upsert_section_models "$conf" "${base}@${p}" ${models[@]+"${models[@]}"} || return 1
+      if [[ -z "$existed" ]]; then
+        _setup_vertex_mirror_alias "$conf" "${base}@${p}" || return 1
+      fi
     done
     _setup_conf_has_section "$conf" "$base" || continue
     # A base section carrying settings or comments keeps the header (settings
     # for its profiles to inherit, comments because they're the user's words,
     # not the expansion's); conf_set_section_models already keeps both and
     # drops only the model lines. A section with neither has nothing left to
-    # say once its models are gone.
-    if [[ -n "$(_setup_section_lines "$conf" "$base" settings)" ]] ||
-      _setup_section_has_comment "$conf" "$base"; then
+    # say once its models are gone — and project=/projects= do not count, since
+    # the sweep below strips them and would leave a bare header behind.
+    local kept=""
+    while IFS= read -r s; do
+      case "$(_trim "${s%%=*}")" in project | projects) continue ;; esac
+      kept=1
+    done < <(_setup_section_lines "$conf" "$base" settings)
+    if [[ -n "$kept" ]] || _setup_section_has_comment "$conf" "$base"; then
       _conf_apply "$conf" conf_set_section_models "$base"
     else
       _conf_apply "$conf" conf_remove_section "$base"
@@ -386,6 +561,14 @@ _setup_vertex_normalize() {
       _setup_conf_has_section "$conf" "vertex-anthropic@${p}" ||
       _conf_apply "$conf" conf_add_section "vertex-gemini@${p}" || return 1
   done
+
+  local section was
+  while IFS=$'\t' read -r section was; do
+    [[ -n "$section" ]] || continue
+    printf '[%s] no longer inherits project = %s; it now targets %s.\n' \
+      "$section" "$was" "${section#*@}" >&2
+    printf '  Add project = %s to that section to keep the old target.\n' "$was" >&2
+  done <<<"$inherited"
 
   # project=/projects= are what the expansion consumed. Leaving them behind would
   # override every profile's own project — vertex_resolve prefers a base
@@ -419,23 +602,29 @@ _setup_vertex_resolved_project() {
 # project that an existing profile already targets under an alias (its section
 # suffix differs from the real id via `project =`) is recognized as already
 # configured rather than duplicated under a second, id-named profile.
+# Returns 2 — not 0 — for that case: callers pin models on what they treat as
+# newly added suffixes, so "already configured" reported as success is what
+# recreates the duplicate the guard above just declined to write.
 # The three writers below normalize first, and nothing else does: a wizard action
-# the user backs out of must leave the file untouched.
+# the user backs out of must leave the file untouched. They abort when the fold
+# refuses — an edit written over a config still in the shared shape is the very
+# thing the fold exists to prevent (base models keep expanding, so a scoped
+# unpin silently does nothing), and reporting it as done would hide that.
 _setup_vertex_add_project() {
   local conf="$1" project="$2" p
-  _setup_vertex_normalize "$conf"
+  _setup_vertex_normalize "$conf" || return 1
   while IFS= read -r p; do
-    [[ "$(_setup_vertex_resolved_project "$conf" "$p")" == "$project" ]] && return 0
+    [[ "$(_setup_vertex_resolved_project "$conf" "$p")" == "$project" ]] && return 2
   done < <(vertex_section_projects "$conf")
-  _setup_conf_has_section "$conf" "vertex-gemini@${project}" && return 0
-  _setup_conf_has_section "$conf" "vertex-anthropic@${project}" && return 0
+  _setup_conf_has_section "$conf" "vertex-gemini@${project}" && return 2
+  _setup_conf_has_section "$conf" "vertex-anthropic@${project}" && return 2
   _conf_apply "$conf" conf_add_section "vertex-gemini@${project}" &&
     _conf_apply "$conf" conf_add_section "vertex-anthropic@${project}"
 }
 
 _setup_vertex_drop_project() {
   local conf="$1" project="$2"
-  _setup_vertex_normalize "$conf"
+  _setup_vertex_normalize "$conf" || return 1
   _conf_apply "$conf" conf_remove_section "vertex-gemini@${project}" &&
     _conf_apply "$conf" conf_remove_section "vertex-anthropic@${project}"
 }
@@ -459,7 +648,7 @@ _setup_write_vertex_models() {
     *@*)
       # Pinning one project only means something once the base sections have
       # been folded down — otherwise their models still apply to every project.
-      _setup_vertex_normalize "$conf"
+      _setup_vertex_normalize "$conf" || return 1
       targets=("@${scope#*@}")
       ;;
     *)
@@ -468,9 +657,18 @@ _setup_write_vertex_models() {
       [[ ${#targets[@]} -gt 0 ]] || targets=("")
       ;;
   esac
+  local fam had
   for p in "${targets[@]}"; do
+    had=""
+    for fam in vertex-anthropic vertex-gemini; do
+      _setup_conf_has_section "$conf" "${fam}${p}" && had+=" ${fam}"
+    done
     _setup_upsert_section_models "$conf" "vertex-anthropic${p}" ${anth[@]+"${anth[@]}"} &&
       _setup_upsert_section_models "$conf" "vertex-gemini${p}" ${gem[@]+"${gem[@]}"} || return 1
+    for fam in vertex-anthropic vertex-gemini; do
+      case "$had" in *" ${fam}"*) continue ;; esac
+      _setup_vertex_mirror_alias "$conf" "${fam}${p}" || return 1
+    done
   done
 }
 
