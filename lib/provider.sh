@@ -76,15 +76,51 @@ resolve_model() {
   printf '%s\n' "$default"
 }
 
-# generateContent request body, shared by the AI Studio and Vertex endpoints —
-# same payload shape, different host and auth.
-_gemini_request_body() {
-  GIT_AI_PROMPT="$1" GIT_AI_INPUT="$2" "${GIT_AI_PYTHON:-python3}" -c '
-import json, os
-print(json.dumps({
-  "systemInstruction": {"parts": [{"text": os.environ["GIT_AI_PROMPT"]}]},
-  "contents": [{"role": "user", "parts": [{"text": os.environ["GIT_AI_INPUT"]}]}]
-}))'
+# _stage_request_body SHAPE PROMPT [MODEL]   (payload on stdin)
+# Serialize the JSON request body into a temp file and print its path; the
+# caller owns the file. The payload rides stdin and reaches curl as
+# `--data-binary @path` because Linux caps a single argv *or* env string at
+# MAX_ARG_STRLEN (131072 bytes) — a diff well inside GIT_AI_MAX_DIFF_BYTES
+# fails execve through either. The prompt is a packaged file, so it stays in
+# env. Gemini's shape is shared by the AI Studio and Vertex endpoints, which
+# differ only in host and auth.
+_stage_request_body() {
+  local body_file
+  body_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-body.XXXXXX") || return 1
+  GIT_AI_SHAPE="$1" GIT_AI_PROMPT="$2" GIT_AI_MODEL="${3:-}" GIT_AI_BODY_FILE="$body_file" \
+    "${GIT_AI_PYTHON:-python3}" -c '
+import json, os, sys
+shape = os.environ["GIT_AI_SHAPE"]
+prompt = os.environ["GIT_AI_PROMPT"]
+model = os.environ["GIT_AI_MODEL"]
+text = sys.stdin.read()
+if shape == "gemini":
+    body = {
+      "systemInstruction": {"parts": [{"text": prompt}]},
+      "contents": [{"role": "user", "parts": [{"text": text}]}],
+    }
+elif shape == "openai":
+    body = {
+      "model": model,
+      "messages": [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": text},
+      ],
+    }
+else:
+    body = {
+      "max_tokens": 8192,
+      "system": prompt,
+      "messages": [{"role": "user", "content": text}],
+    }
+    if shape == "vertex-anthropic":
+        body["anthropic_version"] = "vertex-2023-10-16"
+    else:
+        body["model"] = model
+with open(os.environ["GIT_AI_BODY_FILE"], "w") as fh:
+    json.dump(body, fh)
+' || { rm -f "$body_file"; return 1; }
+  printf '%s' "$body_file"
 }
 
 # Thinking models return their reasoning as parts flagged `thought`, so the
@@ -116,19 +152,21 @@ except Exception:
 
 _run_gemini_api() {
   local model="$1" prompt="$2" input="$3" key="$4"
-  local body cfg response st http detail
-  body=$(_gemini_request_body "$prompt" "$input") || die "Failed to build Gemini API request"
+  local body_file cfg response st http detail
+  body_file=$(printf '%s' "$input" | _stage_request_body gemini "$prompt") ||
+    die "Failed to build Gemini API request"
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$cfg"' EXIT
+  trap 'rm -f "$cfg" "$body_file"' EXIT
   # The key is a URL parameter, so the whole URL goes in the curl config file
   # rather than argv (keeps the key out of `ps`).
   printf 'url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"\n' \
     "$model" "$key" >"$cfg"
   # No -f: a rejected key or unknown model is a 4xx whose body explains why, and
   # this is the path a stale key lands on.
-  response=$(curl -s -K "$cfg" -H "content-type: application/json" -d "$body" -w '\n%{http_code}')
+  response=$(curl -s -K "$cfg" -H "content-type: application/json" \
+    --data-binary "@$body_file" -w '\n%{http_code}')
   st=$?
-  rm -f "$cfg"
+  rm -f "$cfg" "$body_file"
   [[ $st -eq 0 ]] || die "Gemini API request failed"
   http="${response##*$'\n'}"
   response="${response%$'\n'*}"
@@ -194,41 +232,38 @@ print(text)
 
 _run_vertex_anthropic_api() {
   local model="$1" prompt="$2" input="$3" project="$4" region="$5" account="${6:-}"
-  local token body url curl_cfg response
+  local token body_file url curl_cfg response
   token=$(_vertex_access_token "$account") ||
     die "Vertex auth: gcloud print-access-token failed."
-  body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" "${GIT_AI_PYTHON:-python3}" -c '
-import json, os
-print(json.dumps({
-  "anthropic_version": "vertex-2023-10-16",
-  "max_tokens": 8192,
-  "system": os.environ["GIT_AI_PROMPT"],
-  "messages": [{"role": "user", "content": os.environ["GIT_AI_INPUT"]}]
-}))') || die "Failed to build Vertex Anthropic request"
+  body_file=$(printf '%s' "$input" | _stage_request_body vertex-anthropic "$prompt") ||
+    die "Failed to build Vertex Anthropic request"
   url=$(_vertex_endpoint "$project" "$region" "anthropic" "$model" "rawPredict")
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$curl_cfg"' EXIT
+  trap 'rm -f "$curl_cfg" "$body_file"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
-  response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" -d "$body" "$url")
+  response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" \
+    --data-binary "@$body_file" "$url")
   local curl_status=$?
-  rm -f "$curl_cfg"
+  rm -f "$curl_cfg" "$body_file"
   [[ $curl_status -eq 0 ]] || die "Vertex Anthropic API request failed"
   _extract_anthropic_text <<<"$response" || die "Failed to parse Vertex Anthropic response"
 }
 
 _run_vertex_gemini_api() {
   local model="$1" prompt="$2" input="$3" project="$4" region="$5" account="${6:-}"
-  local token body url curl_cfg response
+  local token body_file url curl_cfg response
   token=$(_vertex_access_token "$account") ||
     die "Vertex auth: gcloud print-access-token failed."
-  body=$(_gemini_request_body "$prompt" "$input") || die "Failed to build Vertex Gemini request"
+  body_file=$(printf '%s' "$input" | _stage_request_body gemini "$prompt") ||
+    die "Failed to build Vertex Gemini request"
   url=$(_vertex_endpoint "$project" "$region" "google" "$model" "generateContent")
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$curl_cfg"' EXIT
+  trap 'rm -f "$curl_cfg" "$body_file"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
-  response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" -d "$body" "$url")
+  response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" \
+    --data-binary "@$body_file" "$url")
   local curl_status=$?
-  rm -f "$curl_cfg"
+  rm -f "$curl_cfg" "$body_file"
   [[ $curl_status -eq 0 ]] || die "Vertex Gemini API request failed"
   _extract_gemini_text <<<"$response" || die "Failed to parse Vertex Gemini response"
 }
@@ -238,28 +273,20 @@ _run_anthropic_api() {
   local prompt="$2"
   local input="$3"
   local key="$4"
-  local body response curl_cfg
-  body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
-    "${GIT_AI_PYTHON:-python3}" -c '
-import json, os
-print(json.dumps({
-  "model": os.environ["GIT_AI_MODEL"],
-  "max_tokens": 8192,
-  "system": os.environ["GIT_AI_PROMPT"],
-  "messages": [{"role": "user", "content": os.environ["GIT_AI_INPUT"]}]
-}))
-') || die "Failed to build Anthropic API request"
+  local body_file response curl_cfg
+  body_file=$(printf '%s' "$input" | _stage_request_body anthropic "$prompt" "$model") ||
+    die "Failed to build Anthropic API request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$curl_cfg"' EXIT
+  trap 'rm -f "$curl_cfg" "$body_file"' EXIT
   printf 'header = "x-api-key: %s"\n' "$key" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
     -H "anthropic-version: 2023-06-01" \
     -H "content-type: application/json" \
-    -d "$body" \
+    --data-binary "@$body_file" \
     "https://api.anthropic.com/v1/messages")
   local curl_status=$?
-  rm -f "$curl_cfg"
+  rm -f "$curl_cfg" "$body_file"
   [[ $curl_status -eq 0 ]] || die "Anthropic API request failed"
   _extract_anthropic_text <<<"$response" || die "Failed to parse Anthropic API response"
 }
@@ -269,28 +296,19 @@ _run_openai_api() {
   local prompt="$2"
   local input="$3"
   local key="$4"
-  local body response curl_cfg
-  body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
-    "${GIT_AI_PYTHON:-python3}" -c '
-import json, os
-print(json.dumps({
-  "model": os.environ["GIT_AI_MODEL"],
-  "messages": [
-    {"role": "system", "content": os.environ["GIT_AI_PROMPT"]},
-    {"role": "user",   "content": os.environ["GIT_AI_INPUT"]}
-  ]
-}))
-') || die "Failed to build OpenAI API request"
+  local body_file response curl_cfg
+  body_file=$(printf '%s' "$input" | _stage_request_body openai "$prompt" "$model") ||
+    die "Failed to build OpenAI API request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$curl_cfg"' EXIT
+  trap 'rm -f "$curl_cfg" "$body_file"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$key" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
     -H "content-type: application/json" \
-    -d "$body" \
+    --data-binary "@$body_file" \
     "https://api.openai.com/v1/chat/completions")
   local curl_status=$?
-  rm -f "$curl_cfg"
+  rm -f "$curl_cfg" "$body_file"
   [[ $curl_status -eq 0 ]] || die "OpenAI API request failed"
   "${GIT_AI_PYTHON:-python3}" -c '
 import json, sys

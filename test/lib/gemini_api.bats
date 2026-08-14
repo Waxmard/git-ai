@@ -16,10 +16,17 @@ teardown() {
   rm -rf "$TEST_DIR"
 }
 
-# Write a `curl` stub replying with BODY and HTTP code $1.
+# Write a `curl` stub replying with BODY and HTTP code $1. It also saves its
+# argv and any `@file` payload so tests can assert on the staged request body.
 write_curl_stub() {
-  { printf '#!/usr/bin/env bash\ncat <<'\''BODY_EOF'\''\n'; cat; printf 'BODY_EOF\nprintf %s\n' "$1"; } \
-    >"${STUB_BIN}/curl"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'printf "%%s\\n" "$@" >"%s/curl-args"\n' "$TEST_DIR"
+    printf 'for a in "$@"; do case $a in @*) cp "${a#@}" "%s/curl-body";; esac; done\n' "$TEST_DIR"
+    printf 'cat <<'\''BODY_EOF'\''\n'
+    cat
+    printf 'BODY_EOF\nprintf %s\n' "$1"
+  } >"${STUB_BIN}/curl"
   chmod +x "${STUB_BIN}/curl"
 }
 
@@ -47,6 +54,22 @@ JSON
   assert_failure
   assert_output --partial "HTTP 400"
   assert_output --partial "API key not valid"
+}
+
+# Linux caps a single argv/env string at 131072 bytes, so a payload this size
+# would fail execve if it rode either instead of a staged file.
+@test "_run_gemini_api: an over-argv-limit input reaches curl as a file" {
+  write_curl_stub 200 <<'JSON'
+{"candidates":[{"content":{"parts":[{"text":"feat: big change"}]}}]}
+JSON
+  local big
+  big=$(head -c 200000 /dev/zero | tr '\0' 'x')
+  PATH="${STUB_BIN}:$PATH" run _run_gemini_api "gemini-test" "prompt" "$big" "k"
+  assert_success
+  assert_output "feat: big change"
+  run grep -qx -- '--data-binary' "${TEST_DIR}/curl-args"
+  assert_success
+  [ "$(wc -c <"${TEST_DIR}/curl-body")" -gt 200000 ]
 }
 
 @test "_run_gemini_api: a 200 with no usable text fails rather than emitting nothing" {
