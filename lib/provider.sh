@@ -79,7 +79,7 @@ resolve_model() {
 # generateContent request body, shared by the AI Studio and Vertex endpoints —
 # same payload shape, different host and auth.
 _gemini_request_body() {
-  GIT_AI_PROMPT="$1" GIT_AI_INPUT="$2" python3 -c '
+  GIT_AI_PROMPT="$1" GIT_AI_INPUT="$2" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 print(json.dumps({
   "systemInstruction": {"parts": [{"text": os.environ["GIT_AI_PROMPT"]}]},
@@ -90,7 +90,7 @@ print(json.dumps({
 # Thinking models return their reasoning as parts flagged `thought`, so the
 # answer is not always parts[0] — join every non-thought text part.
 _extract_gemini_text() {
-  python3 -c '
+  "${GIT_AI_PYTHON:-python3}" -c '
 import json, sys
 data = json.loads(sys.stdin.read())
 candidates = data.get("candidates") or [{}]
@@ -105,7 +105,7 @@ print(text)
 # Print the API's own `error.message` from a JSON error body, empty when the
 # body isn't the shape we expect.
 _api_error_message() {
-  python3 -c '
+  "${GIT_AI_PYTHON:-python3}" -c '
 import json, sys
 try:
     print((json.loads(sys.stdin.read()).get("error") or {}).get("message", ""))
@@ -139,6 +139,33 @@ _run_gemini_api() {
   _extract_gemini_text <<<"$response" || die "Failed to parse Gemini API response"
 }
 
+# Linux caps a SINGLE argv string at MAX_ARG_STRLEN (32 pages = 131072 bytes),
+# separately from ARG_MAX, and execve fails with E2BIG above it — a branch diff
+# well inside git-ai's own GIT_AI_MAX_DIFF_BYTES ceiling can exceed that. macOS
+# has no per-argument cap, but the threshold is uniform so behaviour doesn't
+# differ by platform.
+AGY_MAX_INLINE_PROMPT="${AGY_MAX_INLINE_PROMPT:-120000}"
+
+# _agy_prompt_arg PROMPT INPUT
+# Print the value for agy's -p flag. Past the argv limit the payload is staged
+# in a temp file and printed as `@path`, which agy expands client-side (still
+# one turn — not a tool call the model has to make). An `@` answer is therefore
+# the caller's signal that it owns a temp file to remove.
+_agy_prompt_arg() {
+  local payload bytes staged
+  payload=$(printf '%s\n\n%s' "$1" "$2")
+  # ${#payload} counts characters; execve counts bytes, and a multi-byte diff
+  # would slip past a character-based check.
+  bytes=$(printf '%s' "$payload" | LC_ALL=C wc -c)
+  if ((bytes <= AGY_MAX_INLINE_PROMPT)); then
+    printf '%s' "$payload"
+    return 0
+  fi
+  staged=$(mktemp "${TMPDIR:-/tmp}/git-ai-agy-prompt.XXXXXX") || return 1
+  printf '%s' "$payload" >"$staged" || return 1
+  printf '@%s' "$staged"
+}
+
 _vertex_endpoint() {
   local project="$1" region="$2" publisher="$3" model="$4" method="$5"
   local host
@@ -151,7 +178,7 @@ _vertex_endpoint() {
 # Thinking-capable models put a `thinking` block first, so content[0] is not
 # always the answer — concatenate every text block instead.
 _extract_anthropic_text() {
-  python3 -c '
+  "${GIT_AI_PYTHON:-python3}" -c '
 import json, sys
 data = json.loads(sys.stdin.read())
 text = "".join(
@@ -170,7 +197,7 @@ _run_vertex_anthropic_api() {
   local token body url curl_cfg response
   token=$(_vertex_access_token "$account") ||
     die "Vertex auth: gcloud print-access-token failed."
-  body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
+  body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 print(json.dumps({
   "anthropic_version": "vertex-2023-10-16",
@@ -213,7 +240,7 @@ _run_anthropic_api() {
   local key="$4"
   local body response curl_cfg
   body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
-    python3 -c '
+    "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 print(json.dumps({
   "model": os.environ["GIT_AI_MODEL"],
@@ -244,7 +271,7 @@ _run_openai_api() {
   local key="$4"
   local body response curl_cfg
   body=$(GIT_AI_MODEL="$model" GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" \
-    python3 -c '
+    "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 print(json.dumps({
   "model": os.environ["GIT_AI_MODEL"],
@@ -265,7 +292,7 @@ print(json.dumps({
   local curl_status=$?
   rm -f "$curl_cfg"
   [[ $curl_status -eq 0 ]] || die "OpenAI API request failed"
-  python3 -c '
+  "${GIT_AI_PYTHON:-python3}" -c '
 import json, sys
 data = json.loads(sys.stdin.read())
 print(data["choices"][0]["message"]["content"])
@@ -349,18 +376,22 @@ run_provider() {
     antigravity)
       command -v agy >/dev/null 2>&1 ||
         die "Antigravity auth requires the Antigravity CLI. See: https://antigravity.google"
-      local agy_err_file agy_status agy_error
+      local agy_err_file agy_status agy_error agy_arg agy_prompt_file=""
       agy_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-agy.XXXXXX") ||
         die "failed to create temporary error file"
-      trap 'rm -f "$agy_err_file"' EXIT
-      # agy takes the whole prompt through -p and ignores stdin, so prompt and
-      # input are concatenated. --disable-slash-commands stops a diff line that
-      # opens with `/` from being expanded as a slash command.
-      output=$(agy -p "$(printf '%s\n\n%s' "$prompt" "$input")" \
+      # agy ignores stdin, so prompt and input both ride on -p.
+      agy_arg=$(_agy_prompt_arg "$prompt" "$input") || die "failed to stage the Antigravity prompt"
+      # An @-prefixed arg means the payload was staged past the argv limit, and
+      # that file is ours to clean up.
+      [[ "$agy_arg" == @* ]] && agy_prompt_file="${agy_arg#@}"
+      trap 'rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}' EXIT
+      # --disable-slash-commands stops a diff line opening with `/` from being
+      # expanded as a slash command.
+      output=$(agy -p "$agy_arg" \
         --model "$model" --output-format text --disable-slash-commands 2>"$agy_err_file")
       agy_status=$?
       agy_error=$(<"$agy_err_file")
-      rm -f "$agy_err_file"
+      rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}
       if [[ $agy_status -ne 0 ]]; then
         [[ -n "$agy_error" ]] && die "Antigravity generation failed: $agy_error"
         die "Antigravity generation failed"

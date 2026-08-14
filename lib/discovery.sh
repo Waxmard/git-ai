@@ -96,7 +96,7 @@ _fetch_models_modelsdev() {
   fi
   [[ -s "$cache_json" ]] || return 1
 
-  GIT_AI_MDKEY="$mdkey" GIT_AI_FAM="$fam" GIT_AI_CACHE="$cache_json" python3 -c '
+  GIT_AI_MDKEY="$mdkey" GIT_AI_FAM="$fam" GIT_AI_CACHE="$cache_json" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os, re
 SKIP = ("embedding", "-tts", "tts", "-image", "image", "-audio", "audio",
         "-live", "computer-use", "native-audio", "-guard", "gemma")
@@ -147,7 +147,7 @@ _fetch_models_gemini_api() {
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
-  GIT_AI_JSON="$resp" python3 -c '
+  GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 for m in json.loads(os.environ["GIT_AI_JSON"]).get("models", []):
     if "generateContent" in m.get("supportedGenerationMethods", []):
@@ -178,7 +178,7 @@ _fetch_models_anthropic_api() {
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
-  GIT_AI_JSON="$resp" python3 -c '
+  GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 for m in json.loads(os.environ["GIT_AI_JSON"]).get("data", []):
     i = m.get("id")
@@ -199,7 +199,7 @@ _fetch_models_openai_api() {
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
-  GIT_AI_JSON="$resp" python3 -c '
+  GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os, re
 NON_CHAT = ("embedding", "tts", "whisper", "audio", "image", "realtime",
             "dall-e", "moderation", "transcribe", "search", "similarity", "edit")
@@ -252,7 +252,7 @@ _fetch_models_vertex() {
     resp=$(curl -sf -m 10 -K "$cfg" "$url")
     st=$?
     [[ $st -eq 0 ]] || break
-    parsed=$(GIT_AI_PUB="$publisher" GIT_AI_JSON="$resp" python3 -c '
+    parsed=$(GIT_AI_PUB="$publisher" GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 prefix = "gemini" if os.environ["GIT_AI_PUB"] == "google" else "claude"
 # Skip non-text variants the catalog mixes in.
