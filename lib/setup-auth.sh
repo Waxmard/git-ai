@@ -131,6 +131,9 @@ _setup_ensure_auth() {
         printf '  %s: install the CLI — https://claude.ai/code\n' "$label" ;;
       codex)
         printf '  %s: install the CLI — https://github.com/openai/codex\n' "$label" ;;
+      antigravity)
+        printf '  %s: install the CLI — https://antigravity.google\n' "$label"
+        printf '  Then run "agy" once and sign in: headless runs use that cached login.\n' ;;
       # The wizard's `vertex` token lands settings in the shared [vertex] block
       # (one auth/project setup covers both internal vertex providers).
       vertex | vertex-gemini | vertex-anthropic)

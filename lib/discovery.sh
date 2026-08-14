@@ -123,6 +123,7 @@ for m in sorted(set(out), reverse=True):
 _fetch_models() {
   case ${1%%@*} in
     gemini-api)       _fetch_models_gemini_api ;;
+    antigravity)      _fetch_models_antigravity ;;
     vertex-gemini)    _fetch_models_vertex "$1" google ;;
     vertex-anthropic) _fetch_models_vertex "$1" anthropic ;;
     anthropic-api)    _fetch_models_anthropic_api ;;
@@ -154,6 +155,15 @@ for m in json.loads(os.environ["GIT_AI_JSON"]).get("models", []):
         if name:
             print(name)
 ' 2>/dev/null
+}
+
+# Antigravity — `agy models` prints "id<TAB>label" on stdout (progress goes to
+# stderr). Unlike the other CLIs this is a real list endpoint, and the only
+# source for these ids: agy pins reasoning effort in the id itself
+# (gemini-3.7-flash-medium), which no public catalog carries.
+_fetch_models_antigravity() {
+  command -v agy >/dev/null 2>&1 || return 1
+  agy models 2>/dev/null | awk -F'\t' 'NF>1 && $1 != "" {print $1}'
 }
 
 # Anthropic — GET /v1/models (newest-first). Key in a header via curl config.

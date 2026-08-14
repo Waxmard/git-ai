@@ -115,6 +115,26 @@ JSON
   assert_line --index 1 "claude-haiku-4-5"
 }
 
+@test "_fetch_models_antigravity: takes the id column, drops progress output" {
+  cat >"${STUB}/agy" <<'EOF'
+#!/bin/sh
+echo "Fetching available models..." >&2
+printf 'gemini-3.7-flash-medium\tGemini 3.7 Flash (Medium)\n'
+printf 'claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n'
+EOF
+  chmod +x "${STUB}/agy"
+  run _fetch_models_antigravity
+  assert_success
+  assert_line --index 0 "gemini-3.7-flash-medium"
+  assert_line --index 1 "claude-sonnet-4-6"
+}
+
+@test "_fetch_models_antigravity: no CLI yields nothing" {
+  PATH="$STUB" run _fetch_models_antigravity
+  assert_failure
+  assert_output ""
+}
+
 @test "_fetch_models_openai_api: filters out non-chat models" {
   export OPENAI_API_KEY=x
   stub_curl_ok <<'JSON'

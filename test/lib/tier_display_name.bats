@@ -18,6 +18,12 @@ setup() {
   assert_output "claude"
 }
 
+@test "provider_family: antigravity maps to gemini" {
+  run provider_family "antigravity"
+  assert_success
+  assert_output "gemini"
+}
+
 @test "provider_family: codex maps to openai runtime" {
   run provider_family "codex"
   assert_success

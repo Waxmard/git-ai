@@ -76,25 +76,67 @@ resolve_model() {
   printf '%s\n' "$default"
 }
 
-_run_gemini_cli() {
-  local model="$1"
-  local prompt="$2"
-  local input="$3"
-  local gemini_bin err_file out status err
-  gemini_bin=$(resolve_gemini_bin) || die "Gemini CLI not found. Set GEMINI_BIN or add gemini to PATH."
-  err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-gemini.XXXXXX") ||
-    die "failed to create temporary error file"
-  trap 'rm -f "$err_file"' EXIT
-  out=$(printf '%s\n' "$input" | "$gemini_bin" -p "$prompt" -m "$model" -e "" 2>"$err_file")
-  status=$?
-  if [[ $status -ne 0 ]]; then
-    err=$(<"$err_file")
-    rm -f "$err_file"
-    [[ -n "$err" ]] && die "Gemini generation failed: $err"
-    die "Gemini generation failed"
+# generateContent request body, shared by the AI Studio and Vertex endpoints —
+# same payload shape, different host and auth.
+_gemini_request_body() {
+  GIT_AI_PROMPT="$1" GIT_AI_INPUT="$2" python3 -c '
+import json, os
+print(json.dumps({
+  "systemInstruction": {"parts": [{"text": os.environ["GIT_AI_PROMPT"]}]},
+  "contents": [{"role": "user", "parts": [{"text": os.environ["GIT_AI_INPUT"]}]}]
+}))'
+}
+
+# Thinking models return their reasoning as parts flagged `thought`, so the
+# answer is not always parts[0] — join every non-thought text part.
+_extract_gemini_text() {
+  python3 -c '
+import json, sys
+data = json.loads(sys.stdin.read())
+candidates = data.get("candidates") or [{}]
+parts = (candidates[0].get("content") or {}).get("parts") or []
+text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+if not text.strip():
+    sys.exit(1)
+print(text)
+'
+}
+
+# Print the API's own `error.message` from a JSON error body, empty when the
+# body isn't the shape we expect.
+_api_error_message() {
+  python3 -c '
+import json, sys
+try:
+    print((json.loads(sys.stdin.read()).get("error") or {}).get("message", ""))
+except Exception:
+    pass
+' 2>/dev/null
+}
+
+_run_gemini_api() {
+  local model="$1" prompt="$2" input="$3" key="$4"
+  local body cfg response st http detail
+  body=$(_gemini_request_body "$prompt" "$input") || die "Failed to build Gemini API request"
+  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  trap 'rm -f "$cfg"' EXIT
+  # The key is a URL parameter, so the whole URL goes in the curl config file
+  # rather than argv (keeps the key out of `ps`).
+  printf 'url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"\n' \
+    "$model" "$key" >"$cfg"
+  # No -f: a rejected key or unknown model is a 4xx whose body explains why, and
+  # this is the path a stale key lands on.
+  response=$(curl -s -K "$cfg" -H "content-type: application/json" -d "$body" -w '\n%{http_code}')
+  st=$?
+  rm -f "$cfg"
+  [[ $st -eq 0 ]] || die "Gemini API request failed"
+  http="${response##*$'\n'}"
+  response="${response%$'\n'*}"
+  if [[ "$http" != 2* ]]; then
+    detail=$(_api_error_message <<<"$response")
+    die "Gemini API request failed (HTTP ${http})${detail:+: $detail}"
   fi
-  rm -f "$err_file"
-  printf '%s\n' "$out"
+  _extract_gemini_text <<<"$response" || die "Failed to parse Gemini API response"
 }
 
 _vertex_endpoint() {
@@ -152,12 +194,7 @@ _run_vertex_gemini_api() {
   local token body url curl_cfg response
   token=$(_vertex_access_token "$account") ||
     die "Vertex auth: gcloud print-access-token failed."
-  body=$(GIT_AI_PROMPT="$prompt" GIT_AI_INPUT="$input" python3 -c '
-import json, os
-print(json.dumps({
-  "systemInstruction": {"parts": [{"text": os.environ["GIT_AI_PROMPT"]}]},
-  "contents": [{"role": "user", "parts": [{"text": os.environ["GIT_AI_INPUT"]}]}]
-}))') || die "Failed to build Vertex Gemini request"
+  body=$(_gemini_request_body "$prompt" "$input") || die "Failed to build Vertex Gemini request"
   url=$(_vertex_endpoint "$project" "$region" "google" "$model" "generateContent")
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
   trap 'rm -f "$curl_cfg"' EXIT
@@ -166,11 +203,7 @@ print(json.dumps({
   local curl_status=$?
   rm -f "$curl_cfg"
   [[ $curl_status -eq 0 ]] || die "Vertex Gemini API request failed"
-  python3 -c '
-import json, sys
-data = json.loads(sys.stdin.read())
-print(data["candidates"][0]["content"]["parts"][0]["text"])
-' <<<"$response" || die "Failed to parse Vertex Gemini response"
+  _extract_gemini_text <<<"$response" || die "Failed to parse Vertex Gemini response"
 }
 
 _run_anthropic_api() {
@@ -308,12 +341,35 @@ run_provider() {
       fi
       ;;
     gemini-api)
-      load_google_env
       local gemini_api_key
       gemini_api_key=$(resolve_gemini_api_key) ||
         die "Gemini API auth not found. Set GEMINI_API_KEY or store 'gemini-api-key' in your keychain."
-      export GEMINI_API_KEY="$gemini_api_key"
-      _run_gemini_cli "$model" "$prompt" "$input"
+      _run_gemini_api "$model" "$prompt" "$input" "$gemini_api_key"
+      ;;
+    antigravity)
+      command -v agy >/dev/null 2>&1 ||
+        die "Antigravity auth requires the Antigravity CLI. See: https://antigravity.google"
+      local agy_err_file agy_status agy_error
+      agy_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-agy.XXXXXX") ||
+        die "failed to create temporary error file"
+      trap 'rm -f "$agy_err_file"' EXIT
+      # agy takes the whole prompt through -p and ignores stdin, so prompt and
+      # input are concatenated. --disable-slash-commands stops a diff line that
+      # opens with `/` from being expanded as a slash command.
+      output=$(agy -p "$(printf '%s\n\n%s' "$prompt" "$input")" \
+        --model "$model" --output-format text --disable-slash-commands 2>"$agy_err_file")
+      agy_status=$?
+      agy_error=$(<"$agy_err_file")
+      rm -f "$agy_err_file"
+      if [[ $agy_status -ne 0 ]]; then
+        [[ -n "$agy_error" ]] && die "Antigravity generation failed: $agy_error"
+        die "Antigravity generation failed"
+      fi
+      # A tool call agy could not get approval for is soft-denied: exit 0, no
+      # text, and the reason only on stderr — so surface stderr here too.
+      [[ -n "$output" ]] ||
+        die "Antigravity generation failed: empty response${agy_error:+ — $agy_error}"
+      printf '%s\n' "$output"
       ;;
     codex)
       command -v codex >/dev/null 2>&1 ||
