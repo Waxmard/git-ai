@@ -18,8 +18,14 @@ setup() {
   for p in gemini-api vertex-gemini; do
     run recommended_model "$p"
     assert_success
-    assert_output "gemini-3.6-flash"
+    assert_output "gemini-3.7-flash"
   done
+}
+
+@test "recommended_model: antigravity has its own effort-suffixed pin" {
+  run recommended_model antigravity
+  assert_success
+  assert_output "gemini-3.7-flash-medium"
 }
 
 @test "recommended_model: openai family maps to gpt luna" {

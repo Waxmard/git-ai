@@ -15,7 +15,6 @@ These require live external processes, so they are excluded on purpose — not a
 
 - `run_provider()` and its API helpers (`_run_anthropic_api`, `_run_openai_api`) — need real LLM calls or an HTTP mock server
 - `cmd_commit()` / `cmd_pr()` end-to-end — depend on `run_provider` and real git state with staged changes
-- `resolve_gemini_bin()` / `resolve_gemini_api_key()` — platform-specific (Keychain, nvm paths, etc.)
-- `_gemini_has_adc()` — requires mocking `gcloud`
+- `resolve_gemini_api_key()` — platform-specific (Keychain, etc.)
 
 No coverage threshold is enforced, precisely because that exclusion list is deliberate. When adding a helper function, add a corresponding `.bats` file in `test/lib/` or `test/bin/`, or a `test_*.py` file in `test/python/`.

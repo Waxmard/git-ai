@@ -1044,14 +1044,14 @@ EOF
   local stub; stub="$(mktemp -d)"
   printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
   chmod +x "${stub}/gcloud"
-  # "3" picks vertex, "new-proj" is the free-text project, the bare Enter accepts
+  # "4" picks vertex, "new-proj" is the free-text project, the bare Enter accepts
   # the inherited pins the model editor opens pre-marked with.
   run bash -c '
     export PATH="'"${stub}"':$PATH"
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
     _setup_suggest_models() { :; }  # no network — seed already carries the pins to inherit
-    printf "3\nnew-proj\n\n\n\n\n" | GIT_AI_NO_FZF=1 _setup_action_add "'"$CONF"'"
+    printf "4\nnew-proj\n\n\n\n\n" | GIT_AI_NO_FZF=1 _setup_action_add "'"$CONF"'"
   '
   rm -rf "$stub"
   assert_success
