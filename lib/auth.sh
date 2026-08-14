@@ -26,32 +26,6 @@ load_google_env() {
   fi
 }
 
-resolve_gemini_bin() {
-  if [[ -n "${GEMINI_BIN:-}" && -x "$GEMINI_BIN" ]]; then
-    printf '%s\n' "$GEMINI_BIN"
-    return 0
-  fi
-
-  if [[ -d "$HOME/.nvm/versions/node" ]]; then
-    local nvm_bin
-    for nvm_bin in "$HOME/.nvm/versions/node"/*/bin/gemini; do
-      [[ -f "$nvm_bin" && -x "$nvm_bin" ]] && { printf '%s\n' "$nvm_bin"; return 0; }
-    done
-  fi
-
-  local candidate
-  for candidate in "$HOME/.local/bin/gemini" "/opt/homebrew/bin/gemini" "/usr/local/bin/gemini"; do
-    [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
-  done
-
-  if command -v gemini >/dev/null 2>&1; then
-    command -v gemini
-    return 0
-  fi
-
-  return 1
-}
-
 # resolve_api_key SERVICE ENVVAR
 # Resolve a provider API key, first hit wins: the named env var, then the OS
 # secret store keyed on SERVICE (macOS Keychain, libsecret, pass, KDE Wallet).
@@ -196,6 +170,12 @@ provider_ready() {
     codex)
       command -v codex >/dev/null 2>&1 && return 0
       printf 'Codex CLI not installed\n' >&2 ;;
+    antigravity)
+      # agy authenticates through a cached OAuth login with no key or token to
+      # probe, so the binary is all this can check (same as the other CLIs); an
+      # unauthenticated run fails at call time with an auth error.
+      command -v agy >/dev/null 2>&1 && return 0
+      printf 'Antigravity CLI not installed\n' >&2 ;;
     anthropic-api)
       resolve_api_key anthropic-api-key ANTHROPIC_API_KEY >/dev/null 2>&1 && return 0
       printf 'ANTHROPIC_API_KEY not set (env or keychain)\n' >&2 ;;
@@ -203,14 +183,8 @@ provider_ready() {
       resolve_api_key openai-api-key OPENAI_API_KEY >/dev/null 2>&1 && return 0
       printf 'OPENAI_API_KEY not set (env or keychain)\n' >&2 ;;
     gemini-api)
-      # run_provider's gemini-api path shells out to the Gemini CLI, so a key
-      # alone isn't enough — the binary must resolve too.
-      if ! resolve_gemini_bin >/dev/null 2>&1; then
-        printf 'Gemini CLI not found (set GEMINI_BIN or add gemini to PATH)\n' >&2
-        return 1
-      fi
       resolve_gemini_api_key >/dev/null 2>&1 && return 0
-      printf 'Gemini auth not found (GEMINI_API_KEY or keychain)\n' >&2 ;;
+      printf 'GEMINI_API_KEY not set (env or keychain)\n' >&2 ;;
     vertex|vertex-gemini|vertex-anthropic)
       local account project
       account=$(vertex_resolve "$provider" account)
@@ -232,17 +206,10 @@ provider_ready() {
   return 1
 }
 
-_gemini_has_adc() {
-  if [[ -n "$(_vertex_access_token)" ]]; then
-    return 0
-  fi
-  return 1
-}
-
 # _vertex_has_auth [ACCOUNT]
 # True when a Vertex access token can be minted for the given auth path. With
-# no ACCOUNT this is ADC-only (same guard as _gemini_has_adc); with an ACCOUNT
-# it validates the per-account user credential instead.
+# no ACCOUNT this is ADC-only; with an ACCOUNT it validates the per-account
+# user credential instead.
 _vertex_has_auth() {
   [[ -n "$(_vertex_access_token "${1:-}")" ]]
 }
@@ -279,6 +246,7 @@ provider_display_name() {
     # routing detail inferred from the model id, never shown to the user.
     vertex | vertex-gemini | vertex-anthropic) name="Vertex AI" ;;
     gemini-api)    name="Gemini API" ;;
+    antigravity)   name="Antigravity" ;;
     claude-code)   name="Claude Code" ;;
     anthropic-api) name="Anthropic API" ;;
     codex)         name="Codex CLI" ;;
@@ -314,6 +282,9 @@ recommended_model() {
     claude-code | anthropic-api | vertex-anthropic) family=anthropic ;;
     gemini-api | vertex-gemini) family=google ;;
     openai-api | codex) family=openai ;;
+    # Its own family: agy's ids carry a reasoning-effort suffix
+    # (gemini-3.7-flash-medium), so a bare google id is not a valid pin.
+    antigravity) family=antigravity ;;
     *) return 0 ;;
   esac
 
@@ -339,14 +310,14 @@ provider_is_valid() {
         *) return 1 ;;
       esac
       ;;
-    vertex-gemini|vertex-anthropic|gemini-api|claude-code|anthropic-api|codex|openai-api|last) return 0 ;;
+    vertex-gemini|vertex-anthropic|gemini-api|antigravity|claude-code|anthropic-api|codex|openai-api|last) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 provider_family() {
   case ${1%%@*} in
-    vertex-gemini|gemini-api) printf '%s\n' "gemini" ;;
+    vertex-gemini|gemini-api|antigravity) printf '%s\n' "gemini" ;;
     vertex-anthropic|claude-code|anthropic-api) printf '%s\n' "claude" ;;
     codex|openai-api) printf '%s\n' "openai" ;;
     *) return 1 ;;

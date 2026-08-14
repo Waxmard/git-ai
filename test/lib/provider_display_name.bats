@@ -30,6 +30,12 @@ setup() {
   assert_output "Gemini API"
 }
 
+@test "provider_display_name: antigravity" {
+  run provider_display_name "antigravity"
+  assert_success
+  assert_output "Antigravity"
+}
+
 @test "provider_display_name: claude-code" {
   run provider_display_name "claude-code"
   assert_success

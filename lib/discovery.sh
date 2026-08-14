@@ -96,7 +96,7 @@ _fetch_models_modelsdev() {
   fi
   [[ -s "$cache_json" ]] || return 1
 
-  GIT_AI_MDKEY="$mdkey" GIT_AI_FAM="$fam" GIT_AI_CACHE="$cache_json" python3 -c '
+  GIT_AI_MDKEY="$mdkey" GIT_AI_FAM="$fam" GIT_AI_CACHE="$cache_json" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os, re
 SKIP = ("embedding", "-tts", "tts", "-image", "image", "-audio", "audio",
         "-live", "computer-use", "native-audio", "-guard", "gemma")
@@ -123,6 +123,7 @@ for m in sorted(set(out), reverse=True):
 _fetch_models() {
   case ${1%%@*} in
     gemini-api)       _fetch_models_gemini_api ;;
+    antigravity)      _fetch_models_antigravity ;;
     vertex-gemini)    _fetch_models_vertex "$1" google ;;
     vertex-anthropic) _fetch_models_vertex "$1" anthropic ;;
     anthropic-api)    _fetch_models_anthropic_api ;;
@@ -146,7 +147,7 @@ _fetch_models_gemini_api() {
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
-  GIT_AI_JSON="$resp" python3 -c '
+  GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 for m in json.loads(os.environ["GIT_AI_JSON"]).get("models", []):
     if "generateContent" in m.get("supportedGenerationMethods", []):
@@ -154,6 +155,15 @@ for m in json.loads(os.environ["GIT_AI_JSON"]).get("models", []):
         if name:
             print(name)
 ' 2>/dev/null
+}
+
+# Antigravity — `agy models` prints "id<TAB>label" on stdout (progress goes to
+# stderr). Unlike the other CLIs this is a real list endpoint, and the only
+# source for these ids: agy pins reasoning effort in the id itself
+# (gemini-3.7-flash-medium), which no public catalog carries.
+_fetch_models_antigravity() {
+  command -v agy >/dev/null 2>&1 || return 1
+  agy models 2>/dev/null | awk -F'\t' 'NF>1 && $1 != "" {print $1}'
 }
 
 # Anthropic — GET /v1/models (newest-first). Key in a header via curl config.
@@ -168,7 +178,7 @@ _fetch_models_anthropic_api() {
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
-  GIT_AI_JSON="$resp" python3 -c '
+  GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 for m in json.loads(os.environ["GIT_AI_JSON"]).get("data", []):
     i = m.get("id")
@@ -189,7 +199,7 @@ _fetch_models_openai_api() {
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
-  GIT_AI_JSON="$resp" python3 -c '
+  GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os, re
 NON_CHAT = ("embedding", "tts", "whisper", "audio", "image", "realtime",
             "dall-e", "moderation", "transcribe", "search", "similarity", "edit")
@@ -242,7 +252,7 @@ _fetch_models_vertex() {
     resp=$(curl -sf -m 10 -K "$cfg" "$url")
     st=$?
     [[ $st -eq 0 ]] || break
-    parsed=$(GIT_AI_PUB="$publisher" GIT_AI_JSON="$resp" python3 -c '
+    parsed=$(GIT_AI_PUB="$publisher" GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
 import json, os
 prefix = "gemini" if os.environ["GIT_AI_PUB"] == "google" else "claude"
 # Skip non-text variants the catalog mixes in.

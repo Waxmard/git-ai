@@ -84,10 +84,10 @@ EOF
   assert_equal "$(cat "$GCLOUD_LOG")" "auth print-access-token --account=me@acme.com"
 }
 
-@test "_gemini_has_adc rejects active-user gcloud auth tokens" {
+@test "_vertex_has_auth rejects active-user gcloud auth tokens when ADC is absent" {
   write_old_token_only_gcloud_stub
 
-  PATH="${STUB_BIN}:$PATH" run _gemini_has_adc
+  PATH="${STUB_BIN}:$PATH" run _vertex_has_auth
 
   assert_failure
   assert_equal "$(cat "$GCLOUD_LOG")" "auth application-default print-access-token"

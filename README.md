@@ -51,11 +51,12 @@ With no auth method on the command line, git-ai uses your configured default or 
 
 `git-ai setup` is the way in — it shows which of these are ready, authenticates you, and writes the config. The table is a reference for what exists; you don't configure any of it by hand unless you want to (see [Manual configuration](#manual-configuration-advanced)).
 
-git-ai needs at least one of these. `gemini-api` (Gemini CLI) and the two Vertex methods are the common choices; the rest are available if you already use that provider's CLI or API.
+git-ai needs at least one of these. `gemini-api` and the two Vertex methods are the common choices; the rest are available if you already use that provider's CLI or API.
 
 | Auth Method | Runtime | Credentials |
 |-------------|---------|-------------|
-| `gemini-api` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `GEMINI_API_KEY` or system keychain |
+| `gemini-api` | `curl` + `python3` | `GEMINI_API_KEY` or system keychain |
+| `antigravity` | [Antigravity CLI](https://antigravity.google) (`agy`) | Antigravity CLI session |
 | `vertex-gemini` | `curl` + `python3` + `gcloud` | Google ADC / Vertex credentials |
 | `vertex-anthropic` | `curl` + `python3` + `gcloud` | Google ADC / Vertex credentials |
 | `claude-code` | [Claude Code CLI](https://claude.ai/code) | Claude Code CLI session |
@@ -66,6 +67,8 @@ git-ai needs at least one of these. `gemini-api` (Gemini CLI) and the two Vertex
 `curl` and `python3` are standard on macOS and most Linux systems.
 
 > **Vertex AI support covers only the Gemini (`vertex-gemini`) and Anthropic (`vertex-anthropic`) model families.** Other Vertex publishers (Meta Llama, Mistral, etc.) are not yet supported. To pin a GCP account or run multiple projects, see [Pinning a GCP account (Vertex)](#pinning-a-gcp-account-vertex).
+
+> **`antigravity` runs on the Google account you sign into `agy` with**, not an API key — run `agy` once interactively so the login is cached, since a headless run cannot authenticate on its own. Its model ids pin reasoning effort in the id itself (`gemini-3.7-flash-medium`), and `agy models` is where git-ai discovers them.
 
 For API-key providers (`gemini-api`, `anthropic-api`, `openai-api`), `git-ai setup` prompts for the key and stores it in your OS keychain or shell rc. For Google ADC / service-account credentials, use a `vertex-gemini` or `vertex-anthropic` method and let setup run `gcloud auth application-default login`. To wire any of this up by hand instead, see [Manual configuration](#manual-configuration-advanced).
 
@@ -353,7 +356,7 @@ gpt-5.4-mini
 [vertex-anthropic]
 ```
 
-- `[provider]` headers must be one of: `vertex-gemini`, `vertex-anthropic`, `gemini-api`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
+- `[provider]` headers must be one of: `vertex-gemini`, `vertex-anthropic`, `gemini-api`, `antigravity`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
 - Model IDs under a header are passed through to the provider verbatim, so you can list future model IDs (e.g. a newly released `claude-sonnet-5-0`) without waiting for a git-ai release.
 - Delete the file to restore the full shipped catalog.
 - See [`examples/options.conf`](examples/options.conf) for a starter.

@@ -54,6 +54,18 @@ EOF
   assert_success
 }
 
+@test "provider_ready: antigravity succeeds when the CLI is present" {
+  write_cli_stub agy
+  PATH="${STUB_BIN}:$PATH" run provider_ready antigravity
+  assert_success
+}
+
+@test "provider_ready: antigravity fails when the CLI is absent" {
+  PATH="$STUB_BIN" run provider_ready antigravity
+  assert_failure
+  assert_output --partial "Antigravity CLI not installed"
+}
+
 # --- key-based providers ---------------------------------------------------
 
 @test "provider_ready: anthropic-api succeeds with an env key" {
@@ -73,22 +85,16 @@ EOF
   assert_success
 }
 
-@test "provider_ready: gemini-api succeeds with an env key and a CLI" {
+@test "provider_ready: gemini-api succeeds with an env key" {
   export GEMINI_API_KEY="g-key"
-  write_cli_stub gemini
-  export GEMINI_BIN="${STUB_BIN}/gemini"
   run provider_ready gemini-api
   assert_success
 }
 
-@test "provider_ready: gemini-api fails with a key but no CLI" {
-  export GEMINI_API_KEY="g-key"
-  # resolve_gemini_bin probes fixed absolute paths (/opt/homebrew, ~/.local),
-  # so a PATH stub can't make "not installed" hermetic — override the resolver.
-  resolve_gemini_bin() { return 1; }
-  run provider_ready gemini-api
+@test "provider_ready: gemini-api fails with no key anywhere" {
+  PATH="$STUB_BIN" run provider_ready gemini-api
   assert_failure
-  assert_output --partial "Gemini CLI not found"
+  assert_output --partial "GEMINI_API_KEY not set"
 }
 
 # --- vertex providers ------------------------------------------------------

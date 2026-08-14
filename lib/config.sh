@@ -16,7 +16,7 @@ order_by_recent() {
 
 list_providers() {
   local tool_name="${1:-}"
-  local all=(vertex-gemini vertex-anthropic gemini-api claude-code anthropic-api codex openai-api)
+  local all=(vertex-gemini vertex-anthropic gemini-api antigravity claude-code anthropic-api codex openai-api)
 
   if [[ -n "$tool_name" ]]; then
     local last ordered=()
@@ -439,7 +439,7 @@ vertex_resolve() {
 # default provider/model catalog for this listing.
 list_options() {
   local tool_name="${1:-commit}"
-  local providers=(vertex-gemini vertex-anthropic gemini-api claude-code anthropic-api codex openai-api)
+  local providers=(vertex-gemini vertex-anthropic gemini-api antigravity claude-code anthropic-api codex openai-api)
 
   # Build candidate table as a newline-delimited "value<TAB>label" string
   # (bash 3.2 on macOS has no associative arrays).
