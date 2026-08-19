@@ -1,5 +1,18 @@
 # Changelog
 
+## [6.8.0](https://github.com/Waxmard/git-ai/compare/v6.7.2...v6.8.0) (2026-08-19)
+
+
+### Features
+
+* add Antigravity provider and call Gemini API directly ([#127](https://github.com/Waxmard/git-ai/issues/127)) ([2119e50](https://github.com/Waxmard/git-ai/commit/2119e502090bf01f1528f712e071f83cad7afc92))
+* pin Vertex AI models per GCP project in setup ([#124](https://github.com/Waxmard/git-ai/issues/124)) ([b52e2ce](https://github.com/Waxmard/git-ai/commit/b52e2cef9228ccfd9cf2fa9df09759ec534c38c5))
+
+
+### Documentation
+
+* hand-edit AGENTS.md directly instead of generating docs ([#126](https://github.com/Waxmard/git-ai/issues/126)) ([9235000](https://github.com/Waxmard/git-ai/commit/9235000461e6da6efd8c52afdc9f1fba9f364d1a))
+
 ## [6.7.2](https://github.com/Waxmard/git-ai/compare/v6.7.1...v6.7.2) (2026-08-04)
 
 
