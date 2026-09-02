@@ -331,6 +331,26 @@ def test_build_mr_prompt_no_log_uses_fallback() -> None:
     assert "<commit_log>" not in user
 
 
+@pytest.mark.parametrize(
+    ("commit_log", "existing_pr"),
+    [
+        (None, None),
+        (_CONVENTIONAL_LOG, None),
+        (None, "feat: old title"),
+        (_CONVENTIONAL_LOG, "feat: old title"),
+    ],
+)
+def test_build_mr_prompt_leaves_breaking_decision_to_owner(
+    commit_log: str | None, existing_pr: str | None
+) -> None:
+    system, _ = build_mr_prompt(
+        diff=_SAMPLE_DIFF, commit_log=commit_log, existing_pr=existing_pr
+    )
+
+    assert "Never add ! to the title automatically" in system
+    assert "**Possible breaking change:** Confirm compatibility before merge" in system
+
+
 def test_build_mr_prompt_existing_pr_picks_update_prompt() -> None:
     _, user = build_mr_prompt(
         diff=_SAMPLE_DIFF,
