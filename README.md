@@ -170,6 +170,8 @@ raw = my_llm(system, user)               # your call: SDK, agent framework, REST
 commit_msg = git_ai.parse_commit_response(raw)
 ```
 
+`diff_stat=` is optional and normally derived from `diff_text`. Supply it when intentionally omitting a large generated patch; an empty diff remains valid when the stat lists the changed files.
+
 `parse_commit_response` only parses — fences off, `===COMMIT===` marker unwrapped, agent trailers dropped. The two formatting rules the `git-ai` CLI enforces deterministically are separate calls, so a library consumer opts into them:
 
 ```python
@@ -205,7 +207,7 @@ pr_text = git_ai.parse_mr_response(raw)
 delta = git_ai.render_pr_diff(current_pr_body, pr_text, color=False) or None
 ```
 
-`diff_stat` and `release_context` are optional — when omitted, the diff-stat is derived from the diff and a generic "no release tags found" context is used.
+`diff_stat` and `release_context` are optional — when omitted, the diff stat is derived from the diff and a generic "no release tags found" context is used. As with commit prompts, a supplied stat permits an intentionally omitted diff.
 
 `diff_scope` matters only alongside `existing_pr`, and it is the one argument worth getting right: it declares what `diff` and `commit_log` span, and the update prompt is written to match. Under `"branch"` the model may prune content the branch no longer contains — so declaring it while passing an incremental diff makes it rewrite away everything `existing_pr` covers but the diff omits. The default is `"since_existing"`, whose failure mode is only a stale sentence left unpruned. Model selection, retries, auth, and error handling are the caller's responsibility (inside `my_llm`).
 
@@ -271,7 +273,7 @@ async def commit_msg(diff: str) -> str:
 
 ## Excluding noisy files (`.git-ai-ignore`)
 
-Lockfiles and other generated artifacts can dominate a diff and push it past the LLM provider's input cap. git-ai always excludes the following filenames from `git diff --staged` (commit) and `git diff base...HEAD` (pr):
+Lockfiles and other generated artifacts can dominate a diff and push it past the LLM provider's input cap. git-ai includes their patch when the aggregate lockfile content is at most 25 KB. Above that limit, it sends only the compact diff stat so lockfile-only commits and PRs remain visible without flooding the context window. This applies to the following filenames:
 
 ```
 package-lock.json    yarn.lock         pnpm-lock.yaml      npm-shrinkwrap.json
@@ -287,7 +289,7 @@ build/dist.js
 generated/**/*.ts
 vendor/
 
-# Re-include this lockfile when you want to review it
+# Always re-include this lockfile, even above the adaptive limit
 !package-lock.json
 ```
 

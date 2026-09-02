@@ -26,6 +26,7 @@ _CONVENTIONAL_TYPES = frozenset(
 DEFAULT_RELEASE_CONTEXT = (
     "Release context: no release tags found — treat all changes as unreleased"
 )
+LOCKFILE_DIFF_LIMIT_BYTES = 25_000
 
 
 def _git(repo_path: str | Path, *args: str) -> str:
@@ -146,6 +147,38 @@ def get_staged_diff(
     return _git(repo_path, "diff", "--staged", *pathspec)
 
 
+def _include_small_lockfile_diff(
+    repo_path: str | Path, *diff_args: str
+) -> tuple[str, list[str]]:
+    repo_root = get_repo_root(repo_path)
+    user_patterns = load_ignore_patterns(repo_root, include_defaults=False)
+    candidate = _git(repo_path, "diff", *diff_args, *to_pathspec_args(user_patterns))
+    filtered = _git(
+        repo_path,
+        "diff",
+        *diff_args,
+        *to_pathspec_args(load_ignore_patterns(repo_root)),
+    )
+    lockfile_bytes = len(candidate.encode()) - len(filtered.encode())
+    if lockfile_bytes <= LOCKFILE_DIFF_LIMIT_BYTES:
+        return candidate, user_patterns
+    return filtered, user_patterns
+
+
+def get_staged_diff_context(repo_path: str | Path) -> tuple[str, str]:
+    diff, user_patterns = _include_small_lockfile_diff(repo_path, "--staged")
+    stat = _git(
+        repo_path,
+        "diff",
+        "--staged",
+        "--stat",
+        *to_pathspec_args(user_patterns),
+    )
+    if not stat.strip():
+        raise RuntimeError("No staged changes to summarize")
+    return diff, stat
+
+
 def get_release_context(repo_path: str | Path) -> str:
     result = subprocess.run(
         ["git", "describe", "--tags", "--abbrev=0"],
@@ -264,6 +297,23 @@ def get_diff(
         f"{base}{sep}HEAD",
         *to_pathspec_args(_resolve_exclude_patterns(repo_path, exclude_patterns)),
     )
+
+
+def get_diff_context(
+    repo_path: str | Path, base: str, three_dot: bool = True
+) -> tuple[str, str]:
+    sep = "..." if three_dot else ".."
+    diff, user_patterns = _include_small_lockfile_diff(
+        repo_path, "-U0", f"{base}{sep}HEAD"
+    )
+    stat = _git(
+        repo_path,
+        "diff",
+        "--stat",
+        f"{base}{sep}HEAD",
+        *to_pathspec_args(user_patterns),
+    )
+    return diff, stat
 
 
 def count_conventional_commits(log: str) -> tuple[int, int]:
