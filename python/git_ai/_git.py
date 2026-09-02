@@ -9,15 +9,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._ignore import load_ignore_patterns, to_pathspec_args
+    from ._ignore import DEFAULT_EXCLUDES, load_ignore_patterns, to_pathspec_args
 elif __package__ in (None, ""):
     import importlib
 
     _ignore_mod = importlib.import_module("_ignore")
+    DEFAULT_EXCLUDES = _ignore_mod.DEFAULT_EXCLUDES
     to_pathspec_args = _ignore_mod.to_pathspec_args
     load_ignore_patterns = _ignore_mod.load_ignore_patterns
 else:
-    from ._ignore import load_ignore_patterns, to_pathspec_args
+    from ._ignore import DEFAULT_EXCLUDES, load_ignore_patterns, to_pathspec_args
 
 _CONVENTIONAL_TYPES = frozenset(
     ["feat", "fix", "refactor", "docs", "chore", "ci", "test", "style", "perf", "build"]
@@ -26,6 +27,7 @@ _CONVENTIONAL_TYPES = frozenset(
 DEFAULT_RELEASE_CONTEXT = (
     "Release context: no release tags found — treat all changes as unreleased"
 )
+LOCKFILE_DIFF_LIMIT_BYTES = 25_000
 
 
 def _git(repo_path: str | Path, *args: str) -> str:
@@ -43,6 +45,29 @@ def _git(repo_path: str | Path, *args: str) -> str:
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout
+
+
+def _git_output_fits(repo_path: str | Path, max_bytes: int, *args: str) -> bool:
+    process = subprocess.Popen(
+        ["git", *args],
+        cwd=str(repo_path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if process.stdout is None:
+        process.kill()
+        process.communicate()
+        raise RuntimeError("Failed to capture git output")
+    output = process.stdout.read(max_bytes + 1)
+    if len(output) > max_bytes:
+        process.kill()
+        process.communicate()
+        return False
+    _, stderr = process.communicate()
+    if process.returncode != 0:
+        message = stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"git {' '.join(args)} failed: {message}")
+    return True
 
 
 def get_git_dir(repo_path: str | Path) -> str:
@@ -144,6 +169,62 @@ def get_staged_diff(
     if quiet.returncode == 0:
         raise RuntimeError("No staged changes to summarize")
     return _git(repo_path, "diff", "--staged", *pathspec)
+
+
+def _include_small_lockfile_diff(
+    repo_path: str | Path, *diff_args: str
+) -> tuple[str, list[str]]:
+    repo_root = get_repo_root(repo_path)
+    user_patterns = load_ignore_patterns(repo_root, include_defaults=False)
+    active_patterns = load_ignore_patterns(repo_root)
+    lockfile_patterns = [
+        pattern
+        for pattern in DEFAULT_EXCLUDES
+        if pattern in active_patterns and pattern not in user_patterns
+    ]
+    if lockfile_patterns:
+        includes = [
+            f":(top,glob)**/{pattern}{suffix}"
+            for pattern in lockfile_patterns
+            for suffix in ("", "/**")
+        ]
+        user_excludes = to_pathspec_args(user_patterns)[2:]
+        if not _git_output_fits(
+            repo_path,
+            LOCKFILE_DIFF_LIMIT_BYTES,
+            "diff",
+            *diff_args,
+            "--",
+            *includes,
+            *user_excludes,
+        ):
+            return (
+                _git(
+                    repo_path,
+                    "diff",
+                    *diff_args,
+                    *to_pathspec_args(active_patterns),
+                ),
+                user_patterns,
+            )
+    return (
+        _git(repo_path, "diff", *diff_args, *to_pathspec_args(user_patterns)),
+        user_patterns,
+    )
+
+
+def get_staged_diff_context(repo_path: str | Path) -> tuple[str, str]:
+    diff, user_patterns = _include_small_lockfile_diff(repo_path, "--staged")
+    stat = _git(
+        repo_path,
+        "diff",
+        "--staged",
+        "--stat",
+        *to_pathspec_args(user_patterns),
+    )
+    if not stat.strip():
+        raise RuntimeError("No staged changes to summarize")
+    return diff, stat
 
 
 def get_release_context(repo_path: str | Path) -> str:
@@ -264,6 +345,23 @@ def get_diff(
         f"{base}{sep}HEAD",
         *to_pathspec_args(_resolve_exclude_patterns(repo_path, exclude_patterns)),
     )
+
+
+def get_diff_context(
+    repo_path: str | Path, base: str, three_dot: bool = True
+) -> tuple[str, str]:
+    sep = "..." if three_dot else ".."
+    diff, user_patterns = _include_small_lockfile_diff(
+        repo_path, "-U0", f"{base}{sep}HEAD"
+    )
+    stat = _git(
+        repo_path,
+        "diff",
+        "--stat",
+        f"{base}{sep}HEAD",
+        *to_pathspec_args(user_patterns),
+    )
+    return diff, stat
 
 
 def count_conventional_commits(log: str) -> tuple[int, int]:

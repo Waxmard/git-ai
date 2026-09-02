@@ -3,6 +3,7 @@
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pytest
 from git_ai import (
@@ -16,7 +17,14 @@ from git_ai import (
     resolve_commit_base,
 )
 from git_ai._commit_cli import _emit_branch_context
-from git_ai._git import build_draft_body, count_conventional_commits, largest_diff_files
+from git_ai._git import (
+    LOCKFILE_DIFF_LIMIT_BYTES,
+    _git_output_fits,
+    build_draft_body,
+    count_conventional_commits,
+    get_staged_diff_context,
+    largest_diff_files,
+)
 from git_ai._git_branch import (
     _branch_ahead_behind,
     _list_branch_refs,
@@ -47,6 +55,18 @@ GITAI_COMMIT another bad one
 """
 
 _EMPTY = ""
+
+
+def test_git_output_fits_caps_stdout_read() -> None:
+    process = Mock()
+    process.stdout.read.return_value = b"x" * 11
+    process.communicate.return_value = (b"", b"")
+
+    with patch("git_ai._git.subprocess.Popen", return_value=process):
+        assert not _git_output_fits(".", 10, "diff")
+
+    process.stdout.read.assert_called_once_with(11)
+    process.kill.assert_called_once()
 
 
 def test_count_all_conventional() -> None:
@@ -246,6 +266,29 @@ def test_get_staged_diff_excludes_default_lockfiles(tmp_path: Path) -> None:
 
     assert "app.py" in diff
     assert "package-lock.json" not in diff
+
+
+def test_staged_context_includes_small_lockfile_content(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _stage_files(repo, {"uv.lock": 'name = "urllib3"\nversion = "2.6.0"\n'})
+
+    diff, stat = get_staged_diff_context(repo)
+
+    assert 'name = "urllib3"' in diff
+    assert "uv.lock" in stat
+
+
+def test_staged_context_omits_large_lockfile_content(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    content = "x" * (LOCKFILE_DIFF_LIMIT_BYTES + 1)
+    _stage_files(repo, {"package-lock.json": content})
+
+    diff, stat = get_staged_diff_context(repo)
+
+    assert diff == ""
+    assert "package-lock.json" in stat
 
 
 def _stage_nested(repo: Path, files: dict[str, str]) -> None:

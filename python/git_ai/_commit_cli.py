@@ -5,11 +5,11 @@
 into the commit prompt without reimplementing the base-resolution cascade in
 bash; it is best-effort, printing nothing and exiting 0 on any failure so it
 never blocks a commit. ``format`` runs the raw provider response through the
-parse + wrap + subject-limit chain, and ``ignore-pathspec`` / ``instructions``
-serve the ``.git-ai-ignore`` and ``.git-ai-instructions`` readers, so those
-rules have one implementation rather than a bash mirror kept in lockstep.
+parse + wrap + subject-limit chain, ``staged-context`` emits the bounded diff
+and stat, and ``ignore-pathspec`` / ``instructions`` serve the repo-local
+readers, so those rules have one implementation rather than a bash mirror.
 
-Unlike ``branch-context``, the latter three fail loudly: a swallowed error
+Unlike ``branch-context``, the other commands fail loudly: a swallowed error
 there would silently change which files reach the model.
 """
 
@@ -30,7 +30,12 @@ if TYPE_CHECKING:
         parse_commit_response,
         wrap_commit_body,
     )
-    from ._git import get_current_branch, get_diff_stat, get_git_dir
+    from ._git import (
+        get_current_branch,
+        get_diff_stat,
+        get_git_dir,
+        get_staged_diff_context,
+    )
     from ._git_branch import (
         format_branch_context,
         get_branch_commit_subjects,
@@ -51,6 +56,7 @@ elif __package__ in (None, ""):
     get_current_branch = _git.get_current_branch
     get_diff_stat = _git.get_diff_stat
     get_git_dir = _git.get_git_dir
+    get_staged_diff_context = _git.get_staged_diff_context
     load_ignore_patterns = _ignore.load_ignore_patterns
     load_repo_instructions = importlib.import_module(
         "_instructions"
@@ -66,7 +72,12 @@ else:
         parse_commit_response,
         wrap_commit_body,
     )
-    from ._git import get_current_branch, get_diff_stat, get_git_dir
+    from ._git import (
+        get_current_branch,
+        get_diff_stat,
+        get_git_dir,
+        get_staged_diff_context,
+    )
     from ._git_branch import (
         format_branch_context,
         get_branch_commit_subjects,
@@ -143,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
         "instructions", help="print the repo's .git-ai-instructions contents"
     )
     instructions.add_argument("--repo", default=".")
+    staged = sub.add_parser(
+        "staged-context", help="print adaptive staged diff and write its stat"
+    )
+    staged.add_argument("--repo", default=".")
+    staged.add_argument("--stat-file", required=True)
     args = parser.parse_args(argv)
 
     if args.command == "branch-context":
@@ -163,7 +179,11 @@ def main(argv: list[str] | None = None) -> int:
             text = load_repo_instructions(args.repo)
             if text:
                 sys.stdout.write(f"{text}\n")
-    except (ValueError, OSError) as exc:
+        elif args.command == "staged-context":
+            diff, stat = get_staged_diff_context(args.repo)
+            Path(args.stat_file).write_text(stat, encoding="utf-8")
+            sys.stdout.write(diff)
+    except (RuntimeError, ValueError, OSError) as exc:
         sys.stderr.write(f"git-ai: {exc}\n")
         return 1
     return 0

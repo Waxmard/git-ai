@@ -58,14 +58,14 @@ def build_mr_prompt_input(
     ``diff_scope`` picks the update prompt that matches what ``diff`` spans; see
     :func:`git_ai.build_mr_prompt`.
     """
-    if not diff.strip():
-        raise ValueError("diff is empty")
     if diff_scope not in DIFF_SCOPES:
         raise ValueError(f"diff_scope must be one of {DIFF_SCOPES}, got {diff_scope!r}")
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
     if diff_stat is None:
         diff_stat = derive_diff_stat(diff)
+    if not diff.strip() and not diff_stat.strip():
+        raise ValueError("diff and diff_stat are empty")
 
     log = commit_log or ""
     conventional_count, total_count = count_conventional_commits(log)
