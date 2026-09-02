@@ -57,6 +57,19 @@ teardown() {
   assert_output --partial "file.txt"
 }
 
+@test "cmd_commit: includes a small pure lockfile change" {
+  git restore --staged file.txt
+  printf 'name = "urllib3"\nversion = "2.6.0"\n' > uv.lock
+  git add uv.lock
+
+  run cmd_commit "codex:gpt-5.4-mini"
+
+  assert_success
+  assert_output --partial "<changed_files>"
+  assert_output --partial "uv.lock"
+  assert_output --partial "urllib3"
+}
+
 @test "cmd_commit: accepts profile-qualified provider (base@profile:model)" {
   run cmd_commit "vertex-anthropic@acme:claude-sonnet-4-6"
   assert_success

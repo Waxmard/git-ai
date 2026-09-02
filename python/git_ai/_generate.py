@@ -116,6 +116,7 @@ def strip_fences(text: str) -> str:
 def build_commit_prompt(
     diff: str,
     *,
+    diff_stat: str | None = None,
     release_context: str | None = None,
     branch_name: str | None = None,
     branch_commits: str | None = None,
@@ -132,11 +133,13 @@ def build_commit_prompt(
     through :func:`parse_commit_response`.
 
     Raises:
-        ValueError: if ``diff`` is empty.
+        ValueError: if ``diff`` and ``diff_stat`` are empty.
         RuntimeError: if the diff exceeds ``GIT_AI_MAX_DIFF_BYTES``.
     """
-    if not diff.strip():
-        raise ValueError("diff is empty")
+    if diff_stat is None:
+        diff_stat = derive_diff_stat(diff)
+    if not diff.strip() and not diff_stat.strip():
+        raise ValueError("diff and diff_stat are empty")
 
     _check_diff_size(diff)
 
@@ -155,6 +158,7 @@ def build_commit_prompt(
     )
     if branch_block:
         parts.append(branch_block)
+    parts.append(f"<changed_files>\n{diff_stat}\n</changed_files>")
     parts.append(f"<diff>\n{diff}\n</diff>")
 
     return _load_prompt("commit.txt"), "\n\n".join(parts)
@@ -198,16 +202,17 @@ def build_mr_prompt(
     costs a stale sentence the model failed to prune.
 
     Raises:
-        ValueError: if ``diff`` is empty or ``diff_scope`` is not a known scope.
+        ValueError: if ``diff`` and ``diff_stat`` are empty, or ``diff_scope``
+            is not a known scope.
         RuntimeError: if the diff exceeds ``GIT_AI_MAX_DIFF_BYTES``.
     """
-    if not diff.strip():
-        raise ValueError("diff is empty")
     _check_diff_size(diff)
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
     if diff_stat is None:
         diff_stat = derive_diff_stat(diff)
+    if not diff.strip() and not diff_stat.strip():
+        raise ValueError("diff and diff_stat are empty")
 
     prompt_name, user_input = build_mr_prompt_input(
         diff=diff,

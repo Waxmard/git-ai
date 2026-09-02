@@ -97,6 +97,7 @@ def test_build_commit_prompt_returns_non_empty_pair() -> None:
 
 def test_build_commit_prompt_embeds_diff() -> None:
     _, user = build_commit_prompt(_SAMPLE_DIFF)
+    assert "<changed_files>" in user
     assert "<diff>" in user
     assert "foo.py" in user
     assert "bar.md" in user
@@ -115,9 +116,16 @@ def test_build_commit_prompt_respects_release_context_override() -> None:
     assert "<release_context>Release context: v1.0.0</release_context>" in user
 
 
-def test_build_commit_prompt_rejects_empty_diff() -> None:
-    with pytest.raises(ValueError, match="diff is empty"):
+def test_build_commit_prompt_rejects_empty_diff_and_stat() -> None:
+    with pytest.raises(ValueError, match="diff and diff_stat are empty"):
         build_commit_prompt("   \n")
+
+
+def test_build_commit_prompt_accepts_stat_with_omitted_diff() -> None:
+    _, user = build_commit_prompt("", diff_stat="uv.lock | 4 ++--")
+
+    assert "<changed_files>\nuv.lock | 4 ++--\n</changed_files>" in user
+    assert "<diff>\n\n</diff>" in user
 
 
 def test_build_commit_prompt_omits_branch_block_by_default() -> None:
@@ -283,9 +291,19 @@ def test_build_mr_prompt_returns_non_empty_pair() -> None:
     assert user.strip()
 
 
-def test_build_mr_prompt_rejects_empty_diff() -> None:
-    with pytest.raises(ValueError, match="diff is empty"):
+def test_build_mr_prompt_rejects_empty_diff_and_stat() -> None:
+    with pytest.raises(ValueError, match="diff and diff_stat are empty"):
         build_mr_prompt(diff="")
+
+
+def test_build_mr_prompt_accepts_stat_with_omitted_diff() -> None:
+    _, user = build_mr_prompt(
+        diff="",
+        diff_stat="package-lock.json | 4000 ++++",
+        commit_log="GITAI_COMMIT chore: update dependencies\n",
+    )
+
+    assert "package-lock.json" in user
 
 
 def test_build_mr_prompt_two_pass_when_mostly_conventional() -> None:

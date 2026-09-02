@@ -92,9 +92,20 @@ def test_two_commits_use_two_pass() -> None:
     assert name == "pr-two-pass.txt"
 
 
-def test_empty_diff_is_rejected() -> None:
-    with pytest.raises(ValueError, match="diff is empty"):
+def test_empty_diff_and_stat_are_rejected() -> None:
+    with pytest.raises(ValueError, match="diff and diff_stat are empty"):
         build_mr_prompt_input(diff="", commit_log=_log("feat: add widget"))
+
+
+def test_diff_stat_allows_omitted_diff() -> None:
+    name, user_input = build_mr_prompt_input(
+        diff="",
+        diff_stat="package-lock.json | 4000 ++++",
+        commit_log=_log("chore: update dependencies"),
+    )
+
+    assert name == "pr-two-pass.txt"
+    assert "package-lock.json" in user_input
 
 
 def test_absent_commit_log_omits_the_tag_entirely() -> None:
