@@ -25,14 +25,14 @@ setup() {
 @test "recommended_model: antigravity has its own effort-suffixed pin" {
   run recommended_model antigravity
   assert_success
-  assert_output "gemini-3.7-flash-medium"
+  assert_output "gemini-3.8-flash-low"
 }
 
-@test "recommended_model: openai family maps to gpt luna" {
+@test "recommended_model: openai family maps to gpt terra" {
   for p in openai-api codex; do
     run recommended_model "$p"
     assert_success
-    assert_output "gpt-5.6-luna"
+    assert_output "gpt-5.6-terra"
   done
 }
 
