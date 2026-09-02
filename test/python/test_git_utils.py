@@ -3,6 +3,7 @@
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pytest
 from git_ai import (
@@ -18,6 +19,7 @@ from git_ai import (
 from git_ai._commit_cli import _emit_branch_context
 from git_ai._git import (
     LOCKFILE_DIFF_LIMIT_BYTES,
+    _git_output_fits,
     build_draft_body,
     count_conventional_commits,
     get_staged_diff_context,
@@ -53,6 +55,18 @@ GITAI_COMMIT another bad one
 """
 
 _EMPTY = ""
+
+
+def test_git_output_fits_caps_stdout_read() -> None:
+    process = Mock()
+    process.stdout.read.return_value = b"x" * 11
+    process.communicate.return_value = (b"", b"")
+
+    with patch("git_ai._git.subprocess.Popen", return_value=process):
+        assert not _git_output_fits(".", 10, "diff")
+
+    process.stdout.read.assert_called_once_with(11)
+    process.kill.assert_called_once()
 
 
 def test_count_all_conventional() -> None:
