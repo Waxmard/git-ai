@@ -19,12 +19,10 @@ if TYPE_CHECKING:
         check_git_repo,
         get_commit_log,
         get_current_branch,
-        get_diff,
-        get_diff_stat,
+        get_diff_context,
         get_git_dir,
         get_head_sha,
         get_mr_release_context,
-        get_repo_root,
         git_is_ancestor,
         git_merge_base,
         git_ref_exists,
@@ -35,7 +33,6 @@ if TYPE_CHECKING:
         branch_content_id,
         get_branch_churn_subjects,
     )
-    from ._ignore import load_ignore_patterns
     from ._pr_prompt_build import DiffScope
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -48,29 +45,23 @@ elif __package__ in (None, ""):
     get_branch_churn_subjects = _git_branch.get_branch_churn_subjects
     get_commit_log = _git.get_commit_log
     get_current_branch = _git.get_current_branch
-    get_diff = _git.get_diff
-    get_diff_stat = _git.get_diff_stat
+    get_diff_context = _git.get_diff_context
     get_git_dir = _git.get_git_dir
     get_head_sha = _git.get_head_sha
     get_mr_release_context = _git.get_mr_release_context
-    get_repo_root = _git.get_repo_root
     git_is_ancestor = _git.git_is_ancestor
     git_merge_base = _git.git_merge_base
     git_ref_exists = _git.git_ref_exists
-    _ignore = importlib.import_module("_ignore")
-    load_ignore_patterns = _ignore.load_ignore_patterns
     DiffScope = importlib.import_module("_pr_prompt_build").DiffScope
 else:
     from ._git import (
         check_git_repo,
         get_commit_log,
         get_current_branch,
-        get_diff,
-        get_diff_stat,
+        get_diff_context,
         get_git_dir,
         get_head_sha,
         get_mr_release_context,
-        get_repo_root,
         git_is_ancestor,
         git_merge_base,
         git_ref_exists,
@@ -81,7 +72,6 @@ else:
         branch_content_id,
         get_branch_churn_subjects,
     )
-    from ._ignore import load_ignore_patterns
     from ._pr_prompt_build import DiffScope
 
 # DiffScope is imported at runtime, not just under TYPE_CHECKING: RepoPrContext
@@ -433,12 +423,7 @@ def prepare_repo_pr_context(
         )
 
     three_dot = input_base == base_branch
-    repo_root = get_repo_root(repo_path)
-    patterns = load_ignore_patterns(repo_root)
-    # The stat keeps lockfiles so a lockfile-only bump (common when draining bot
-    # branches) still shows as one describable line; the full diff strips them
-    # as noise. User `.git-ai-ignore` entries apply to both.
-    stat_patterns = load_ignore_patterns(repo_root, include_defaults=False)
+    diff, diff_stat = get_diff_context(repo_path, diff_ref, three_dot=three_dot)
     # Churn membership spans the whole branch (base ref); classification covers
     # only the commits the draft will list (diff_ref).
     churn_base = base_ref if base_ref is not None else diff_ref
@@ -459,12 +444,8 @@ def prepare_repo_pr_context(
         input_base=input_base,
         existing_pr=effective_existing,
         commit_log=commit_log,
-        diff=get_diff(
-            repo_path, diff_ref, three_dot=three_dot, exclude_patterns=patterns
-        ),
-        diff_stat=get_diff_stat(
-            repo_path, diff_ref, three_dot=three_dot, exclude_patterns=stat_patterns
-        ),
+        diff=diff,
+        diff_stat=diff_stat,
         release_context=get_mr_release_context(repo_path),
         content_id=content_id,
         diff_scope=diff_scope,

@@ -228,21 +228,17 @@ cmd_commit() {
   REPO_GUIDANCE=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
     instructions --repo "$REPO_ROOT") || die "failed to read .git-ai-instructions"
 
-  # Captured before the loop rather than read through a process substitution:
-  # a pathspec that silently came back empty would send unignored files to the
-  # model, so the exit status has to be checked.
-  local -a PATHSPEC=()
-  local _p pathspec_out
-  pathspec_out=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
-    ignore-pathspec --repo "$REPO_ROOT") || die "failed to read .git-ai-ignore"
-  while IFS= read -r _p; do
-    [[ -n "$_p" ]] && PATHSPEC+=("$_p")
-  done <<<"$pathspec_out"
-
-  git diff --staged --quiet ${PATHSPEC[@]+"${PATHSPEC[@]}"} && die "no staged changes to summarize"
-
-  local STAGED_DIFF LAST_TAG COMMITS_SINCE RELEASE_CONTEXT INPUT generated
-  STAGED_DIFF=$(git diff --staged ${PATHSPEC[@]+"${PATHSPEC[@]}"}) || die "failed to read staged diff"
+  local STAGED_DIFF STAGED_STAT LAST_TAG COMMITS_SINCE RELEASE_CONTEXT INPUT generated
+  local stat_file
+  stat_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-stat.XXXXXX") ||
+    die "failed to create temporary file"
+  STAGED_DIFF=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
+    staged-context --repo "$REPO_ROOT" --stat-file "$stat_file") || {
+      rm -f "$stat_file"
+      die "failed to read staged changes"
+    }
+  STAGED_STAT=$(<"$stat_file")
+  rm -f "$stat_file"
 
   check_diff_size_or_die "$STAGED_DIFF"
 
@@ -274,7 +270,11 @@ cmd_commit() {
   if [[ -n "$BRANCH_CONTEXT" ]]; then
     INPUT+=$'\n\n'"${BRANCH_CONTEXT}"
   fi
-  INPUT+=$'\n\n'"<diff>
+  INPUT+=$'\n\n'"<changed_files>
+${STAGED_STAT}
+</changed_files>
+
+<diff>
 ${STAGED_DIFF}
 </diff>"
 

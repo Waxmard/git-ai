@@ -23,6 +23,7 @@ from git_ai import (
     prune_pr_cache,
     save_cached_pr,
 )
+from git_ai._git import LOCKFILE_DIFF_LIMIT_BYTES
 from git_ai._pr_incremental import branch_cache_dir
 
 
@@ -248,19 +249,30 @@ def test_prepare_repo_pr_context_raises_on_non_ancestor_previous_head_sha(
         prepare_repo_pr_context(repo, base_branch="main", previous_head_sha=orphan_sha)
 
 
-def test_prepare_repo_pr_context_excludes_lockfiles_from_diff_only(
+def test_prepare_repo_pr_context_includes_small_lockfile_diff(
     tmp_path: Path,
 ) -> None:
     repo = _make_repo(tmp_path)
-    # Default excludes drop lockfile content from the full diff, but the stat
-    # keeps it so a lockfile-only bump still leaves a trace for the model.
     _commit(repo, "package-lock.json", "lock_contents\n", "chore: lockfile")
     _commit(repo, "app.py", "print('hi')\n", "feat: add app")
 
     ctx = prepare_repo_pr_context(repo, base_branch="main")
 
     assert "app.py" in ctx.diff
-    assert "package-lock.json" not in ctx.diff
+    assert "package-lock.json" in ctx.diff
+    assert "package-lock.json" in ctx.diff_stat
+
+
+def test_prepare_repo_pr_context_omits_large_lockfile_diff(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    content = "x" * (LOCKFILE_DIFF_LIMIT_BYTES + 1)
+    _commit(repo, "package-lock.json", content, "chore: lockfile")
+
+    ctx = prepare_repo_pr_context(repo, base_branch="main")
+
+    assert ctx.diff == ""
     assert "package-lock.json" in ctx.diff_stat
 
 
