@@ -325,10 +325,30 @@ def test_build_mr_prompt_fallback_when_not_conventional() -> None:
 def test_build_mr_prompt_no_log_uses_fallback() -> None:
     _, user = build_mr_prompt(diff=_SAMPLE_DIFF)
     assert "<draft>" not in user
-    # The fallback tell is <diff>, which the two-pass input never carries. The
-    # log tag itself is absent rather than blank — see the omission tests.
     assert "<diff>" in user
     assert "<commit_log>" not in user
+
+
+@pytest.mark.parametrize(
+    ("commit_log", "existing_pr"),
+    [
+        (None, None),
+        (_CONVENTIONAL_LOG, None),
+        (None, "feat: old title"),
+        (_CONVENTIONAL_LOG, "feat: old title"),
+    ],
+)
+def test_build_mr_prompt_automates_breaking_annotations(
+    commit_log: str | None, existing_pr: str | None
+) -> None:
+    system, _ = build_mr_prompt(
+        diff=_SAMPLE_DIFF, commit_log=commit_log, existing_pr=existing_pr
+    )
+
+    assert "mark its change label with `(breaking)`" in system
+    assert "automatically add exactly one `!`" in system
+    assert "Never add ! to the title automatically" not in system
+    assert "**Possible breaking change:**" not in system
 
 
 def test_build_mr_prompt_existing_pr_picks_update_prompt() -> None:
