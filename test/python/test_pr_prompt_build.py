@@ -23,6 +23,33 @@ def test_single_conventional_commit_uses_two_pass() -> None:
     assert "### Features\n- add widget" in user_input
 
 
+@pytest.mark.parametrize("commit_log", [_log("feat: improve reviews"), None])
+@pytest.mark.parametrize(
+    ("existing_pr", "diff_scope"),
+    [
+        (None, "branch"),
+        ("feat: improve reviews", "branch"),
+        ("feat: improve reviews", "since_existing"),
+    ],
+)
+def test_interface_removal_reaches_every_prompt_path(
+    commit_log: str | None, existing_pr: str | None, diff_scope: DiffScope
+) -> None:
+    diff = (
+        "diff --git a/README.md b/README.md\n"
+        "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n"
+        "-Invoke @docs_engineer for documentation review.\n"
+        "+Invoke @code_hygiene_engineer for code hygiene review.\n"
+    )
+    _, user_input = build_mr_prompt_input(
+        diff=diff,
+        commit_log=commit_log,
+        existing_pr=existing_pr,
+        diff_scope=diff_scope,
+    )
+    assert user_input.count(f"<diff>\n{diff}\n</diff>") == 1
+
+
 def test_single_conventional_commit_body_reaches_the_draft() -> None:
     log = _log("fix: stop crash\n\nThe handler dereferenced a null pointer.\n")
     _, user_input = build_mr_prompt_input(diff=_DIFF, commit_log=log)
