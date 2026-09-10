@@ -98,11 +98,7 @@ def build_mr_prompt_input(
         log_block = (
             f"<commit_log>\n{clean_log}\n</commit_log>\n" if clean_log.strip() else ""
         )
-        body = (
-            f"{log_block}"
-            f"<changed_files>\n{diff_stat}\n</changed_files>\n"
-            f"<diff>\n{diff}\n</diff>"
-        )
+        body = f"{log_block}<changed_files>\n{diff_stat}\n</changed_files>"
         if existing_pr:
             prompt_name = f"pr-fallback-update{scope_suffix}.txt"
             user_input = f"<existing_pr>\n{existing_pr}\n</existing_pr>\n\n{body}"
@@ -110,6 +106,7 @@ def build_mr_prompt_input(
             prompt_name = "pr-fallback.txt"
             user_input = body
 
+    user_input += f"\n<diff>\n{diff}\n</diff>"
     user_input = f"<release_context>{release_context}</release_context>\n\n{user_input}"
     guidance_block = format_repo_guidance(repo_guidance)
     if guidance_block:

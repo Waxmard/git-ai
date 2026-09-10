@@ -43,6 +43,15 @@ def test_pr_prompts_mention_verification() -> None:
         )
 
 
+@pytest.mark.parametrize("name", PROMPT_FILES[1:])
+def test_pr_prompts_check_interface_compatibility(name: str) -> None:
+    text = _load_prompt(name)
+    assert "inspect <diff> for compatibility changes" in text
+    assert "agent or plugin names" in text
+    assert "unless the old interface still works" in text
+    assert "release history is unknown, retain the possible-breaking note" in text
+
+
 def test_pr_prompts_forbid_type_headings() -> None:
     for name in PROMPT_FILES[1:]:
         text = _load_prompt(name)
