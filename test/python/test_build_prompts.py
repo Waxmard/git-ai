@@ -338,15 +338,17 @@ def test_build_mr_prompt_no_log_uses_fallback() -> None:
         (_CONVENTIONAL_LOG, "feat: old title"),
     ],
 )
-def test_build_mr_prompt_leaves_breaking_decision_to_owner(
+def test_build_mr_prompt_automates_breaking_annotations(
     commit_log: str | None, existing_pr: str | None
 ) -> None:
     system, _ = build_mr_prompt(
         diff=_SAMPLE_DIFF, commit_log=commit_log, existing_pr=existing_pr
     )
 
-    assert "Never add ! to the title automatically" in system
-    assert "**Possible breaking change:** Confirm compatibility before merge" in system
+    assert "mark its change label with `(breaking)`" in system
+    assert "automatically add exactly one `!`" in system
+    assert "Never add ! to the title automatically" not in system
+    assert "**Possible breaking change:**" not in system
 
 
 def test_build_mr_prompt_existing_pr_picks_update_prompt() -> None:
