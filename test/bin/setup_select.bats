@@ -693,13 +693,16 @@ EOF
   assert_output "acme"
 }
 
-@test "_setup_write_vertex_models: a refused fold aborts the scoped write" {
+@test "_setup_write_vertex_models: a refused fold aborts scoped and bulk writes" {
   printf '[vertex]\nprojects = proj-a\n\n[vertex-gemini]\ngemini-x\n' >"$CONF"
   local before; before="$(cat "$CONF")"
   _setup_vertex_fold() { printf '[vertex-gemini@proj-a]\n' >"$1"; }
   # Written over the shared shape, the pin would land on proj-a while gemini-x
   # kept expanding across every project — the unpin the scope was asked for.
   run _setup_write_vertex_models "$CONF" "vertex@proj-a" gemini-y
+  assert_failure
+  assert_equal "$(cat "$CONF")" "$before"
+  run _setup_write_vertex_models "$CONF" vertex gemini-y
   assert_failure
   assert_equal "$(cat "$CONF")" "$before"
 }
@@ -818,6 +821,37 @@ EOF
   assert_line "vertex-gemini@proj-b:gemini-3.5-flash"
   assert_line "vertex-anthropic@proj-a:claude-sonnet-4-6"
   refute_line "vertex-gemini@proj-a:old"
+}
+
+@test "_setup_write_vertex_models: bulk replacement normalizes mixed legacy sections" {
+  cat >"$CONF" <<'EOF'
+[vertex]
+projects = proj-a, proj-b
+
+[vertex-gemini]
+gemini-old
+
+[vertex-gemini@proj-a]
+gemini-explicit
+EOF
+  run _setup_write_vertex_models "$CONF" vertex gemini-new
+  assert_success
+  run parse_user_options
+  assert_output $'vertex-gemini@proj-a:gemini-new\nvertex-gemini@proj-b:gemini-new'
+}
+
+@test "_setup_change_models: accepting the bulk union applies it to every project" {
+  printf '[vertex-gemini@proj-a]\ngemini-a\n\n[vertex-gemini@proj-b]\ngemini-b\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    '"$(_models_env gemini-sugg)"'
+    printf "\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" vertex
+  '
+  assert_success
+  refute_output --partial "Models unchanged"
+  run parse_user_options
+  assert_output $'vertex-gemini@proj-a:gemini-a\nvertex-gemini@proj-a:gemini-b\nvertex-gemini@proj-b:gemini-a\nvertex-gemini@proj-b:gemini-b'
 }
 
 @test "_setup_pick_vertex_scope: one project needs no question" {

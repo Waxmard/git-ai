@@ -637,6 +637,7 @@ _setup_vertex_drop_project() {
 _setup_write_vertex_models() {
   local conf="$1" scope="$2" m p
   shift 2
+  _setup_vertex_normalize "$conf" || return 1
   local -a anth=() gem=() targets=()
   for m in "$@"; do
     case "$(_setup_provider_for_model vertex "$m")" in
@@ -646,9 +647,6 @@ _setup_write_vertex_models() {
   done
   case "$scope" in
     *@*)
-      # Pinning one project only means something once the base sections have
-      # been folded down — otherwise their models still apply to every project.
-      _setup_vertex_normalize "$conf" || return 1
       targets=("@${scope#*@}")
       ;;
     *)
