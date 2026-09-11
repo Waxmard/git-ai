@@ -1,5 +1,23 @@
 # Changelog
 
+## [6.9.0](https://github.com/Waxmard/git-ai/compare/v6.8.0...v6.9.0) (2026-09-11)
+
+
+### Features
+
+* include bounded lockfile context in generated text ([#132](https://github.com/Waxmard/git-ai/issues/132)) ([7498ee4](https://github.com/Waxmard/git-ai/commit/7498ee4c9580a30e58feb8582611c74d12c0b449))
+
+
+### Bug Fixes
+
+* flag breaking changes across every PR generation path ([#134](https://github.com/Waxmard/git-ai/issues/134)) ([74476c8](https://github.com/Waxmard/git-ai/commit/74476c8532e930457ca08f49ce13130e05623769))
+
+
+### Miscellaneous Chores
+
+* **ci:** bump the actions group across 1 directory with 3 updates ([7a141b6](https://github.com/Waxmard/git-ai/commit/7a141b6f797818655f24d14ede7342ef74cca6e8))
+* update recommended provider models ([56363fd](https://github.com/Waxmard/git-ai/commit/56363fd765ed97f506f2186b9c356d1ca757b4e9))
+
 ## [6.8.0](https://github.com/Waxmard/git-ai/compare/v6.7.2...v6.8.0) (2026-08-19)
 
 
