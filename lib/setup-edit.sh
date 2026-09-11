@@ -464,11 +464,10 @@ _setup_change_models() {
     return 0
   fi
 
-  # Accepting the pre-marked set unchanged is the common gesture (a bare Enter),
-  # so say so rather than reporting a write that changes nothing.
+  # The bulk Vertex union can match while individual projects have different pins.
   local joined
   joined=$(_join_comma "${picked[@]}")
-  if [[ "$joined" == "$current" ]]; then
+  if [[ "$provider" != vertex && "$joined" == "$current" ]]; then
     printf 'Models unchanged: %s\n' "$joined"
     return 0
   fi
