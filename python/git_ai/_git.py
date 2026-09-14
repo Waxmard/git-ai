@@ -75,8 +75,8 @@ def _omit_large_file_diffs(diff: str) -> str:
     sections = re.split(r"(?m)(?=^diff --git )", diff)
     return "".join(
         section
-        for section in sections
-        if len(section.encode("utf-8")) <= FILE_DIFF_LIMIT_BYTES
+        for index, section in enumerate(sections)
+        if index == 0 or len(section.encode("utf-8")) <= FILE_DIFF_LIMIT_BYTES
     )
 
 

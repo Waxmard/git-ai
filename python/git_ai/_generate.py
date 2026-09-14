@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, NamedTuple
 if TYPE_CHECKING:
     from ._git import (
         DEFAULT_RELEASE_CONTEXT,
+        _omit_large_file_diffs,
         derive_diff_stat,
         largest_diff_files,
     )
@@ -35,9 +36,11 @@ elif __package__ in (None, ""):
     format_branch_context = _git_branch_mod.format_branch_context
     format_repo_guidance = importlib.import_module("_instructions").format_repo_guidance
     largest_diff_files = _git_mod.largest_diff_files
+    _omit_large_file_diffs = _git_mod._omit_large_file_diffs
 else:
     from ._git import (
         DEFAULT_RELEASE_CONTEXT,
+        _omit_large_file_diffs,
         derive_diff_stat,
         largest_diff_files,
     )
@@ -132,12 +135,16 @@ def build_commit_prompt(
     block. Feed both returned strings to your LLM, then run the response
     through :func:`parse_commit_response`.
 
+    Individual Git file patches over 50 KB are omitted after deriving
+    ``diff_stat`` so their changed-file context remains available.
+
     Raises:
         ValueError: if ``diff`` and ``diff_stat`` are empty.
         RuntimeError: if the diff exceeds ``GIT_AI_MAX_DIFF_BYTES``.
     """
     if diff_stat is None:
         diff_stat = derive_diff_stat(diff)
+    diff = _omit_large_file_diffs(diff)
     if not diff.strip() and not diff_stat.strip():
         raise ValueError("diff and diff_stat are empty")
 
@@ -201,18 +208,22 @@ def build_mr_prompt(
     default errs toward preservation: over-declaring ``"since_existing"`` only
     costs a stale sentence the model failed to prune.
 
+    Individual Git file patches over 50 KB are omitted after deriving
+    ``diff_stat`` so their changed-file context remains available.
+
     Raises:
         ValueError: if ``diff`` and ``diff_stat`` are empty, or ``diff_scope``
             is not a known scope.
         RuntimeError: if the diff exceeds ``GIT_AI_MAX_DIFF_BYTES``.
     """
+    if diff_stat is None:
+        diff_stat = derive_diff_stat(diff)
+    diff = _omit_large_file_diffs(diff)
+    if not diff.strip() and not diff_stat.strip():
+        raise ValueError("diff and diff_stat are empty")
     _check_diff_size(diff)
     if release_context is None:
         release_context = DEFAULT_RELEASE_CONTEXT
-    if diff_stat is None:
-        diff_stat = derive_diff_stat(diff)
-    if not diff.strip() and not diff_stat.strip():
-        raise ValueError("diff and diff_stat are empty")
 
     prompt_name, user_input = build_mr_prompt_input(
         diff=diff,

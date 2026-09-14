@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from git_ai import build_commit_prompt, build_mr_prompt
+from git_ai._git import FILE_DIFF_LIMIT_BYTES
 
 
 def _huge_diff(file_path: str, byte_target: int) -> str:
@@ -57,3 +58,25 @@ def test_mr_size_guard_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(RuntimeError) as excinfo:
         build_mr_prompt(diff=diff)
     assert "dist/bundle.js" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("kind", ["commit", "mr"])
+def test_prompt_builders_reduce_large_file_patches_to_stats(kind: str) -> None:
+    diff = _huge_diff("download.json", FILE_DIFF_LIMIT_BYTES + 1)
+
+    if kind == "commit":
+        _, user = build_commit_prompt(diff)
+    else:
+        _, user = build_mr_prompt(diff=diff)
+
+    changed_files, patch = user.split("<diff>", 1)
+    assert "download.json" in changed_files
+    assert "download.json" not in patch
+
+
+def test_commit_builder_keeps_non_git_diff_input() -> None:
+    diff = "x" * (FILE_DIFF_LIMIT_BYTES + 1)
+
+    _, user = build_commit_prompt(diff, diff_stat="raw.patch")
+
+    assert diff in user

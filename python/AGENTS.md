@@ -6,7 +6,7 @@ Guidance for AI coding agents working under `python/`. The repo-wide guide is th
 
 Provider-agnostic and BYO-LLM: the package owns prompt assembly, diff-stat derivation, fence-stripping, and `.git/pr-cache` management, and never calls an LLM itself. `build_commit_prompt` / `build_mr_prompt` produce `(system_prompt, user_input)`; callers run their own LLM, then feed the response through `parse_commit_response` / `parse_mr_response`. `__init__.py`'s `__all__` is the authoritative public surface. Zero LLM SDK dependencies, and stdlib-only for anything the Bash path imports (see the npm contract in the root guide).
 
-`build_commit_prompt` also accepts optional `branch_name` / `branch_commits` / `branch_diffstat` so the prefix can be chosen from the perspective of the whole branch (assembled via `format_branch_context`).
+`build_commit_prompt` also accepts optional `branch_name` / `branch_commits` / `branch_diffstat` so the prefix can be chosen from the perspective of the whole branch (assembled via `format_branch_context`). Both prompt builders derive the stat before reducing individual file patches over 50 KB to stat-only context, so data-mode and repo-mode consumers share the same input bound.
 
 `build_mr_prompt` takes `diff_scope` — `"since_existing"` (default) when `diff` covers only the commits added since `existing_pr` was written, `"branch"` when it covers the whole branch. The update prompts cannot describe both truthfully at once, and telling the model a partial slice is the whole branch makes it delete the work `existing_pr` describes but the diff omits. The destructive declaration has to be opted into.
 
