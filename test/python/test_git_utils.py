@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
 from git_ai import (
     get_branch_churn_subjects,
     get_branch_commit_subjects,
@@ -16,8 +15,8 @@ from git_ai import (
     get_staged_diff,
     resolve_commit_base,
 )
-from git_ai._commit_cli import _emit_branch_context
 from git_ai._git import (
+    FILE_DIFF_LIMIT_BYTES,
     LOCKFILE_DIFF_LIMIT_BYTES,
     _git_output_fits,
     build_draft_body,
@@ -289,6 +288,19 @@ def test_staged_context_omits_large_lockfile_content(tmp_path: Path) -> None:
 
     assert diff == ""
     assert "package-lock.json" in stat
+
+
+def test_staged_context_omits_any_large_file_content(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    content = "x" * (FILE_DIFF_LIMIT_BYTES + 1)
+    _stage_files(repo, {"download.json": content, "app.py": "print('hi')\n"})
+
+    diff, stat = get_staged_diff_context(repo)
+
+    assert "download.json" not in diff
+    assert "app.py" in diff
+    assert "download.json" in stat
 
 
 def _stage_nested(repo: Path, files: dict[str, str]) -> None:
@@ -623,32 +635,6 @@ def test_resolve_commit_base_prefers_pr_cache_base(tmp_path: Path) -> None:
     branch_cache_dir(git_dir, "feature", "dev").mkdir(parents=True)
 
     assert resolve_commit_base(repo, git_dir=git_dir, branch="feature") == "dev"
-
-
-def test_emit_branch_context_honors_env_base(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _init_repo(repo)
-    subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
-    )
-    _checkout(repo, "-b", "feature")
-    _commit_files(repo, {"a.py": "1\n"}, "feat: a")
-    _commit_files(repo, {"b.py": "2\n"}, "feat: b")
-
-    # Auto-resolution would pick main (both commits ahead); GIT_AI_COMMIT_BASE
-    # narrows it to HEAD~1 without --base, scoping to the newest commit.
-    monkeypatch.setenv("GIT_AI_COMMIT_BASE", "HEAD~1")
-    _emit_branch_context(str(repo), None)
-
-    block = capsys.readouterr().out
-    assert "<branch>feature</branch>" in block
-    assert "feat: b" in block
-    assert "feat: a" not in block
 
 
 def _churn_repo(repo: Path) -> None:

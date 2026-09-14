@@ -190,9 +190,6 @@ cmd_commit() {
     MODEL="${PROVIDER#*:}"
     PROVIDER="${PROVIDER%%:*}"
   fi
-  local PROMPT
-  PROMPT=$(cat "${GIT_AI_PKG_DIR}/prompts/commit.txt") || die "failed to read commit prompt"
-
   git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
   [[ -z "$PROVIDER" ]] && maybe_first_run_setup commit
@@ -224,59 +221,20 @@ cmd_commit() {
   local REPO_ROOT
   REPO_ROOT=$(git rev-parse --show-toplevel) || die "failed to determine repo root"
 
-  local REPO_GUIDANCE
-  REPO_GUIDANCE=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
-    instructions --repo "$REPO_ROOT") || die "failed to read .git-ai-instructions"
-
-  local STAGED_DIFF STAGED_STAT LAST_TAG COMMITS_SINCE RELEASE_CONTEXT INPUT generated
-  local stat_file
-  stat_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-stat.XXXXXX") ||
+  local PROMPT INPUT generated prompt_file
+  prompt_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-prompt.XXXXXX") ||
     die "failed to create temporary file"
-  STAGED_DIFF=$("${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py" \
-    staged-context --repo "$REPO_ROOT" --stat-file "$stat_file") || {
-      rm -f "$stat_file"
-      die "failed to read staged changes"
-    }
-  STAGED_STAT=$(<"$stat_file")
-  rm -f "$stat_file"
-
-  check_diff_size_or_die "$STAGED_DIFF"
-
-  LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-  if [[ -n "$LAST_TAG" ]]; then
-    COMMITS_SINCE=$(git rev-list --count "${LAST_TAG}..HEAD" 2>/dev/null || echo "?")
-    RELEASE_CONTEXT="Release context: last tag ${LAST_TAG}, ${COMMITS_SINCE} commits since — staged changes are unreleased"
-  else
-    RELEASE_CONTEXT="Release context: no release tags found — treat all changes as unreleased"
-  fi
-
-  # Best-effort branch context so the prefix is chosen from the perspective of
-  # the whole branch. Never blocks a commit: failures yield an empty block.
-  local BRANCH_CONTEXT
-  local -a bc_cmd=(
+  local -a build_cmd=(
     "${GIT_AI_PYTHON:-python3}" "${GIT_AI_PKG_DIR}/_commit_cli.py"
-    branch-context --repo "$REPO_ROOT"
+    build-prompt --repo "$REPO_ROOT" --prompt-file "$prompt_file"
   )
-  # Only --base is forwarded here; GIT_AI_COMMIT_BASE is consumed inside Python
-  # (_emit_branch_context), so it still applies when --base isn't passed.
-  [[ -n "$BASE" ]] && bc_cmd+=(--base "$BASE")
-  BRANCH_CONTEXT=$("${bc_cmd[@]}" 2>/dev/null) || BRANCH_CONTEXT=""
-
-  INPUT=""
-  if [[ -n "$REPO_GUIDANCE" ]]; then
-    INPUT+="<repo_guidance>"$'\n'"${REPO_GUIDANCE}"$'\n'"</repo_guidance>"$'\n\n'
-  fi
-  INPUT+="<release_context>${RELEASE_CONTEXT}</release_context>"
-  if [[ -n "$BRANCH_CONTEXT" ]]; then
-    INPUT+=$'\n\n'"${BRANCH_CONTEXT}"
-  fi
-  INPUT+=$'\n\n'"<changed_files>
-${STAGED_STAT}
-</changed_files>
-
-<diff>
-${STAGED_DIFF}
-</diff>"
+  [[ -n "$BASE" ]] && build_cmd+=(--base "$BASE")
+  INPUT=$("${build_cmd[@]}") || {
+      rm -f "$prompt_file"
+      die "failed to prepare commit prompt"
+    }
+  PROMPT=$(<"$prompt_file")
+  rm -f "$prompt_file"
 
   local note_file SUBJECT_NOTE=""
   note_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-note.XXXXXX") ||

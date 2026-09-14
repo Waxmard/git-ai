@@ -207,7 +207,7 @@ pr_text = git_ai.parse_mr_response(raw)
 delta = git_ai.render_pr_diff(current_pr_body, pr_text, color=False) or None
 ```
 
-`diff_stat` and `release_context` are optional — when omitted, the diff stat is derived from the diff and a generic "no release tags found" context is used. As with commit prompts, a supplied stat permits an intentionally omitted diff.
+`diff_stat` and `release_context` are optional — when omitted, the diff stat is derived from the diff and a generic "no release tags found" context is used. As with commit prompts, a supplied stat permits an intentionally omitted diff. Both prompt builders automatically reduce individual file patches over 50 KB to their diff-stat entry.
 
 `diff_scope` matters only alongside `existing_pr`, and it is the one argument worth getting right: it declares what `diff` and `commit_log` span, and the update prompt is written to match. Under `"branch"` the model may prune content the branch no longer contains — so declaring it while passing an incremental diff makes it rewrite away everything `existing_pr` covers but the diff omits. The default is `"since_existing"`, whose failure mode is only a stale sentence left unpruned. Model selection, retries, auth, and error handling are the caller's responsibility (inside `my_llm`).
 
@@ -216,11 +216,8 @@ delta = git_ai.render_pr_diff(current_pr_body, pr_text, color=False) or None
 ```python
 import git_ai
 
-# Commit message from staged changes (auto-loads .git-ai-ignore)
-diff = git_ai.get_staged_diff(".")
-system, user = git_ai.build_commit_prompt(
-    diff, release_context=git_ai.get_release_context("."),
-)
+# Commit message from staged changes, repo guidance, and branch context
+system, user = git_ai.build_repo_commit_prompt(".")
 commit_msg = git_ai.parse_commit_response(my_llm(system, user))
 
 # PR description with incremental cache reuse
@@ -295,7 +292,7 @@ vendor/
 
 `!` removes a pattern by exact string match, so it only re-includes a built-in default (or an earlier line spelled identically) — it is not `.gitignore` negation precedence.
 
-If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`, set `0` to disable), git-ai aborts with a "Largest changed files" hint pointing at what to ignore or unstage.
+Individual file patches over 50 KB are always reduced to diff-stat context. If the remaining post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`, set `0` to disable this aggregate limit), git-ai aborts with a "Largest changed files" hint pointing at what to ignore or unstage.
 
 In the Python library, `get_staged_diff`, `get_diff`, and `get_diff_stat` auto-load `.git-ai-ignore` and apply built-in lockfile defaults when `exclude_patterns` is omitted. Pass `exclude_patterns=[]` to opt out of all filtering.
 
