@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.10.0](https://github.com/Waxmard/git-ai/compare/v6.9.0...v6.10.0) (2026-09-14)
+
+
+### Features
+
+* add build_repo_commit_prompt and cap file patches at 50 KB ([#137](https://github.com/Waxmard/git-ai/issues/137)) ([124938b](https://github.com/Waxmard/git-ai/commit/124938b34f78617c63b42256629f99d2aa9c19be))
+
 ## [6.9.0](https://github.com/Waxmard/git-ai/compare/v6.8.0...v6.9.0) (2026-09-11)
 
 
