@@ -28,6 +28,7 @@ DEFAULT_RELEASE_CONTEXT = (
     "Release context: no release tags found — treat all changes as unreleased"
 )
 LOCKFILE_DIFF_LIMIT_BYTES = 25_000
+FILE_DIFF_LIMIT_BYTES = 50_000
 
 
 def _git(repo_path: str | Path, *args: str) -> str:
@@ -68,6 +69,15 @@ def _git_output_fits(repo_path: str | Path, max_bytes: int, *args: str) -> bool:
         message = stderr.decode(errors="replace").strip()
         raise RuntimeError(f"git {' '.join(args)} failed: {message}")
     return True
+
+
+def _omit_large_file_diffs(diff: str) -> str:
+    sections = re.split(r"(?m)(?=^diff --git )", diff)
+    return "".join(
+        section
+        for index, section in enumerate(sections)
+        if index == 0 or len(section.encode("utf-8")) <= FILE_DIFF_LIMIT_BYTES
+    )
 
 
 def get_git_dir(repo_path: str | Path) -> str:
@@ -224,7 +234,7 @@ def get_staged_diff_context(repo_path: str | Path) -> tuple[str, str]:
     )
     if not stat.strip():
         raise RuntimeError("No staged changes to summarize")
-    return diff, stat
+    return _omit_large_file_diffs(diff), stat
 
 
 def get_release_context(repo_path: str | Path) -> str:
@@ -361,7 +371,7 @@ def get_diff_context(
         f"{base}{sep}HEAD",
         *to_pathspec_args(user_patterns),
     )
-    return diff, stat
+    return _omit_large_file_diffs(diff), stat
 
 
 def count_conventional_commits(log: str) -> tuple[int, int]:

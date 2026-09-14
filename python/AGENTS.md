@@ -4,9 +4,9 @@ Guidance for AI coding agents working under `python/`. The repo-wide guide is th
 
 ## Package internals
 
-Provider-agnostic and BYO-LLM: the package owns prompt assembly, diff-stat derivation, fence-stripping, and `.git/pr-cache` management, and never calls an LLM itself. `build_commit_prompt` / `build_mr_prompt` produce `(system_prompt, user_input)`; callers run their own LLM, then feed the response through `parse_commit_response` / `parse_mr_response`. `__init__.py`'s `__all__` is the authoritative public surface. Zero LLM SDK dependencies, and stdlib-only for anything the Bash path imports (see the npm contract in the root guide).
+Provider-agnostic and BYO-LLM: the package owns prompt assembly, diff-stat derivation, fence-stripping, and `.git/pr-cache` management, and never calls an LLM itself. `build_commit_prompt` / `build_repo_commit_prompt` / `build_mr_prompt` produce `(system_prompt, user_input)`; callers run their own LLM, then feed the response through `parse_commit_response` / `parse_mr_response`. `__init__.py`'s `__all__` is the authoritative public surface. Zero LLM SDK dependencies, and stdlib-only for anything the Bash path imports (see the npm contract in the root guide).
 
-`build_commit_prompt` also accepts optional `branch_name` / `branch_commits` / `branch_diffstat` so the prefix can be chosen from the perspective of the whole branch (assembled via `format_branch_context`).
+`build_commit_prompt` also accepts optional `branch_name` / `branch_commits` / `branch_diffstat` so the prefix can be chosen from the perspective of the whole branch (assembled via `format_branch_context`). `build_repo_commit_prompt` collects staged diff/stat, release context, repo guidance, and best-effort branch context before delegating all XML assembly to `build_commit_prompt`. Both ingress paths reduce individual file patches over 50 KB to stat-only context.
 
 `build_mr_prompt` takes `diff_scope` — `"since_existing"` (default) when `diff` covers only the commits added since `existing_pr` was written, `"branch"` when it covers the whole branch. The update prompts cannot describe both truthfully at once, and telling the model a partial slice is the whole branch makes it delete the work `existing_pr` describes but the diff omits. The destructive declaration has to be opted into.
 
@@ -16,7 +16,7 @@ The branch-context machinery (`get_default_branch`, `resolve_commit_base`, `_nea
 
 ## Shell bridges
 
-The Bash CLI reaches this package through `_commit_cli.py` (`format`, `instructions`, `ignore-pathspec`, `branch-context`), `_pr_repo_cli.py` (`prepare`, `build-input`, `format`, `save-cache`), and `_pr_render.py`. `_commit_cli.py format` puts the finished message on stdout, the subject-trim note in `--note-file`, and empty stdout means an empty model response the shell reports with the provider's name.
+The Bash CLI reaches this package through `_commit_cli.py` (`build-prompt`, `format`, `instructions`, `ignore-pathspec`), `_pr_repo_cli.py` (`prepare`, `build-input`, `format`, `save-cache`), and `_pr_render.py`. `_commit_cli.py build-prompt` puts the user input on stdout and the system prompt in `--prompt-file`. `format` puts the finished message on stdout, the subject-trim note in `--note-file`, and empty stdout means an empty model response the shell reports with the provider's name.
 
 `ignore-pathspec` emits finished `git` pathspec args one per line; the shell captures them and checks the exit status rather than reading through a process substitution, since a pathspec that silently came back empty would send ignored files to the model.
 
@@ -45,7 +45,7 @@ A prompt alone cannot guarantee either rule, so both are enforced in `_generate.
 
 ## Repo-local inputs
 
-**`_ignore.py`** holds the built-in lockfile defaults (`DEFAULT_EXCLUDES`) and the `.git-ai-ignore` parser. Patterns are **git pathspec glob fragments, not gitignore syntax**: a leading `/` is not root-anchoring, and `!` removes a pattern by exact match (its only real use is forcing a built-in default back into the full diff). `to_pathspec_args` emits **two** specs per pattern, `**/<p>` and `**/<p>/**`, because under `glob` magic `*` does not cross `/` — a bare `**/vendor` matches only a *file* named `vendor`, so a `vendor/` line would silently exclude nothing. The second spec is inert for a filename. Threaded through `get_staged_diff` / `get_diff` / `get_diff_stat` via `exclude_patterns=`. Repo prompt contexts use `_git.py`'s adaptive helpers: built-in lockfile patches up to 25 KB are included, larger patches become diff-stat-only, and user `.git-ai-ignore` entries remain excluded from both.
+**`_ignore.py`** holds the built-in lockfile defaults (`DEFAULT_EXCLUDES`) and the `.git-ai-ignore` parser. Patterns are **git pathspec glob fragments, not gitignore syntax**: a leading `/` is not root-anchoring, and `!` removes a pattern by exact match (its only real use is forcing a built-in default back into the full diff). `to_pathspec_args` emits **two** specs per pattern, `**/<p>` and `**/<p>/**`, because under `glob` magic `*` does not cross `/` — a bare `**/vendor` matches only a *file* named `vendor`, so a `vendor/` line would silently exclude nothing. The second spec is inert for a filename. Threaded through `get_staged_diff` / `get_diff` / `get_diff_stat` via `exclude_patterns=`. Repo prompt contexts use `_git.py`'s adaptive helpers: built-in lockfile patches up to 25 KB are included, any file patch over 50 KB becomes diff-stat-only, and user `.git-ai-ignore` entries remain excluded from both.
 
 A post-exclude size guard (`GIT_AI_MAX_DIFF_BYTES`, default `900000`) hard-fails with a "Largest changed files" hint when input would exceed a provider's input cap (Codex's is 1 MiB).
 
