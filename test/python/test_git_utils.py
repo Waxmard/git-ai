@@ -18,6 +18,7 @@ from git_ai import (
 )
 from git_ai._commit_cli import _emit_branch_context
 from git_ai._git import (
+    FILE_DIFF_LIMIT_BYTES,
     LOCKFILE_DIFF_LIMIT_BYTES,
     _git_output_fits,
     build_draft_body,
@@ -289,6 +290,19 @@ def test_staged_context_omits_large_lockfile_content(tmp_path: Path) -> None:
 
     assert diff == ""
     assert "package-lock.json" in stat
+
+
+def test_staged_context_omits_any_large_file_content(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    content = "x" * (FILE_DIFF_LIMIT_BYTES + 1)
+    _stage_files(repo, {"download.json": content, "app.py": "print('hi')\n"})
+
+    diff, stat = get_staged_diff_context(repo)
+
+    assert "download.json" not in diff
+    assert "app.py" in diff
+    assert "download.json" in stat
 
 
 def _stage_nested(repo: Path, files: dict[str, str]) -> None:

@@ -295,7 +295,7 @@ vendor/
 
 `!` removes a pattern by exact string match, so it only re-includes a built-in default (or an earlier line spelled identically) — it is not `.gitignore` negation precedence.
 
-If the post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`, set `0` to disable), git-ai aborts with a "Largest changed files" hint pointing at what to ignore or unstage.
+Individual file patches over 50 KB are reduced to diff-stat context. If the remaining post-exclude diff is still over `GIT_AI_MAX_DIFF_BYTES` (default `900000`, set `0` to disable), git-ai aborts with a "Largest changed files" hint pointing at what to ignore or unstage.
 
 In the Python library, `get_staged_diff`, `get_diff`, and `get_diff_stat` auto-load `.git-ai-ignore` and apply built-in lockfile defaults when `exclude_patterns` is omitted. Pass `exclude_patterns=[]` to opt out of all filtering.
 

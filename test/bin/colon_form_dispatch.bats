@@ -47,6 +47,17 @@ teardown() {
   assert_line --index 0 "codex:gpt-5.4-mini"
 }
 
+@test "cmd_commit: empty provider response never opens the editor" {
+  run_provider() { :; }
+  _commit_prompt_and_run() { printf 'EDITOR_OPENED\n'; }
+
+  run cmd_commit "codex:gpt-5.4-mini"
+
+  assert_failure
+  assert_output --partial "codex returned an empty commit message"
+  refute_output --partial "EDITOR_OPENED"
+}
+
 @test "cmd_commit: from subdirectory includes repo-root staged changes" {
   mkdir -p nested
   cd nested
