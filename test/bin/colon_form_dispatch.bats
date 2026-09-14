@@ -58,6 +58,16 @@ teardown() {
   refute_output --partial "EDITOR_OPENED"
 }
 
+@test "cmd_commit: no staged changes fails before provider invocation" {
+  git restore --staged file.txt
+
+  run cmd_commit "codex:gpt-5.4-mini"
+
+  assert_failure
+  assert_output --partial "No staged changes to summarize"
+  refute_output --partial "STUB provider="
+}
+
 @test "cmd_commit: from subdirectory includes repo-root staged changes" {
   mkdir -p nested
   cd nested

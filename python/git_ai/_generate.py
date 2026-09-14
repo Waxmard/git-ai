@@ -18,10 +18,20 @@ if TYPE_CHECKING:
         DEFAULT_RELEASE_CONTEXT,
         _omit_large_file_diffs,
         derive_diff_stat,
+        get_current_branch,
+        get_diff_stat,
+        get_git_dir,
+        get_release_context,
+        get_repo_root,
+        get_staged_diff_context,
         largest_diff_files,
     )
-    from ._git_branch import format_branch_context
-    from ._instructions import format_repo_guidance
+    from ._git_branch import (
+        format_branch_context,
+        get_branch_commit_subjects,
+        resolve_commit_base,
+    )
+    from ._instructions import format_repo_guidance, load_repo_instructions
     from ._pr_prompt_build import DiffScope, build_mr_prompt_input
 elif __package__ in (None, ""):
     import importlib
@@ -34,18 +44,38 @@ elif __package__ in (None, ""):
     build_mr_prompt_input = _pr_prompt_build_mod.build_mr_prompt_input
     derive_diff_stat = _git_mod.derive_diff_stat
     format_branch_context = _git_branch_mod.format_branch_context
-    format_repo_guidance = importlib.import_module("_instructions").format_repo_guidance
+    get_branch_commit_subjects = _git_branch_mod.get_branch_commit_subjects
+    get_current_branch = _git_mod.get_current_branch
+    get_diff_stat = _git_mod.get_diff_stat
+    get_git_dir = _git_mod.get_git_dir
+    get_release_context = _git_mod.get_release_context
+    get_repo_root = _git_mod.get_repo_root
+    get_staged_diff_context = _git_mod.get_staged_diff_context
+    _instructions_mod = importlib.import_module("_instructions")
+    format_repo_guidance = _instructions_mod.format_repo_guidance
+    load_repo_instructions = _instructions_mod.load_repo_instructions
     largest_diff_files = _git_mod.largest_diff_files
     _omit_large_file_diffs = _git_mod._omit_large_file_diffs
+    resolve_commit_base = _git_branch_mod.resolve_commit_base
 else:
     from ._git import (
         DEFAULT_RELEASE_CONTEXT,
         _omit_large_file_diffs,
         derive_diff_stat,
+        get_current_branch,
+        get_diff_stat,
+        get_git_dir,
+        get_release_context,
+        get_repo_root,
+        get_staged_diff_context,
         largest_diff_files,
     )
-    from ._git_branch import format_branch_context
-    from ._instructions import format_repo_guidance
+    from ._git_branch import (
+        format_branch_context,
+        get_branch_commit_subjects,
+        resolve_commit_base,
+    )
+    from ._instructions import format_repo_guidance, load_repo_instructions
     from ._pr_prompt_build import DiffScope, build_mr_prompt_input
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -169,6 +199,42 @@ def build_commit_prompt(
     parts.append(f"<diff>\n{diff}\n</diff>")
 
     return _load_prompt("commit.txt"), "\n\n".join(parts)
+
+
+def build_repo_commit_prompt(
+    repo_path: str | Path = ".",
+    *,
+    base: str | None = None,
+) -> tuple[str, str]:
+    """Build a commit prompt from staged changes and repository context."""
+    repo_root = get_repo_root(repo_path)
+    diff, diff_stat = get_staged_diff_context(repo_root)
+    release_context = get_release_context(repo_root)
+    repo_guidance = load_repo_instructions(repo_root)
+    branch_context: dict[str, str | None] = {}
+    try:
+        branch = get_current_branch(repo_root)
+        resolved_base = resolve_commit_base(
+            repo_root,
+            override=base or os.environ.get("GIT_AI_COMMIT_BASE") or None,
+            git_dir=get_git_dir(repo_root),
+            branch=branch,
+        )
+        if resolved_base:
+            branch_context = {
+                "branch_name": branch,
+                "branch_commits": get_branch_commit_subjects(repo_root, resolved_base),
+                "branch_diffstat": get_diff_stat(repo_root, resolved_base),
+            }
+    except (OSError, RuntimeError):
+        pass
+    return build_commit_prompt(
+        diff,
+        diff_stat=diff_stat,
+        release_context=release_context,
+        repo_guidance=repo_guidance,
+        **branch_context,
+    )
 
 
 def build_mr_prompt(
