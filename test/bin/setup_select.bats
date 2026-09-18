@@ -1501,6 +1501,84 @@ _curl_code_stub() { # DIR CODE
   refute_output --partial "STORED:$(printf '\e[200~')sk-real-key"
 }
 
+@test "_setup_prompt_api_key: stores the key when the pasted clipboard ended in a newline" {
+  # The newline splits the bracketed-paste wrapper across two reads, so the
+  # closing marker lands in the *next* prompt's buffer, not the key's — the
+  # "Choice [1]:" read saw "\e[201~1", missed the keychain arm, and silently
+  # dropped the key. Every prompt scrubs now, not just the paste one.
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 200
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    store_api_key() { printf "STORED:%s\n" "$2"; }
+    printf $"\e[200~sk-real-key\n\e[201~1\n" | _setup_prompt_api_key deepseek-api deepseek-api-key DEEPSEEK_API_KEY "DeepSeek API"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "STORED:sk-real-key"
+  refute_output --partial "Not saved"
+}
+
+@test "_setup_prompt_api_key: a captured key never consults the clipboard" {
+  # The fallback must be reachable ONLY when the terminal delivered nothing.
+  # If it ever fires alongside a real capture, an unrelated clipboard value
+  # could be probed and stored in place of the key the user actually typed.
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 200
+  printf '#!/bin/bash\nprintf "sk-clipboard-value"\n' >"$stub/pbpaste"
+  chmod +x "$stub/pbpaste"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    store_api_key() { printf "STORED:%s\n" "$2"; }
+    printf "sk-typed-key\n1\n" | _setup_prompt_api_key deepseek-api deepseek-api-key DEEPSEEK_API_KEY "DeepSeek API"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "STORED:sk-typed-key"
+  refute_output --partial "sk-clipboard-value"
+  refute_output --partial "Nothing arrived from the terminal"
+}
+
+@test "_setup_prompt_api_key: a swallowed paste falls back to the clipboard once confirmed" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 200
+  printf '#!/bin/bash\nprintf "sk-clipboard-value"\n' >"$stub/pbpaste"
+  chmod +x "$stub/pbpaste"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    store_api_key() { printf "STORED:%s\n" "$2"; }
+    printf "\ny\n1\n" | _setup_prompt_api_key deepseek-api deepseek-api-key DEEPSEEK_API_KEY "DeepSeek API"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Nothing arrived from the terminal"
+  assert_output --partial "STORED:sk-clipboard-value"
+}
+
+@test "_setup_prompt_api_key: declining the clipboard offer still skips" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 200
+  printf '#!/bin/bash\nprintf "sk-clipboard-value"\n' >"$stub/pbpaste"
+  chmod +x "$stub/pbpaste"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    store_api_key() { printf "STORED:%s\n" "$2"; }
+    printf "\nn\n" | _setup_prompt_api_key deepseek-api deepseek-api-key DEEPSEEK_API_KEY "DeepSeek API"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Skipped"
+  refute_output --partial "STORED"
+}
+
 @test "_setup_prompt_api_key: an unverifiable key is not stored unless confirmed" {
   local stub; stub="$(mktemp -d)"
   _curl_code_stub "$stub" 503

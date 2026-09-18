@@ -11,14 +11,14 @@
 # and clobber the wizard's own traps. The key goes in a curl config file rather
 # than argv, keeping it out of `ps`.
 _setup_probe_key() (
-  local provider="$1" key="$2" cfg url code st esc
+  local provider="$1" probe_key="$2" cfg url code st esc
   [[ -z "${GIT_AI_NO_KEY_PROBE:-}" ]] || return 2
   command -v curl >/dev/null 2>&1 || return 2
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 2
   trap 'rm -f "$cfg"' EXIT
   # curl's config parser reads \ and " inside a quoted value as escapes, so an
   # unescaped key silently probes a truncated string and reports a false reject.
-  esc=${key//\\/\\\\}
+  esc=${probe_key//\\/\\\\}
   esc=${esc//\"/\\\"}
   case "${provider%%@*}" in
     anthropic-api)
@@ -57,36 +57,51 @@ _setup_prompt_api_key() {
 
   printf '\n%s needs an API key.\n' "$label"
   # fzf (the provider/model pickers immediately before this prompt) turns on
-  # bracketed-paste mode for its own multi-line search box and is supposed to
-  # restore the terminal on exit, but that restore doesn't always land before
-  # this `read` starts — a paste then arrives wrapped in \e[200~ / \e[201~,
-  # which plain `read` (no readline) inserts into $key verbatim, corrupting
-  # the key. Disable it up front so a paste made after the prompt is clean.
-  printf '\e[?2004l'
-  read -rsp "  Paste key (blank to skip): " key
-  printf '\n'
-  # Layered defense against paste contamination that never shows on screen
-  # (read -s echoes nothing, so a mangled key otherwise fails silently at
-  # probe/first-use with no visible clue why): strip a bracketed-paste
-  # wrapper that slipped through despite the above, strip any other stray
-  # control byte (a trailing \r from a Windows-authored clipboard, e.g.), then
-  # trim ordinary leading/trailing whitespace a "copy key" button can pad in.
-  key="${key#$'\e[200~'}"
-  key="${key%$'\e[201~'}"
-  key=$(printf '%s' "$key" | tr -d '[:cntrl:]')
-  key=$(_trim "$key")
+  # bracketed-paste mode and its restore doesn't always land before this read,
+  # so a paste can arrive wrapped in \e[200~ / \e[201~. _setup_read disables
+  # the mode and scrubs the markers, stray control bytes, and padding — for
+  # every wizard prompt, not just this one: when the clipboard ends in a
+  # newline the closing marker lands in the *next* prompt's buffer.
+  # `read -s` deliberately echoes nothing, which means a paste that worked
+  # perfectly looks exactly like one that never arrived. Say so up front —
+  # the "Captured N chars" line below closes the loop after Enter.
+  _setup_read key "  Paste key (nothing will echo — that's expected; blank to skip): " silent
+  if [[ -z "$key" ]]; then
+    # `read -s` echoes nothing, so a paste the terminal swallowed is
+    # indistinguishable from a deliberate skip — which is exactly how this
+    # failed silently for so long. Offer the clipboard before giving up, and
+    # show a masked fingerprint of it so the user confirms the right thing.
+    local clip offer
+    clip=$(_setup_clipboard)
+    clip=$(printf '%s' "$clip" | tr -d '[:cntrl:]')
+    clip=$(_trim "$clip")
+    if [[ -n "$clip" ]]; then
+      printf '  Nothing arrived from the terminal.\n'
+      offer=$(printf '  Use your clipboard instead (%s chars ending "%s")? [Y/n]: ' \
+        "${#clip}" "${clip: -4}")
+      _setup_read ans "$offer" || ans=""
+      case "$ans" in
+        n | N | no | No) ;;
+        *) key="$clip" ;;
+      esac
+    fi
+  fi
   if [[ -z "$key" ]]; then
     printf '  Skipped — set %s later or re-run "git-ai setup".\n' "$envvar"
     return 0
   fi
 
+  # read -s echoes nothing, so a mangled capture is indistinguishable from a
+  # clean one until the key silently fails at first use. Show a masked
+  # fingerprint so a truncated or contaminated paste is visible right here.
+  printf '  Captured %s chars ending "%s".\n' "${#key}" "${key: -4}"
   printf '  Checking key… '
   _setup_probe_key "$provider" "$key"
   case $? in
     0) printf 'accepted.\n' ;;
     1)
       printf '%s rejected it.\n' "$label"
-      read -rp '  Save it anyway? [y/N]: ' ans || ans=""
+      _setup_read ans '  Save it anyway? [y/N]: ' || ans=""
       case "$ans" in
         y | Y | yes | Yes) ;;
         *)
@@ -101,7 +116,7 @@ _setup_prompt_api_key() {
       # paste and a flaky network look identical here, so this still asks
       # rather than silently storing whatever was captured.
       printf 'could not verify (offline?).\n'
-      read -rp '  Save it anyway? [y/N]: ' ans || ans=""
+      _setup_read ans '  Save it anyway? [y/N]: ' || ans=""
       case "$ans" in
         y | Y | yes | Yes) ;;
         *)
@@ -113,7 +128,7 @@ _setup_prompt_api_key() {
   esac
 
   printf '  Store it: 1) OS keychain  2) shell rc (plaintext)  3) skip saving\n'
-  read -rp "  Choice [1]: " how
+  _setup_read how "  Choice [1]: "
   case "${how:-1}" in
     1)
       if store_api_key "$service" "$key"; then
