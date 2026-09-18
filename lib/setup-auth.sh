@@ -79,7 +79,7 @@ _setup_prompt_api_key() {
       printf '  Nothing arrived from the terminal.\n'
       offer=$(printf '  Use your clipboard instead (%s chars ending "%s")? [Y/n]: ' \
         "${#clip}" "${clip: -4}")
-      _setup_read ans "$offer" || ans=""
+      _setup_read ans "$offer" || ans=n
       case "$ans" in
         n | N | no | No) ;;
         *) key="$clip" ;;

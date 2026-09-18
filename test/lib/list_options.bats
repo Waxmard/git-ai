@@ -58,6 +58,13 @@ teardown() {
   assert_output --partial "claude-code:claude-haiku-4-5-20251001|claude-haiku-4-5 · Claude Code"
 }
 
+@test "list_options: openai-compat providers appear via the shared table" {
+  run list_options commit
+  assert_success
+  assert_output --partial "openai-api:gpt-5.4|gpt-5.4 · OpenAI API"
+  assert_output --partial "deepseek-api:deepseek-chat|deepseek-chat · DeepSeek API"
+}
+
 @test "list_options: date suffix stripped from display, kept in value" {
   run list_options commit
   assert_success

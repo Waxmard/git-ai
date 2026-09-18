@@ -54,6 +54,13 @@ teardown() {
   done <<< "$output"
 }
 
+@test "cmd_options commit: openai-compat providers appear via the shared table" {
+  run cmd_options commit
+  assert_success
+  assert_output --partial "openai-api:gpt-5.4|gpt-5.4 · OpenAI API"
+  assert_output --partial "deepseek-api:deepseek-chat|deepseek-chat · DeepSeek API"
+}
+
 @test "cmd_options pr: default tool is commit when missing arg" {
   save_last_message commit "test message"
   run cmd_options

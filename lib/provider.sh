@@ -291,19 +291,23 @@ _run_anthropic_api() {
   _extract_anthropic_text <<<"$response" || die "Failed to parse Anthropic API response"
 }
 
-# _run_openai_compat_api BASE_URL MODEL PROMPT INPUT KEY
+# _run_openai_compat_api BASE_URL MODEL PROMPT INPUT KEY LABEL
 # Generic runner for any OpenAI-compatible bearer-auth provider (see
 # GIT_AI_OPENAI_COMPAT in lib/auth.sh) — same request/response envelope,
-# different host. BASE_URL is everything before "/chat/completions".
+# different host. BASE_URL is everything before "/chat/completions". LABEL
+# (the provider's display name) names which provider failed in error
+# messages — with two-plus compat providers sharing this function, a bare
+# "API request failed" no longer says which one.
 _run_openai_compat_api() {
   local base="$1"
   local model="$2"
   local prompt="$3"
   local input="$4"
   local key="$5"
+  local label="$6"
   local body_file response curl_cfg
   body_file=$(printf '%s' "$input" | _stage_request_body openai "$prompt" "$model") ||
-    die "Failed to build API request"
+    die "Failed to build ${label} request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
   trap 'rm -f "$curl_cfg" "$body_file"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$key" > "$curl_cfg"
@@ -314,12 +318,12 @@ _run_openai_compat_api() {
     "${base}/chat/completions")
   local curl_status=$?
   rm -f "$curl_cfg" "$body_file"
-  [[ $curl_status -eq 0 ]] || die "API request failed"
+  [[ $curl_status -eq 0 ]] || die "${label} request failed"
   "${GIT_AI_PYTHON:-python3}" -c '
 import json, sys
 data = json.loads(sys.stdin.read())
 print(data["choices"][0]["message"]["content"])
-' <<<"$response" || die "Failed to parse API response"
+' <<<"$response" || die "Failed to parse ${label} response"
 }
 
 # run_provider TOOL_NAME PROVIDER PROMPT INPUT [MODEL]
@@ -461,7 +465,7 @@ run_provider() {
         label=$(provider_display_name "$provider_base_name")
         api_key=$(resolve_api_key "$keyservice" "$envvar") ||
           die "${label} auth not found. Set ${envvar} or store '${keyservice}' in your keychain."
-        _run_openai_compat_api "$base_url" "$model" "$prompt" "$input" "$api_key" ||
+        _run_openai_compat_api "$base_url" "$model" "$prompt" "$input" "$api_key" "$label" ||
           die "${label} generation failed"
       else
         die "unknown provider: $provider"

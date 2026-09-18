@@ -39,7 +39,7 @@ setup() {
 @test "recommended_model: deepseek has its own family pin" {
   run recommended_model deepseek-api
   assert_success
-  assert_output "deepseek-flash"
+  assert_output "deepseek-chat"
 }
 
 @test "recommended_model: profile-qualified vertex token resolves to base family" {

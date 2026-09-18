@@ -9,7 +9,7 @@ setup() {
   GCLOUD_LOG="${TEST_DIR}/gcloud.log"
   export GCLOUD_LOG
   # Isolate from the developer's real env + ~/.config so readiness is deterministic.
-  unset ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY \
+  unset ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY DEEPSEEK_API_KEY \
     GOOGLE_CLOUD_PROJECT GOOGLE_VERTEX_PROJECT
   export XDG_CONFIG_HOME="$TEST_DIR"
   source "${REPO_ROOT}/lib/ai-common.sh"

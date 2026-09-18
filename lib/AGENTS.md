@@ -25,11 +25,14 @@ cannot shell out for something bash can do natively). A provider whose model
 list needs filtering (OpenAI's `/models` also lists embeddings/tts/etc.) keeps
 its own bespoke `_fetch_models_*` instead of joining the generic one — the
 table only covers what's actually identical across members.
-`bin/git-ai`'s arg parser and `examples/options.conf`'s comment still need the
-token by hand: a `case` pattern can't be built from an expanded variable (`$var`
-inside a pattern position is one literal alternative, not `|`-split), so
-`cmd_pr`'s loop instead delegates to `provider_is_valid` (already table-aware)
-rather than hand-listing tokens a second time.
+`examples/options.conf`'s comment, `README.md`'s provider table and key-resolution
+list, and — when the row introduces a new `family` value — a matching
+`family = model-id` line in `recommended-models.conf` still need the token by
+hand. `bin/git-ai`'s arg parser does not: a `case` pattern can't be built from
+an expanded variable (`$var` inside a pattern position is one literal
+alternative, not `|`-split), so both `cmd_commit` and `cmd_pr`'s loops
+delegate to `provider_is_valid` (already table-aware) instead of hand-listing
+tokens a second time.
 
 Per-provider notes worth knowing before editing:
 

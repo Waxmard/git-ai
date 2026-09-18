@@ -205,8 +205,7 @@ _setup_pick_providers() {
     printf '  %d) %s\n' "$i" "$(_setup_provider_label "$p")" >&2
     i=$((i + 1))
   done
-  printf 'Select providers by number (space-separated): ' >&2
-  read -r line
+  _setup_read line 'Select providers by number (space-separated): '
   local n
   for n in $line; do
     [[ "$n" =~ ^[0-9]+$ ]] || continue

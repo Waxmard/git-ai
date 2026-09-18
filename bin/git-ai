@@ -280,9 +280,11 @@ cmd_pr() {
         # vertex token (base@profile, optionally :model) — provider_is_valid
         # is the single source of truth for what a provider token looks like
         # (cmd_commit above delegates the same way), so recognizing one here
-        # never needs its own mirrored token list.
+        # never needs its own mirrored token list. "last" is commit-only
+        # (message reuse) and must still be rejected here, not run as a
+        # provider.
         local cand_provider="${1%%:*}"
-        if provider_is_valid "$cand_provider"; then
+        if [[ "$cand_provider" != last ]] && provider_is_valid "$cand_provider"; then
           PROVIDER="$cand_provider"
           if [[ "$1" == *:* ]]; then
             MODEL="${1#*:}"
