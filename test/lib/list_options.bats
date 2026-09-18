@@ -21,6 +21,7 @@ setup_file() {
   printf 'claude-opus-4-6\n' >"${CACHE_TPL}/vertex-anthropic.list"
   printf 'gemini-3.1-flash\n' >"${CACHE_TPL}/gemini-api.list"
   printf 'gpt-5.4\n' >"${CACHE_TPL}/openai-api.list"
+  printf 'deepseek-chat\n' >"${CACHE_TPL}/deepseek-api.list"
 }
 
 teardown_file() {

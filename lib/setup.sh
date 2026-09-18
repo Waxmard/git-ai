@@ -13,7 +13,9 @@
 # `vertex` is the single user-facing Vertex AI entry: the wizard never shows
 # the vertex-gemini/vertex-anthropic split — it expands the token itself and
 # routes each model to the right internal provider by its id.
-SETUP_PROVIDERS=(claude-code codex antigravity vertex gemini-api anthropic-api openai-api)
+SETUP_PROVIDERS=(claude-code codex antigravity vertex gemini-api anthropic-api)
+while IFS= read -r _setup_compat_p; do SETUP_PROVIDERS+=("$_setup_compat_p"); done < <(_openai_compat_tokens)
+unset _setup_compat_p
 
 # Expand a wizard provider token into the concrete runnable provider(s) it
 # stands for: `vertex` covers both internal vertex providers; everything else

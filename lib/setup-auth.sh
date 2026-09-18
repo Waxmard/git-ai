@@ -25,17 +25,18 @@ _setup_probe_key() (
       printf 'header = "x-api-key: %s"\nheader = "anthropic-version: 2023-06-01"\n' "$esc" >"$cfg"
       url="https://api.anthropic.com/v1/models?limit=1"
       ;;
-    openai-api)
-      printf 'header = "Authorization: Bearer %s"\n' "$esc" >"$cfg"
-      url="https://api.openai.com/v1/models"
-      ;;
     # Gemini takes the key as a query parameter, so the whole URL lives in the
     # config file too and none of it can be passed on the command line.
     gemini-api)
       printf 'url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=%s"\n' "$esc" >"$cfg"
       url=""
       ;;
-    *) return 2 ;;
+    *)
+      local base
+      base=$(_openai_compat_field "${provider%%@*}" 5) || return 2
+      printf 'header = "Authorization: Bearer %s"\n' "$esc" >"$cfg"
+      url="${base}/models"
+      ;;
   esac
 
   code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -K "$cfg" ${url:+"$url"})
@@ -55,8 +56,18 @@ _setup_prompt_api_key() {
   local key how rc ans
 
   printf '\n%s needs an API key.\n' "$label"
+  # fzf (the provider/model pickers immediately before this prompt) turns on
+  # bracketed-paste mode for its own multi-line search box and is supposed to
+  # restore the terminal on exit, but that restore doesn't always land before
+  # this `read` starts — a paste then arrives wrapped in \e[200~ / \e[201~,
+  # which plain `read` (no readline) inserts into $key verbatim, corrupting
+  # the key. Disable it up front so a paste made after the prompt is clean,
+  # and strip the wrapper defensively in case it still slips through.
+  printf '\e[?2004l'
   read -rsp "  Paste key (blank to skip): " key
   printf '\n'
+  key="${key#$'\e[200~'}"
+  key="${key%$'\e[201~'}"
   if [[ -z "$key" ]]; then
     printf '  Skipped — set %s later or re-run "git-ai setup".\n' "$envvar"
     return 0

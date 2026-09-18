@@ -1484,3 +1484,19 @@ _curl_code_stub() { # DIR CODE
   assert_output --partial "OpenAI API rejected it."
   refute_output --partial "STORED"
 }
+
+@test "_setup_prompt_api_key: strips a leftover bracketed-paste wrapper from the pasted key" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 200
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    store_api_key() { printf "STORED:%s\n" "$2"; }
+    printf $"\e[200~sk-real-key\e[201~\n1\n" | _setup_prompt_api_key openai-api openai-api-key OPENAI_API_KEY "OpenAI API"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "STORED:sk-real-key"
+  refute_output --partial "STORED:$(printf '\e[200~')sk-real-key"
+}

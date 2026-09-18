@@ -10,6 +10,27 @@ Takes a tool name (`commit` or `pr`) plus prompt and input, and emits the model'
 
 A provider token may be profile-qualified (`base@profile`): dispatch on the base, but look up account/project config under the full token, which is the config section name.
 
+**Adding an OpenAI-compatible bearer-auth provider** (a new API that speaks the
+identical `Authorization: Bearer` + `{model,messages}` + `{choices[0].message.content}`
+wire format — most new LLM launches do) needs **one row**, not a mirrored case
+arm: `GIT_AI_OPENAI_COMPAT` in `auth.sh`. That single table drives
+`provider_ready`/`provider_display_name`/`provider_family`/`provider_key_meta`
+(`auth.sh`), `run_provider`'s fallback dispatch and `_run_openai_compat_api`
+(`provider.sh`), `_models_dev_key`'s fallback and `_fetch_models_openai_compat`
+(`discovery.sh`), and the provider lists in `list_providers`/`list_options`
+(`config.sh`) and `SETUP_PROVIDERS` (`setup.sh`) — all of it consumed through
+`_openai_compat_field PROVIDER INDEX` (plain bash field-split, deliberately not
+`cut`: the readiness tests run with an empty `PATH`, so a helper this central
+cannot shell out for something bash can do natively). A provider whose model
+list needs filtering (OpenAI's `/models` also lists embeddings/tts/etc.) keeps
+its own bespoke `_fetch_models_*` instead of joining the generic one — the
+table only covers what's actually identical across members.
+`bin/git-ai`'s arg parser and `examples/options.conf`'s comment still need the
+token by hand: a `case` pattern can't be built from an expanded variable (`$var`
+inside a pattern position is one literal alternative, not `|`-split), so
+`cmd_pr`'s loop instead delegates to `provider_is_valid` (already table-aware)
+rather than hand-listing tokens a second time.
+
 Per-provider notes worth knowing before editing:
 
 - **Every `curl` path** builds its JSON through `_stage_request_body SHAPE PROMPT [MODEL]`, which reads the payload on **stdin** and writes the body to a temp file the caller owns, posted as `--data-binary @path`. Neither the input nor the body may ride an argv or env string: Linux caps a *single* one of either at `MAX_ARG_STRLEN` (131072 bytes), so a diff well inside `GIT_AI_MAX_DIFF_BYTES` fails `execve` there. The prompt is a packaged file and stays in env. The four shapes are `gemini` (shared by AI Studio and Vertex), `openai`, `anthropic`, and `vertex-anthropic` (`anthropic_version` instead of `model`).

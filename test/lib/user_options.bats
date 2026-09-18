@@ -132,6 +132,7 @@ EOF
   refute_output --partial "anthropic-api:"
   refute_output --partial "gemini-api:"
   refute_output --partial "openai-api:"
+  refute_output --partial "deepseek-api:"
 }
 
 @test "list_options: custom model IDs in config appear in output" {

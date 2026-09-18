@@ -85,6 +85,18 @@ EOF
   assert_success
 }
 
+@test "provider_ready: deepseek-api succeeds with an env key" {
+  export DEEPSEEK_API_KEY="sk-test"
+  run provider_ready deepseek-api
+  assert_success
+}
+
+@test "provider_ready: deepseek-api fails with no key anywhere" {
+  PATH="$STUB_BIN" run provider_ready deepseek-api
+  assert_failure
+  assert_output --partial "DEEPSEEK_API_KEY not set"
+}
+
 @test "provider_ready: gemini-api succeeds with an env key" {
   export GEMINI_API_KEY="g-key"
   run provider_ready gemini-api

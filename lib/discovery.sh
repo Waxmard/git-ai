@@ -70,8 +70,13 @@ _models_dev_key() {
   case ${1%%@*} in
     gemini-api | vertex-gemini)                printf 'google\tgemini\n' ;;
     anthropic-api | claude-code | vertex-anthropic) printf 'anthropic\tclaude\n' ;;
-    openai-api | codex)                        printf 'openai\t\n' ;;
-    *) return 1 ;;
+    codex)                                      printf 'openai\t\n' ;;
+    *)
+      local mdkey mdfam
+      mdkey=$(_openai_compat_field "$1" 6) && [[ -n "$mdkey" ]] || return 1
+      mdfam=$(_openai_compat_field "$1" 7)
+      printf '%s\t%s\n' "$mdkey" "$mdfam"
+      ;;
   esac
 }
 
@@ -130,7 +135,10 @@ _fetch_models() {
     openai-api)       _fetch_models_openai_api ;;
     claude-code)      _fetch_models_anthropic_api ;;
     codex)            _fetch_models_openai_api ;;
-    *) return 1 ;;
+    *)
+      _openai_compat_field "$1" 1 >/dev/null || return 1
+      _fetch_models_openai_compat "$1"
+      ;;
   esac
 }
 
@@ -208,6 +216,30 @@ keep = [i for i in ids
         if re.match(r"^(gpt|o[0-9])", i) and not any(x in i for x in NON_CHAT)]
 for i in sorted(set(keep), reverse=True):
     print(i)
+' 2>/dev/null
+}
+
+# Generic fetch for any OpenAI-compatible bearer-auth provider (see
+# GIT_AI_OPENAI_COMPAT in lib/auth.sh) with a clean model list — no
+# embeddings/tts/etc. noise to filter, unlike OpenAI's own catalog (above).
+_fetch_models_openai_compat() {
+  local provider="$1" base key cfg resp st
+  base=$(_openai_compat_field "$provider" 5) || return 1
+  key=$(resolve_api_key "$(_openai_compat_field "$provider" 4)" "$(_openai_compat_field "$provider" 3)") &&
+    [[ -n "$key" ]] || return 1
+  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  trap 'rm -f "$cfg"' EXIT # safety net: an interrupt mid-curl must not leak the key file
+  printf 'header = "Authorization: Bearer %s"\n' "$key" >"$cfg"
+  resp=$(curl -sf -m 10 -K "$cfg" "${base}/models")
+  st=$?
+  rm -f "$cfg"
+  [[ $st -eq 0 ]] || return 1
+  GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
+import json, os
+for m in json.loads(os.environ["GIT_AI_JSON"]).get("data", []):
+    i = m.get("id")
+    if i:
+        print(i)
 ' 2>/dev/null
 }
 

@@ -157,6 +157,17 @@ JSON
   refute_line "dall-e-3"
 }
 
+@test "_fetch_models_openai_compat: deepseek lists data[].id in order" {
+  export DEEPSEEK_API_KEY=x
+  stub_curl_ok <<'JSON'
+{"data":[{"id":"deepseek-chat","object":"model"},{"id":"deepseek-reasoner","object":"model"}]}
+JSON
+  run _fetch_models_openai_compat deepseek-api
+  assert_success
+  assert_line --index 0 "deepseek-chat"
+  assert_line --index 1 "deepseek-reasoner"
+}
+
 @test "_fetch_models_vertex: family filter + text-only, strips path and non-text variants" {
   # gcloud stub: any invocation (token mint + `config get-value project` for the
   # quota project) succeeds.
@@ -204,6 +215,18 @@ JSON
   assert_line "o3"
   refute_line "text-embedding-3"
   refute_line "dall-e-3"
+}
+
+@test "_fetch_models_modelsdev: deepseek mapping keeps only deepseek-prefixed ids" {
+  cat >"${CACHE}/_modelsdev.json" <<'JSON'
+{"deepseek":{"models":{"deepseek-chat":{},"deepseek-reasoner":{}}},
+ "openai":{"models":{"gpt-5.4":{}}}}
+JSON
+  run _fetch_models_modelsdev deepseek-api
+  assert_success
+  assert_line "deepseek-chat"
+  assert_line "deepseek-reasoner"
+  refute_line "gpt-5.4"
 }
 
 @test "discover_models: a keyless CLI provider falls back to models.dev" {

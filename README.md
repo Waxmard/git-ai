@@ -63,6 +63,7 @@ git-ai needs at least one of these. `gemini-api` and the two Vertex methods are 
 | `codex` | [Codex CLI](https://github.com/openai/codex) | Codex CLI session |
 | `anthropic-api` | `curl` + `python3` | `ANTHROPIC_API_KEY` |
 | `openai-api` | `curl` + `python3` | `OPENAI_API_KEY` |
+| `deepseek-api` | `curl` + `python3` | `DEEPSEEK_API_KEY` |
 
 `curl` and `python3` are standard on macOS and most Linux systems.
 
@@ -70,7 +71,7 @@ git-ai needs at least one of these. `gemini-api` and the two Vertex methods are 
 
 > **`antigravity` runs on the Google account you sign into `agy` with**, not an API key — run `agy` once interactively so the login is cached, since a headless run cannot authenticate on its own. Its model ids pin reasoning effort in the id itself (`gemini-3.7-flash-medium`), and `agy models` is where git-ai discovers them.
 
-For API-key providers (`gemini-api`, `anthropic-api`, `openai-api`), `git-ai setup` prompts for the key and stores it in your OS keychain or shell rc. For Google ADC / service-account credentials, use a `vertex-gemini` or `vertex-anthropic` method and let setup run `gcloud auth application-default login`. To wire any of this up by hand instead, see [Manual configuration](#manual-configuration-advanced).
+For API-key providers (`gemini-api`, `anthropic-api`, `openai-api`, `deepseek-api`), `git-ai setup` prompts for the key and stores it in your OS keychain or shell rc. For Google ADC / service-account credentials, use a `vertex-gemini` or `vertex-anthropic` method and let setup run `gcloud auth application-default login`. To wire any of this up by hand instead, see [Manual configuration](#manual-configuration-advanced).
 
 ## Commands
 
@@ -326,10 +327,10 @@ Everything below is handled for you by `git-ai setup`. Reach for it only when yo
 
 ### API keys by hand
 
-For `gemini-api`, `anthropic-api`, and `openai-api`, git-ai resolves each key in this order until one succeeds:
+For `gemini-api`, `anthropic-api`, `openai-api`, and `deepseek-api`, git-ai resolves each key in this order until one succeeds:
 
-1. The environment variable — `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`.
-2. System keychain, under the service name `<provider>-api-key` (e.g. `gemini-api-key`, `anthropic-api-key`, `openai-api-key`):
+1. The environment variable — `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `DEEPSEEK_API_KEY`.
+2. System keychain, under the service name `<provider>-api-key` (e.g. `gemini-api-key`, `anthropic-api-key`, `openai-api-key`, `deepseek-api-key`):
    - **macOS:** `security add-generic-password -s gemini-api-key -a "$USER" -w YOUR_KEY`
    - **GNOME / libsecret:** `secret-tool store --label="Gemini API Key" service gemini-api-key`
    - **pass:** `pass insert gemini-api-key`
@@ -355,7 +356,7 @@ gpt-5.4-mini
 [vertex-anthropic]
 ```
 
-- `[provider]` headers must be one of: `vertex-gemini`, `vertex-anthropic`, `gemini-api`, `antigravity`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
+- `[provider]` headers must be one of: `vertex-gemini`, `vertex-anthropic`, `gemini-api`, `antigravity`, `claude-code`, `anthropic-api`, `codex`, `openai-api`, `deepseek-api`. Unknown headers are silently dropped.
 - Model IDs under a header are passed through to the provider verbatim, so you can list future model IDs (e.g. a newly released `claude-sonnet-5-0`) without waiting for a git-ai release.
 - Delete the file to restore the full shipped catalog.
 - See [`examples/options.conf`](examples/options.conf) for a starter.
