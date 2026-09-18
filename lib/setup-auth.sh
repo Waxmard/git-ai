@@ -61,13 +61,20 @@ _setup_prompt_api_key() {
   # restore the terminal on exit, but that restore doesn't always land before
   # this `read` starts — a paste then arrives wrapped in \e[200~ / \e[201~,
   # which plain `read` (no readline) inserts into $key verbatim, corrupting
-  # the key. Disable it up front so a paste made after the prompt is clean,
-  # and strip the wrapper defensively in case it still slips through.
+  # the key. Disable it up front so a paste made after the prompt is clean.
   printf '\e[?2004l'
   read -rsp "  Paste key (blank to skip): " key
   printf '\n'
+  # Layered defense against paste contamination that never shows on screen
+  # (read -s echoes nothing, so a mangled key otherwise fails silently at
+  # probe/first-use with no visible clue why): strip a bracketed-paste
+  # wrapper that slipped through despite the above, strip any other stray
+  # control byte (a trailing \r from a Windows-authored clipboard, e.g.), then
+  # trim ordinary leading/trailing whitespace a "copy key" button can pad in.
   key="${key#$'\e[200~'}"
   key="${key%$'\e[201~'}"
+  key=$(printf '%s' "$key" | tr -d '[:cntrl:]')
+  key=$(_trim "$key")
   if [[ -z "$key" ]]; then
     printf '  Skipped — set %s later or re-run "git-ai setup".\n' "$envvar"
     return 0
@@ -88,7 +95,21 @@ _setup_prompt_api_key() {
           ;;
       esac
       ;;
-    *) printf 'could not verify (offline?) — saving it anyway.\n' ;;
+    *)
+      # Unverifiable (offline, no curl, an unexpected status) is not the same
+      # as rejected, but it is also not proof the key is good — a corrupted
+      # paste and a flaky network look identical here, so this still asks
+      # rather than silently storing whatever was captured.
+      printf 'could not verify (offline?).\n'
+      read -rp '  Save it anyway? [y/N]: ' ans || ans=""
+      case "$ans" in
+        y | Y | yes | Yes) ;;
+        *)
+          printf '  Not saved — re-run "git-ai setup" once you can verify it.\n'
+          return 0
+          ;;
+      esac
+      ;;
   esac
 
   printf '  Store it: 1) OS keychain  2) shell rc (plaintext)  3) skip saving\n'

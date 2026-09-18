@@ -1500,3 +1500,49 @@ _curl_code_stub() { # DIR CODE
   assert_output --partial "STORED:sk-real-key"
   refute_output --partial "STORED:$(printf '\e[200~')sk-real-key"
 }
+
+@test "_setup_prompt_api_key: an unverifiable key is not stored unless confirmed" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 503
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    store_api_key() { printf "STORED\n"; }
+    printf "sk-maybe-good\nn\n" | _setup_prompt_api_key openai-api openai-api-key OPENAI_API_KEY "OpenAI API"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "could not verify"
+  refute_output --partial "STORED"
+}
+
+@test "_setup_prompt_api_key: confirming an unverifiable key still stores it" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 503
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    store_api_key() { printf "STORED:%s\n" "$2"; }
+    printf "sk-offline-key\ny\n1\n" | _setup_prompt_api_key openai-api openai-api-key OPENAI_API_KEY "OpenAI API"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "STORED:sk-offline-key"
+}
+
+@test "_setup_prompt_api_key: strips a trailing carriage return and padding whitespace" {
+  local stub; stub="$(mktemp -d)"
+  _curl_code_stub "$stub" 200
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    store_api_key() { printf "STORED:[%s]\n" "$2"; }
+    printf $"  sk-real-key\r\n1\n" | _setup_prompt_api_key openai-api openai-api-key OPENAI_API_KEY "OpenAI API"
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "STORED:[sk-real-key]"
+}
