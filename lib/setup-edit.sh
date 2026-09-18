@@ -277,7 +277,7 @@ _setup_change_vertex_projects() {
     if [[ "$p" == '=custom=' ]]; then want_custom=1; else picked+=("$p"); pseen+="$p"$'\n'; fi
   done <<<"$selected"
   if [[ -n "$want_custom" ]]; then
-    read -rp 'Additional project id(s), comma-separated: ' line || line=""
+    _setup_read line 'Additional project id(s), comma-separated: ' || line=""
     while IFS= read -r p; do
       p=$(_trim "$p")
       [[ -n "$p" && "$pseen" != *$'\n'"$p"$'\n'* ]] && { picked+=("$p"); pseen+="$p"$'\n'; }
@@ -442,7 +442,7 @@ _setup_change_models() {
     if [[ "$m" == '=custom=' ]]; then want_custom=1; else picked+=("$m"); pseen+="$m"$'\n'; fi
   done <<<"$selected"
   if [[ -n "$want_custom" ]]; then
-    read -rp 'Additional model id(s), comma-separated: ' line || line=""
+    _setup_read line 'Additional model id(s), comma-separated: ' || line=""
     while IFS= read -r m; do
       m=$(_trim "$m")
       [[ -n "$m" && "$pseen" != *$'\n'"$m"$'\n'* ]] && { picked+=("$m"); pseen+="$m"$'\n'; }

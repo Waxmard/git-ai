@@ -21,6 +21,7 @@ setup_file() {
   printf 'claude-opus-4-6\n' >"${CACHE_TPL}/vertex-anthropic.list"
   printf 'gemini-3.1-flash\n' >"${CACHE_TPL}/gemini-api.list"
   printf 'gpt-5.4\n' >"${CACHE_TPL}/openai-api.list"
+  printf 'deepseek-chat\n' >"${CACHE_TPL}/deepseek-api.list"
 }
 
 teardown_file() {
@@ -55,6 +56,13 @@ teardown() {
   assert_output --partial "vertex-gemini:gemini-3.1-pro-preview|gemini-3.1-pro-preview · Vertex AI"
   # Display strips the trailing date suffix from claude-haiku-4-5-20251001
   assert_output --partial "claude-code:claude-haiku-4-5-20251001|claude-haiku-4-5 · Claude Code"
+}
+
+@test "list_options: openai-compat providers appear via the shared table" {
+  run list_options commit
+  assert_success
+  assert_output --partial "openai-api:gpt-5.4|gpt-5.4 · OpenAI API"
+  assert_output --partial "deepseek-api:deepseek-chat|deepseek-chat · DeepSeek API"
 }
 
 @test "list_options: date suffix stripped from display, kept in value" {

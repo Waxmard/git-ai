@@ -26,7 +26,7 @@ _setup_check_shadow_pyx() {
   "$tool" $list_args 2>/dev/null | grep -qw waxmard-git-ai || return 0
 
   printf 'Heads up: a %s-managed git-ai is also installed (waxmard-git-ai).\n' "$tool"
-  read -rp "  Remove it with \"$tool $uninstall_args waxmard-git-ai\"? [y/N]: " ans
+  _setup_read ans "  Remove it with \"$tool $uninstall_args waxmard-git-ai\"? [y/N]: "
   case "$ans" in
     y | Y | yes | Yes)
       # shellcheck disable=SC2086
@@ -60,7 +60,7 @@ _setup_check_shadow_npm() {
   fi
 
   local ans
-  read -rp '  Remove it with "npm rm -g waxmard-git-ai"? [y/N]: ' ans
+  _setup_read ans '  Remove it with "npm rm -g waxmard-git-ai"? [y/N]: '
   case "$ans" in
     y | Y | yes | Yes)
       if npm rm -g waxmard-git-ai; then

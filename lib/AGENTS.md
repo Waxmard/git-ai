@@ -10,6 +10,30 @@ Takes a tool name (`commit` or `pr`) plus prompt and input, and emits the model'
 
 A provider token may be profile-qualified (`base@profile`): dispatch on the base, but look up account/project config under the full token, which is the config section name.
 
+**Adding an OpenAI-compatible bearer-auth provider** (a new API that speaks the
+identical `Authorization: Bearer` + `{model,messages}` + `{choices[0].message.content}`
+wire format — most new LLM launches do) needs **one row**, not a mirrored case
+arm: `GIT_AI_OPENAI_COMPAT` in `auth.sh`. That single table drives
+`provider_ready`/`provider_display_name`/`provider_family`/`provider_key_meta`
+(`auth.sh`), `run_provider`'s fallback dispatch and `_run_openai_compat_api`
+(`provider.sh`), `_models_dev_key`'s fallback and `_fetch_models_openai_compat`
+(`discovery.sh`), and the provider lists in `list_providers`/`list_options`
+(`config.sh`) and `SETUP_PROVIDERS` (`setup.sh`) — all of it consumed through
+`_openai_compat_field PROVIDER INDEX` (plain bash field-split, deliberately not
+`cut`: the readiness tests run with an empty `PATH`, so a helper this central
+cannot shell out for something bash can do natively). A provider whose model
+list needs filtering (OpenAI's `/models` also lists embeddings/tts/etc.) keeps
+its own bespoke `_fetch_models_*` instead of joining the generic one — the
+table only covers what's actually identical across members.
+`examples/options.conf`'s comment, `README.md`'s provider table and key-resolution
+list, and — when the row introduces a new `family` value — a matching
+`family = model-id` line in `recommended-models.conf` still need the token by
+hand. `bin/git-ai`'s arg parser does not: a `case` pattern can't be built from
+an expanded variable (`$var` inside a pattern position is one literal
+alternative, not `|`-split), so both `cmd_commit` and `cmd_pr`'s loops
+delegate to `provider_is_valid` (already table-aware) instead of hand-listing
+tokens a second time.
+
 Per-provider notes worth knowing before editing:
 
 - **Every `curl` path** builds its JSON through `_stage_request_body SHAPE PROMPT [MODEL]`, which reads the payload on **stdin** and writes the body to a temp file the caller owns, posted as `--data-binary @path`. Neither the input nor the body may ride an argv or env string: Linux caps a *single* one of either at `MAX_ARG_STRLEN` (131072 bytes), so a diff well inside `GIT_AI_MAX_DIFF_BYTES` fails `execve` there. The prompt is a packaged file and stays in env. The four shapes are `gemini` (shared by AI Studio and Vertex), `openai`, `anthropic`, and `vertex-anthropic` (`anthropic_version` instead of `model`).
@@ -78,6 +102,10 @@ The wizard hides the internal `vertex-gemini` / `vertex-anthropic` split, routin
 
 ### Auth-assist
 
-`_setup_ensure_auth` prompts for API keys after selection and checks each pasted key against the provider's models endpoint (`_setup_probe_key`: 0 accepted, 1 rejected, 2 indeterminate — a network failure saves rather than blocks, and `GIT_AI_NO_KEY_PROBE=1` skips it), then stores to the keychain (`store_api_key`) or the shell rc (`persist_key_to_rc`, plaintext — warn the user). CLI providers get an install hint instead. Vertex gets `_setup_vertex_assist`: ADC login, then `project` / `region` / `account`, with the project recorded and normalized so models already on the base sections land in it rather than being stranded.
+`_setup_ensure_auth` prompts for API keys after selection and checks each pasted key against the provider's models endpoint (`_setup_probe_key`: 0 accepted, 1 rejected, 2 indeterminate for no curl / offline / an unexpected status; `GIT_AI_NO_KEY_PROBE=1` skips the probe entirely, returning 2). `_setup_prompt_api_key` treats indeterminate the same as rejected — both ask "Save it anyway?" before writing anything, since an unverifiable key and a corrupted paste look identical here and neither should land in the keychain silently. Confirmed keys store to the keychain (`store_api_key`) or the shell rc (`persist_key_to_rc`, plaintext — warn the user). CLI providers get an install hint instead. Vertex gets `_setup_vertex_assist`: ADC login, then `project` / `region` / `account`, with the project recorded and normalized so models already on the base sections land in it rather than being stranded.
+
+**Every interactive wizard prompt goes through `_setup_read VAR PROMPT [silent]`** (`setup.sh`), never a bare `read -rp`. An fzf picker runs immediately before most prompts, and fzf's bracketed-paste mode can outlive its exit, so a paste arrives wrapped in `\e[200~` … `\e[201~`; plain `read` has no readline and inserts those bytes verbatim. Scrubbing only the key prompt is not enough — when the clipboard ends in a **newline** the wrapper straddles two reads and the closing marker lands in the *next* prompt's buffer, which is how a correctly-captured key was silently dropped by `Choice [1]:` reading `\e[201~1`. The helper writes its prompt-side output to **stderr** and tty-gates the escape: several of these prompts sit inside pickers whose stdout is the value channel, and off a terminal the escape is just control-byte garbage on the stream.
+
+When the key prompt captures **nothing**, `_setup_prompt_api_key` offers the system clipboard (`_setup_clipboard` — `pbpaste`, `wl-paste`, `xclip`, `xsel`) behind a `[Y/n]` confirm that shows a masked fingerprint of what it would use. This is not a convenience: scrubbing can only clean bytes that *arrive*, and some emulator/multiplexer/bracketed-paste combinations swallow a paste outright, which behind `read -s` is indistinguishable from a deliberate skip. Reading the clipboard takes the terminal out of the path entirely. The fallback fires **only** on an empty capture — a real capture must never consult the clipboard, or an unrelated clipboard value could be stored in place of the user's key (pinned by a test).
 
 Recommended ids are **data, not code**: `recommended-models.conf` (`family = model-id`, resolved via `GIT_AI_PKG_DIR`) with `recommended_model()` mapping provider → family. Bumping one is a routine data change.

@@ -29,3 +29,9 @@ setup() {
   assert_success
   assert_output "openai"
 }
+
+@test "provider_family: deepseek-api maps to its own deepseek runtime" {
+  run provider_family "deepseek-api"
+  assert_success
+  assert_output "deepseek"
+}

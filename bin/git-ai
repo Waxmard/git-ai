@@ -275,38 +275,33 @@ cmd_pr() {
         FROM_SHA="$2"
         shift 2
         ;;
-      vertex-gemini|vertex-anthropic|gemini-api|antigravity|claude-code|anthropic-api|codex|openai-api)
-        PROVIDER="$1"
-        shift
-        # Accept any non-flag token as the model ID; resolve_model validates
-        # against both built-ins and custom entries in options.conf.
-        if [[ -n "${1:-}" && "$1" != --* ]]; then
-          MODEL="$1"
-          shift
-        fi
-        ;;
-      vertex-gemini:*|vertex-anthropic:*|gemini-api:*|antigravity:*|claude-code:*|anthropic-api:*|codex:*|openai-api:*)
-        PROVIDER="${1%%:*}"
-        MODEL="${1#*:}"
-        shift
-        ;;
-      vertex-gemini@*|vertex-anthropic@*)
-        # Profile-qualified vertex provider, optionally with :model appended.
-        if [[ "$1" == *:* ]]; then
-          PROVIDER="${1%%:*}"
-          MODEL="${1#*:}"
-          shift
-        else
-          PROVIDER="$1"
-          shift
-          if [[ -n "${1:-}" && "$1" != --* ]]; then
-            MODEL="$1"
-            shift
-          fi
-        fi
-        ;;
       *)
-        die "unknown argument: $1"
+        # A bare provider token, "provider:model", or a profile-qualified
+        # vertex token (base@profile, optionally :model) — provider_is_valid
+        # is the single source of truth for what a provider token looks like
+        # (cmd_commit above delegates the same way), so recognizing one here
+        # never needs its own mirrored token list. "last" is commit-only
+        # (message reuse) and must still be rejected here, not run as a
+        # provider.
+        local cand_provider="${1%%:*}"
+        if [[ "$cand_provider" != last ]] && provider_is_valid "$cand_provider"; then
+          PROVIDER="$cand_provider"
+          if [[ "$1" == *:* ]]; then
+            MODEL="${1#*:}"
+            shift
+          else
+            shift
+            # Accept any non-flag token as the model ID; resolve_model
+            # validates against both built-ins and custom entries in
+            # options.conf.
+            if [[ -n "${1:-}" && "$1" != --* ]]; then
+              MODEL="$1"
+              shift
+            fi
+          fi
+        else
+          die "unknown argument: $1"
+        fi
         ;;
     esac
   done
