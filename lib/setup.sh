@@ -13,7 +13,9 @@
 # `vertex` is the single user-facing Vertex AI entry: the wizard never shows
 # the vertex-gemini/vertex-anthropic split — it expands the token itself and
 # routes each model to the right internal provider by its id.
-SETUP_PROVIDERS=(claude-code codex antigravity vertex gemini-api anthropic-api openai-api)
+SETUP_PROVIDERS=(claude-code codex antigravity vertex gemini-api anthropic-api)
+while IFS= read -r _setup_compat_p; do SETUP_PROVIDERS+=("$_setup_compat_p"); done < <(_openai_compat_tokens)
+unset _setup_compat_p
 
 # Expand a wizard provider token into the concrete runnable provider(s) it
 # stands for: `vertex` covers both internal vertex providers; everything else
@@ -92,6 +94,57 @@ _setup_ready_forget() {
   esac
 }
 
+# _setup_read VAR PROMPT [silent]
+# Read one interactive answer into VAR, scrubbed. Every wizard prompt runs just
+# after an fzf picker, and fzf's bracketed-paste mode can outlive its exit, so a
+# paste arrives wrapped in \e[200~ … \e[201~. When the clipboard ends in a
+# newline the closing marker lands in the NEXT prompt's buffer — which is why
+# scrubbing only the key prompt left "Choice [1]:" reading "\e[201~1" and
+# silently not saving the key. Scrub every prompt, not just the paste one.
+# Prompt-side output goes to stderr, matching `read -p`: several of these
+# prompts sit inside pickers whose stdout is the value channel. The escape is
+# tty-gated for the same reason `read -p` suppresses its prompt off a terminal
+# — piped into a log or a test it is just control-byte garbage on the stream.
+# Returns `read`'s status so callers can still distinguish EOF from a blank line.
+_setup_read() {
+  local __var="$1" __prompt="$2" __silent="${3:-}" __v="" __st=0
+  [[ -t 2 ]] && printf '\e[?2004l' >&2
+  if [[ -n "$__silent" ]]; then
+    read -rsp "$__prompt" __v || __st=$?
+    printf '\n' >&2
+  else
+    read -rp "$__prompt" __v || __st=$?
+  fi
+  # Strip the wrapper, then any other stray control byte (a trailing \r from a
+  # Windows-authored clipboard), then the literal "[200~" residue left once tr
+  # has eaten the ESC. Order matters: the markers go before tr, the residue after.
+  __v="${__v//$'\e[200~'/}"
+  __v="${__v//$'\e[201~'/}"
+  __v=$(printf '%s' "$__v" | tr -d '[:cntrl:]')
+  __v="${__v//\[200~/}"
+  __v="${__v//\[201~/}"
+  printf -v "$__var" '%s' "$(_trim "$__v")"
+  return $__st
+}
+
+# Print the system clipboard, or nothing if no reader is available. This is the
+# escape hatch for a terminal paste that never reaches `read`: the emulator,
+# the multiplexer, and bracketed-paste mode all sit between the clipboard and
+# the prompt, and a paste any one of them swallows is invisible behind `read -s`.
+# Reading the clipboard directly removes every one of them from the path.
+_setup_clipboard() {
+  if command -v pbpaste >/dev/null 2>&1; then
+    pbpaste 2>/dev/null
+  elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-paste >/dev/null 2>&1; then
+    wl-paste -n 2>/dev/null
+  elif command -v xclip >/dev/null 2>&1; then
+    xclip -selection clipboard -o 2>/dev/null
+  elif command -v xsel >/dev/null 2>&1; then
+    xsel --clipboard --output 2>/dev/null
+  fi
+  return 0
+}
+
 # Picker label for PROVIDER: display name plus its readiness, so a pick that
 # will immediately demand an API key is visible before it's made.
 _setup_provider_label() {
@@ -152,8 +205,7 @@ _setup_pick_providers() {
     printf '  %d) %s\n' "$i" "$(_setup_provider_label "$p")" >&2
     i=$((i + 1))
   done
-  printf 'Select providers by number (space-separated): ' >&2
-  read -r line
+  _setup_read line 'Select providers by number (space-separated): '
   local n
   for n in $line; do
     [[ "$n" =~ ^[0-9]+$ ]] || continue
@@ -233,7 +285,7 @@ _setup_pick_models() {
   # Reached via the explicit custom-id row, or when the provider has no
   # discoverable models (e.g. claude-code/codex without a key). Blank = leave
   # the provider with no pinned model.
-  read -rp "Model id(s) for $(provider_display_name "$provider"), comma-separated (blank for none): " line || line=""
+  _setup_read line "Model id(s) for $(provider_display_name "$provider"), comma-separated (blank for none): " || line=""
   [[ -n "$line" ]] || return 0
   while IFS= read -r m; do
     m=$(_trim "$m")
@@ -308,7 +360,7 @@ _setup_multiselect_numbered() {
     if [[ -n "${marked[$i]}" ]]; then box=x; else box=' '; fi
     printf '  %2d) [%s] %s\n' "$((i + 1))" "$box" "${labels[$i]}" >&2
   done
-  read -rp "${prompt}(numbers space-separated; Enter keeps [x]; 0 cancels) " reply || return 2
+  _setup_read reply "${prompt}(numbers space-separated; Enter keeps [x]; 0 cancels) " || return 2
 
   if [[ -z "${reply//[[:space:]]/}" ]]; then
     for i in "${!vals[@]}"; do
@@ -385,7 +437,7 @@ _setup_select() {
   # Numbered fallback.
   local i n
   for i in "${!vals[@]}"; do printf '  %d) %s\n' "$((i + 1))" "${labels[$i]}" >&2; done
-  read -rp "$prompt" n
+  _setup_read n "$prompt"
   [[ "$n" =~ ^[0-9]+$ ]] && ((n >= 1 && n <= ${#vals[@]})) || return 1
   printf '%s\n' "${vals[$((n - 1))]}"
 }
@@ -426,7 +478,7 @@ source "${_SETUP_DIR}/setup-shadow.sh"
 # confirms first. Returns 0 when the reset ran, 1 when declined.
 _setup_action_reset() {
   local conf="$1" ans
-  read -rp 'Replace your whole config (providers, models, vertex settings)? [y/N]: ' ans || ans=""
+  _setup_read ans 'Replace your whole config (providers, models, vertex settings)? [y/N]: ' || ans=""
   case "$ans" in
     y | Y | yes | Yes) ;;
     *)
