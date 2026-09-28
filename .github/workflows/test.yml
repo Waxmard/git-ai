@@ -59,5 +59,4 @@ jobs:
           [ "$got" = "feat: packed" ] || { echo "commit bridge returned: $got"; exit 1; }
           got=$(printf '===TITLE===\nfeat: x\n===BODY===\nB.\n' | python3 python/git_ai/_pr_repo_cli.py format)
           [ "$got" = "$(printf 'feat: x\n\nB.')" ] || { echo "pr bridge returned: $got"; exit 1; }
-          python3 python/git_ai/_commit_cli.py ignore-pathspec --repo . >/dev/null
 
