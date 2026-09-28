@@ -116,3 +116,10 @@ teardown() {
   assert_success
   assert_output --partial "add third"
 }
+
+@test "cmd_pr: accepts provider:model single-arg form" {
+  run cmd_pr "codex:gpt-5.4-mini" --base main
+
+  assert_success
+  assert_output --partial "add second"
+}

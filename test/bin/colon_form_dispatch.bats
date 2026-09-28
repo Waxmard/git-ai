@@ -118,3 +118,9 @@ teardown() {
   assert_success
   assert_line --index 0 "last"
 }
+
+@test "cmd_pr: rejects 'last' as a provider token" {
+  run cmd_pr "last"
+  assert_failure
+  assert_output --partial "unknown argument: last"
+}

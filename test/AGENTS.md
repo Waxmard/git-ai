@@ -13,7 +13,7 @@ Shell helpers now live across `lib/{auth,discovery,config,provider}.sh` but load
 
 These require live external processes, so they are excluded on purpose — not accidentally missed:
 
-- `run_provider()` and its API helpers (`_run_anthropic_api`, `_run_openai_api`) — need real LLM calls or an HTTP mock server
+- `run_provider()` and its API helpers (`_run_anthropic_api`, `_run_openai_compat_api`) — need real LLM calls or an HTTP mock server
 - `cmd_commit()` / `cmd_pr()` end-to-end — depend on `run_provider` and real git state with staged changes
 - `resolve_gemini_api_key()` — platform-specific (Keychain, etc.)
 

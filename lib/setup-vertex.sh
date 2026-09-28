@@ -175,7 +175,7 @@ _setup_offer_account_pin() {
   [[ -n "$active" && "$active" != "$only" ]] || return 0
 
   printf '\nThose projects are visible to %s, but gcloud is active as %s.\n' "$only" "$active"
-  read -rp "  Pin account = ${only} for Vertex AI? [Y/n]: " ans || ans=""
+  _setup_read ans "  Pin account = ${only} for Vertex AI? [Y/n]: " || ans=""
   case "$ans" in
     n | N | no | No) printf '  Left unset — Vertex AI will use whichever login is active.\n' ;;
     *)
@@ -212,7 +212,7 @@ _setup_pick_projects() {
     [[ -n "$want_custom" ]] || return 0
   fi
 
-  read -rp "GCP project id(s), comma-separated (blank to keep current): " line || line=""
+  _setup_read line "GCP project id(s), comma-separated (blank to keep current): " || line=""
   [[ -n "$line" ]] || return 0
   while IFS= read -r p; do
     p=$(_trim "$p")
@@ -701,7 +701,7 @@ _setup_vertex_assist() {
   # 1. Application Default Credentials (or a per-section account).
   account=$(vertex_resolve "$provider" account)
   if ! _vertex_has_auth "$account"; then
-    read -rp '  Run "gcloud auth application-default login" now? [y/N]: ' ans
+    _setup_read ans '  Run "gcloud auth application-default login" now? [y/N]: '
     case "$ans" in
       y | Y | yes | Yes)
         if command -v gcloud >/dev/null 2>&1; then
@@ -720,7 +720,7 @@ _setup_vertex_assist() {
   if [[ -z "$project" ]]; then
     local default_project
     default_project=$(_gcloud_active_project)
-    read -rp "  GCP project${default_project:+ [$default_project]}: " input
+    _setup_read input "  GCP project${default_project:+ [$default_project]}: "
     input="${input:-$default_project}"
     if [[ -n "$input" ]]; then
       # Recorded as the shared key, then normalized — that is the one path that
@@ -737,7 +737,7 @@ _setup_vertex_assist() {
   # 3. Region (optional; default us-central1).
   region=$(vertex_resolve "$provider" region)
   if [[ -z "$region" ]]; then
-    read -rp '  Vertex region [Enter for us-central1]: ' input
+    _setup_read input '  Vertex region [Enter for us-central1]: '
     if [[ -n "$input" ]]; then
       _conf_apply "$conf" conf_set_section_setting "$provider" region "$input" &&
         printf '  Set region = %s\n' "$input"
@@ -751,7 +751,7 @@ _setup_vertex_assist() {
       accts=$(gcloud auth list --format="value(account)" 2>/dev/null)
       [[ -n "$accts" ]] && printf '  Known gcloud accounts:\n%s\n' "$(printf '%s\n' "$accts" | sed 's/^/    /')"
     fi
-    read -rp '  Pin a gcloud account? [Enter for default ADC]: ' input
+    _setup_read input '  Pin a gcloud account? [Enter for default ADC]: '
     if [[ -n "$input" ]]; then
       _conf_apply "$conf" conf_set_section_setting "$provider" account "$input" &&
         printf '  Set account = %s\n' "$input"
