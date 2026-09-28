@@ -15,6 +15,8 @@ Type rules from this POV:
   fix, never refactor — including when the diff only touches prompt prose or python/ internals
 - Restructuring lib/ or python/ internals with no change to the CLI, the generated output, or
   the git_ai public API → refactor
+- Bumping a default in python/git_ai/recommended-models.conf to a newer model id → chore.
+  It is suggestion data, not a new provider or capability.
 - BATS or pytest changes only → test
 - shellcheck, lefthook, line-limit, release tooling, or CI workflows → ci or build
 - README, the AGENTS.md guides, or CONTRIBUTING → docs
