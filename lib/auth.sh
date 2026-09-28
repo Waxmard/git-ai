@@ -156,6 +156,49 @@ persist_key_to_rc() {
   printf '%s\n' "$rc"
 }
 
+# OpenAI-compatible bearer-auth providers — DATA, not per-provider code. Every
+# entry speaks the identical wire format (Authorization: Bearer header,
+# {model,messages} request body, {choices:[{message:{content}}]} response,
+# {data:[{id}]} model list), so a new one is a single row here instead of a
+# mirrored case arm in provider_ready / provider_display_name / provider_family
+# / provider_key_meta below, run_provider's dispatch (provider.sh), and
+# discovery.sh's fetch dispatch. A provider whose catalog needs filtering
+# (like OpenAI's, which lists embeddings/tts/etc. alongside chat models) keeps
+# its own bespoke fetch function instead of joining the generic one.
+#
+# Fields: token|display name|env var|keychain service|base url|models.dev key|models.dev family prefix|family
+#   base url is everything before "/chat/completions" and "/models" — include
+#   a provider's own "/v1" here if it needs one (OpenAI does; DeepSeek doesn't).
+#   family feeds both provider_family (a runtime-recognition gate) and
+#   recommended_model's family lookup; for every row here the two happen to
+#   want the same string.
+GIT_AI_OPENAI_COMPAT=(
+  "openai-api|OpenAI API|OPENAI_API_KEY|openai-api-key|https://api.openai.com/v1|openai||openai"
+  "deepseek-api|DeepSeek API|DEEPSEEK_API_KEY|deepseek-api-key|https://api.deepseek.com|deepseek|deepseek|deepseek"
+)
+
+# _openai_compat_field PROVIDER INDEX — 1-based field from PROVIDER's row
+# above. Non-zero (nothing printed) when PROVIDER isn't in the table.
+_openai_compat_field() {
+  local p="${1%%@*}" row
+  for row in "${GIT_AI_OPENAI_COMPAT[@]}"; do
+    [[ "$row" == "${p}|"* ]] || continue
+    local -a fields
+    IFS='|' read -ra fields <<<"$row"
+    printf '%s\n' "${fields[$(($2 - 1))]}"
+    return 0
+  done
+  return 1
+}
+
+# Every token GIT_AI_OPENAI_COMPAT lists, one per line.
+_openai_compat_tokens() {
+  local row
+  for row in "${GIT_AI_OPENAI_COMPAT[@]}"; do
+    printf '%s\n' "${row%%|*}"
+  done
+}
+
 # provider_ready PROVIDER
 # True when PROVIDER could authenticate right now, mirroring run_provider's
 # per-provider preconditions. On failure, prints a one-line reason to stderr.
@@ -179,9 +222,6 @@ provider_ready() {
     anthropic-api)
       resolve_api_key anthropic-api-key ANTHROPIC_API_KEY >/dev/null 2>&1 && return 0
       printf 'ANTHROPIC_API_KEY not set (env or keychain)\n' >&2 ;;
-    openai-api)
-      resolve_api_key openai-api-key OPENAI_API_KEY >/dev/null 2>&1 && return 0
-      printf 'OPENAI_API_KEY not set (env or keychain)\n' >&2 ;;
     gemini-api)
       resolve_gemini_api_key >/dev/null 2>&1 && return 0
       printf 'GEMINI_API_KEY not set (env or keychain)\n' >&2 ;;
@@ -201,7 +241,15 @@ provider_ready() {
       [[ -n "$project" ]] && return 0
       printf 'Vertex project not set (project=, a [vertex-…@project] section, or GOOGLE_CLOUD_PROJECT)\n' >&2 ;;
     *)
-      printf 'unknown provider: %s\n' "$provider" >&2 ;;
+      local envvar keyservice
+      if envvar=$(_openai_compat_field "$provider" 3); then
+        keyservice=$(_openai_compat_field "$provider" 4)
+        resolve_api_key "$keyservice" "$envvar" >/dev/null 2>&1 && return 0
+        printf '%s not set (env or keychain)\n' "$envvar" >&2
+      else
+        printf 'unknown provider: %s\n' "$provider" >&2
+      fi
+      ;;
   esac
   return 1
 }
@@ -250,9 +298,8 @@ provider_display_name() {
     claude-code)   name="Claude Code" ;;
     anthropic-api) name="Anthropic API" ;;
     codex)         name="Codex CLI" ;;
-    openai-api)    name="OpenAI API" ;;
     last)          name="Reuse last message" ;;
-    *) return 0 ;;
+    *) name=$(_openai_compat_field "$base" 2) || return 0 ;;
   esac
   if [[ -n "$profile" ]]; then
     printf '%s [%s]\n' "$name" "$profile"
@@ -281,11 +328,11 @@ recommended_model() {
   case "${1%%@*}" in
     claude-code | anthropic-api | vertex-anthropic) family=anthropic ;;
     gemini-api | vertex-gemini) family=google ;;
-    openai-api | codex) family=openai ;;
+    codex) family=openai ;;
     # Its own family: agy's ids carry a reasoning-effort suffix
     # (gemini-3.7-flash-medium), so a bare google id is not a valid pin.
     antigravity) family=antigravity ;;
-    *) return 0 ;;
+    *) family=$(_openai_compat_field "$1" 8) || return 0 ;;
   esac
 
   [[ -r "$GIT_AI_RECOMMENDED_MODELS_FILE" ]] || return 0
@@ -310,8 +357,8 @@ provider_is_valid() {
         *) return 1 ;;
       esac
       ;;
-    vertex-gemini|vertex-anthropic|gemini-api|antigravity|claude-code|anthropic-api|codex|openai-api|last) return 0 ;;
-    *) return 1 ;;
+    vertex-gemini|vertex-anthropic|gemini-api|antigravity|claude-code|anthropic-api|codex|last) return 0 ;;
+    *) _openai_compat_field "$1" 1 >/dev/null ;;
   esac
 }
 
@@ -319,8 +366,8 @@ provider_family() {
   case ${1%%@*} in
     vertex-gemini|gemini-api|antigravity) printf '%s\n' "gemini" ;;
     vertex-anthropic|claude-code|anthropic-api) printf '%s\n' "claude" ;;
-    codex|openai-api) printf '%s\n' "openai" ;;
-    *) return 1 ;;
+    codex) printf '%s\n' "openai" ;;
+    *) _openai_compat_field "$1" 8 ;;
   esac
 }
 
@@ -331,8 +378,11 @@ provider_family() {
 provider_key_meta() {
   case ${1%%@*} in
     anthropic-api) printf 'anthropic-api-key ANTHROPIC_API_KEY\n' ;;
-    openai-api)    printf 'openai-api-key OPENAI_API_KEY\n' ;;
     gemini-api)    printf 'gemini-api-key GEMINI_API_KEY\n' ;;
-    *) return 1 ;;
+    *)
+      local service envvar
+      service=$(_openai_compat_field "$1" 4) && envvar=$(_openai_compat_field "$1" 3) || return 1
+      printf '%s %s\n' "$service" "$envvar"
+      ;;
   esac
 }

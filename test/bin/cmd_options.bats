@@ -21,6 +21,7 @@ setup_file() {
   printf 'gemini-3.1-flash\n' >"${CACHE_TPL}/gemini-api.list"
   printf 'claude-opus-4-6\n' >"${CACHE_TPL}/anthropic-api.list"
   printf 'gpt-5.4\n' >"${CACHE_TPL}/openai-api.list"
+  printf 'deepseek-chat\n' >"${CACHE_TPL}/deepseek-api.list"
 }
 
 teardown_file() {
@@ -51,6 +52,13 @@ teardown() {
   while IFS= read -r line; do
     [[ "$line" == *"|"* ]] || fail "line missing pipe: $line"
   done <<< "$output"
+}
+
+@test "cmd_options commit: openai-compat providers appear via the shared table" {
+  run cmd_options commit
+  assert_success
+  assert_output --partial "openai-api:gpt-5.4|gpt-5.4 · OpenAI API"
+  assert_output --partial "deepseek-api:deepseek-chat|deepseek-chat · DeepSeek API"
 }
 
 @test "cmd_options pr: default tool is commit when missing arg" {

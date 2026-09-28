@@ -291,14 +291,23 @@ _run_anthropic_api() {
   _extract_anthropic_text <<<"$response" || die "Failed to parse Anthropic API response"
 }
 
-_run_openai_api() {
-  local model="$1"
-  local prompt="$2"
-  local input="$3"
-  local key="$4"
+# _run_openai_compat_api BASE_URL MODEL PROMPT INPUT KEY LABEL
+# Generic runner for any OpenAI-compatible bearer-auth provider (see
+# GIT_AI_OPENAI_COMPAT in lib/auth.sh) — same request/response envelope,
+# different host. BASE_URL is everything before "/chat/completions". LABEL
+# (the provider's display name) names which provider failed in error
+# messages — with two-plus compat providers sharing this function, a bare
+# "API request failed" no longer says which one.
+_run_openai_compat_api() {
+  local base="$1"
+  local model="$2"
+  local prompt="$3"
+  local input="$4"
+  local key="$5"
+  local label="$6"
   local body_file response curl_cfg
   body_file=$(printf '%s' "$input" | _stage_request_body openai "$prompt" "$model") ||
-    die "Failed to build OpenAI API request"
+    die "Failed to build ${label} request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
   trap 'rm -f "$curl_cfg" "$body_file"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$key" > "$curl_cfg"
@@ -306,15 +315,15 @@ _run_openai_api() {
     -K "$curl_cfg" \
     -H "content-type: application/json" \
     --data-binary "@$body_file" \
-    "https://api.openai.com/v1/chat/completions")
+    "${base}/chat/completions")
   local curl_status=$?
   rm -f "$curl_cfg" "$body_file"
-  [[ $curl_status -eq 0 ]] || die "OpenAI API request failed"
+  [[ $curl_status -eq 0 ]] || die "${label} request failed"
   "${GIT_AI_PYTHON:-python3}" -c '
 import json, sys
 data = json.loads(sys.stdin.read())
 print(data["choices"][0]["message"]["content"])
-' <<<"$response" || die "Failed to parse OpenAI API response"
+' <<<"$response" || die "Failed to parse ${label} response"
 }
 
 # run_provider TOOL_NAME PROVIDER PROMPT INPUT [MODEL]
@@ -445,15 +454,22 @@ run_provider() {
       [[ -n "$output" ]] || die "Codex generation failed: empty response"
       printf '%s\n' "$output"
       ;;
-    openai-api)
-      local openai_key
-      openai_key=$(resolve_api_key openai-api-key OPENAI_API_KEY) ||
-        die "OpenAI API auth not found. Set OPENAI_API_KEY or store 'openai-api-key' in your keychain."
-      _run_openai_api "$model" "$prompt" "$input" "$openai_key" ||
-        die "OpenAI API generation failed"
-      ;;
     *)
-      die "unknown provider: $provider"
+      # Any provider registered in GIT_AI_OPENAI_COMPAT (lib/auth.sh) — a new
+      # bearer-auth, OpenAI-shaped provider needs no arm here at all, only a
+      # row in that table.
+      local envvar keyservice label api_key base_url
+      if envvar=$(_openai_compat_field "$provider_base_name" 3); then
+        keyservice=$(_openai_compat_field "$provider_base_name" 4)
+        base_url=$(_openai_compat_field "$provider_base_name" 5)
+        label=$(provider_display_name "$provider_base_name")
+        api_key=$(resolve_api_key "$keyservice" "$envvar") ||
+          die "${label} auth not found. Set ${envvar} or store '${keyservice}' in your keychain."
+        _run_openai_compat_api "$base_url" "$model" "$prompt" "$input" "$api_key" "$label" ||
+          die "${label} generation failed"
+      else
+        die "unknown provider: $provider"
+      fi
       ;;
   esac
   save_last_provider "$tool_name" "$provider"
