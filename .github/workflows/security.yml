@@ -47,6 +47,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_INCLUDE_DEV_DEPS: 'true'
         with:
           scan-type: fs
           scan-ref: .

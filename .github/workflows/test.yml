@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Install test dependencies
         run: npm ci
@@ -38,7 +38,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
 
       # The bash CLI shells out to the sibling _*_cli.py modules, but npm ships
       # only what "files" whitelists — a data-only list silently strips them and
