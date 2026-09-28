@@ -8,6 +8,7 @@ import json
 import shlex
 import sys
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -43,7 +44,7 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
         fresh=args.fresh,
     )
     if args.format == "shell":
-        for key, value in json.loads(context.to_json()).items():
+        for key, value in asdict(context).items():
             if value is None:
                 rendered = ""
             elif isinstance(value, bool):

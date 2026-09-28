@@ -97,12 +97,12 @@ EOF
   write_adc_gcloud_stub
   write_curl_stub
 
-  PATH="${STUB_BIN}:$PATH" run _run_vertex_gemini_api "gemini-test" "prompt" "input" "proj" "global"
+  PATH="${STUB_BIN}:$PATH" run _run_vertex_api gemini "gemini-test" "prompt" "input" "proj" "global"
   assert_success
   assert_output "gemini ok"
 
   : >"$GCLOUD_LOG"
-  PATH="${STUB_BIN}:$PATH" run _run_vertex_anthropic_api "claude-test" "prompt" "input" "proj" "global"
+  PATH="${STUB_BIN}:$PATH" run _run_vertex_api anthropic "claude-test" "prompt" "input" "proj" "global"
   assert_success
   assert_output "anthropic ok"
   assert_equal "$(cat "$GCLOUD_LOG")" "auth application-default print-access-token"
@@ -112,7 +112,7 @@ EOF
   write_old_token_only_gcloud_stub
   write_curl_stub
 
-  PATH="${STUB_BIN}:$PATH" run _run_vertex_gemini_api "gemini-test" "prompt" "input" "proj" "global" "me@acme.com"
+  PATH="${STUB_BIN}:$PATH" run _run_vertex_api gemini "gemini-test" "prompt" "input" "proj" "global" "me@acme.com"
   assert_success
   assert_output "gemini ok"
   assert_equal "$(cat "$GCLOUD_LOG")" "auth print-access-token --account=me@acme.com"

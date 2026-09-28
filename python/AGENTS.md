@@ -16,9 +16,7 @@ The branch-context machinery (`get_default_branch`, `resolve_commit_base`, `_nea
 
 ## Shell bridges
 
-The Bash CLI reaches this package through `_commit_cli.py` (`build-prompt`, `format`, `instructions`, `ignore-pathspec`), `_pr_repo_cli.py` (`prepare`, `build-input`, `format`, `save-cache`), and `_pr_render.py`. `_commit_cli.py build-prompt` puts the user input on stdout and the system prompt in `--prompt-file`. `format` puts the finished message on stdout, the subject-trim note in `--note-file`, and empty stdout means an empty model response the shell reports with the provider's name.
-
-`ignore-pathspec` emits finished `git` pathspec args one per line; the shell captures them and checks the exit status rather than reading through a process substitution, since a pathspec that silently came back empty would send ignored files to the model.
+The Bash CLI reaches this package through `_commit_cli.py` (`build-prompt`, `format`, `instructions`), `_pr_repo_cli.py` (`prepare`, `build-input`, `format`, `save-cache`), and `_pr_render.py`. `_commit_cli.py build-prompt` puts the user input on stdout and the system prompt in `--prompt-file`. `format` puts the finished message on stdout, the subject-trim note in `--note-file`, and empty stdout means an empty model response the shell reports with the provider's name.
 
 ## Prompts and response parsing
 
@@ -71,7 +69,7 @@ A rewrite whose fingerprint matches `last-content-id` short-circuits to `no_chan
 
 **Pruning** runs once per `prepare_repo_pr_context`: entries whose recorded `branch-name` is gone from `refs/heads` are deleted, and pre-`branch-name` entries age out after 90 days. Best-effort — an unreadable branch list skips pruning rather than deleting on unknown. `save_cached_pr` never prunes, so a caller can cache a branch with no local ref.
 
-**Intra-branch refinement folding** — the two-pass draft groups commits by conventional type, but a follow-up `fix`/`refactor`/`perf`/`docs` commit that only touches code added earlier in the *same* branch is invisible in the base branch's net diff, which shows only the final feature. `get_branch_churn_subjects` flags such commits via hunk-level `git blame` of each parent (every pre-image line it edits or deletes was introduced branch-locally; pure additions never count). They are threaded through `build_mr_prompt_input` → `_pr_draft.analyze` into a trailing `### Intra-branch refinements` block that the prompts fold into the feature being refined rather than emitting standalone sections. Best-effort: a git failure or a branch over 50 commits yields none.
+**Intra-branch refinement folding** — the two-pass draft groups commits by conventional type, but a follow-up `fix`/`refactor`/`perf`/`docs` commit that only touches code added earlier in the *same* branch is invisible in the base branch's net diff, which shows only the final feature. `get_branch_churn_subjects` flags such commits via hunk-level `git blame` of each parent (every pre-image line it edits or deletes was introduced branch-locally; pure additions never count). They are threaded through `build_mr_prompt_input` → `_pr_draft.draft_body` into a trailing `### Intra-branch refinements` block that the prompts fold into the feature being refined rather than emitting standalone sections. Best-effort: a git failure or a branch over 50 commits yields none.
 
 ## pip-installable CLI (`_launcher.py` + `_build_backend.py`)
 

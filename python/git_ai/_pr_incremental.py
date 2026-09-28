@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import shutil
@@ -455,13 +456,6 @@ def prepare_repo_pr_context(
 
 
 def _git_hash_object(text: str) -> str:
-    result = subprocess.run(
-        ["git", "hash-object", "--stdin"],
-        input=text,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"git hash-object --stdin failed: {result.stderr.strip()}")
-    return result.stdout.strip()
+    data = text.encode("utf-8")
+    blob = b"blob %d\0" % len(data) + data
+    return hashlib.sha1(blob, usedforsecurity=False).hexdigest()

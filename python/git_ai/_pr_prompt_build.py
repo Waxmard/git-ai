@@ -14,7 +14,7 @@ if TYPE_CHECKING:
         derive_diff_stat,
     )
     from ._instructions import format_repo_guidance
-    from ._pr_draft import analyze
+    from ._pr_draft import draft_body
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _git = importlib.import_module("_git")
@@ -24,7 +24,7 @@ elif __package__ in (None, ""):
     count_conventional_commits = _git.count_conventional_commits
     derive_diff_stat = _git.derive_diff_stat
     format_repo_guidance = _instructions.format_repo_guidance
-    analyze = _pr_draft.analyze
+    draft_body = _pr_draft.draft_body
 else:
     from ._git import (
         DEFAULT_RELEASE_CONTEXT,
@@ -32,7 +32,7 @@ else:
         derive_diff_stat,
     )
     from ._instructions import format_repo_guidance
-    from ._pr_draft import analyze
+    from ._pr_draft import draft_body
 
 
 DiffScope = Literal["branch", "since_existing"]
@@ -73,7 +73,7 @@ def build_mr_prompt_input(
     scope_suffix = "" if diff_scope == "branch" else "-incremental"
 
     if two_pass:
-        draft = analyze(_to_rs_delimited_log(log), churn_subjects).draft_body
+        draft = draft_body(log, churn_subjects)
         if existing_pr:
             prompt_name = f"pr-two-pass-update{scope_suffix}.txt"
             user_input = (
@@ -112,20 +112,3 @@ def build_mr_prompt_input(
     if guidance_block:
         user_input = f"{guidance_block}\n\n{user_input}"
     return prompt_name, user_input
-
-
-def _to_rs_delimited_log(log: str) -> str:
-    if not log.strip():
-        return ""
-    blocks: list[str] = []
-    current: list[str] = []
-    for line in log.splitlines():
-        if line.startswith("GITAI_COMMIT "):
-            if current:
-                blocks.append("\n".join(current))
-            current = [line[len("GITAI_COMMIT ") :]]
-        else:
-            current.append(line)
-    if current:
-        blocks.append("\n".join(current))
-    return "\x1e".join(blocks) + "\x1e"
