@@ -6,46 +6,17 @@ setup() {
   source "${REPO_ROOT}/lib/ai-common.sh"
 }
 
-@test "recommended_model: anthropic family maps to sonnet" {
-  for p in claude-code anthropic-api vertex-anthropic; do
-    run recommended_model "$p"
+@test "recommended_model: each provider resolves to its family's pin" {
+  GIT_AI_RECOMMENDED_MODELS_FILE="$BATS_TEST_TMPDIR/rec.conf"
+  printf '%s\n' 'anthropic = a-model' 'google = g-model' 'openai = o-model' \
+    'deepseek = d-model' 'antigravity = ag-model' >"$GIT_AI_RECOMMENDED_MODELS_FILE"
+  for pair in claude-code:a-model anthropic-api:a-model vertex-anthropic:a-model \
+              vertex-anthropic@acme:a-model gemini-api:g-model vertex-gemini:g-model \
+              openai-api:o-model codex:o-model deepseek-api:d-model antigravity:ag-model; do
+    run recommended_model "${pair%%:*}"
     assert_success
-    assert_output "claude-sonnet-5"
+    assert_output "${pair#*:}"
   done
-}
-
-@test "recommended_model: gemini/google family maps to flash" {
-  for p in gemini-api vertex-gemini; do
-    run recommended_model "$p"
-    assert_success
-    assert_output "gemini-3.7-flash"
-  done
-}
-
-@test "recommended_model: antigravity has its own effort-suffixed pin" {
-  run recommended_model antigravity
-  assert_success
-  assert_output "gemini-3.8-flash-low"
-}
-
-@test "recommended_model: openai family maps to gpt terra" {
-  for p in openai-api codex; do
-    run recommended_model "$p"
-    assert_success
-    assert_output "gpt-5.6-terra"
-  done
-}
-
-@test "recommended_model: deepseek has its own family pin" {
-  run recommended_model deepseek-api
-  assert_success
-  assert_output "deepseek-chat"
-}
-
-@test "recommended_model: profile-qualified vertex token resolves to base family" {
-  run recommended_model "vertex-anthropic@acme"
-  assert_success
-  assert_output "claude-sonnet-5"
 }
 
 @test "recommended_model: unknown provider produces no output" {

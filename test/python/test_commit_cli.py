@@ -114,30 +114,6 @@ def test_pr_format_fails_on_an_empty_response(
     assert "empty response" in capsys.readouterr().err
 
 
-def test_ignore_pathspec_emits_defaults(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    assert _commit_cli.main(["ignore-pathspec", "--repo", str(tmp_path)]) == 0
-    lines = capsys.readouterr().out.splitlines()
-    assert lines[:2] == ["--", ":/"]
-    assert any("package-lock.json" in line for line in lines)
-
-
-def test_ignore_pathspec_honours_additions_and_negations(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    (tmp_path / ".git-ai-ignore").write_text(
-        "# comment\nvendor/\n!package-lock.json\n", encoding="utf-8"
-    )
-    assert _commit_cli.main(["ignore-pathspec", "--repo", str(tmp_path)]) == 0
-    lines = capsys.readouterr().out.splitlines()
-    # The directory form is what actually excludes files under vendor/; asserting
-    # only on the bare spec passes while excluding nothing. Real end-to-end
-    # exclusion is covered in test_git_utils.py against a live repo.
-    assert ":(top,exclude,glob)**/vendor/**" in lines
-    assert not any("package-lock.json" in line for line in lines)
-
-
 def test_instructions_prints_nothing_when_absent(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

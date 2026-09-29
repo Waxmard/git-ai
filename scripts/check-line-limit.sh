@@ -28,8 +28,8 @@ is_source() {
 
 # The full governed set, for the no-argument (CI) scan.
 collect_default() {
-  printf '%s\n' bin/git-ai bin/aigit
-  ls lib/*.sh python/git_ai/*.py scripts/*.sh scripts/*.py 2>/dev/null
+  shopt -s nullglob
+  printf '%s\n' bin/git-ai bin/aigit lib/*.sh python/git_ai/*.py scripts/*.sh scripts/*.py
 }
 
 files=()

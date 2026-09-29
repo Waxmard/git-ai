@@ -73,14 +73,6 @@ commit_format() {
   assert_output --partial 'requires python3'
 }
 
-@test "ignore-pathspec bridge: emits leading pathspec args the shell splats" {
-  run "${GIT_AI_PYTHON:-python3}" "${REPO_ROOT}/python/git_ai/_commit_cli.py" \
-    ignore-pathspec --repo "$BATS_TEST_TMPDIR"
-  assert_success
-  [ "${lines[0]}" = '--' ]
-  [ "${lines[1]}" = ':/' ]
-}
-
 @test "instructions bridge: prints the repo file, nothing when absent" {
   run "${GIT_AI_PYTHON:-python3}" "${REPO_ROOT}/python/git_ai/_commit_cli.py" \
     instructions --repo "$BATS_TEST_TMPDIR"

@@ -14,11 +14,16 @@ order_by_recent() {
   done
 }
 
+# _all_provider_tokens — every runnable provider token: the static set, then GIT_AI_OPENAI_COMPAT rows.
+_all_provider_tokens() {
+  printf '%s\n' vertex-gemini vertex-anthropic gemini-api antigravity claude-code anthropic-api codex
+  _openai_compat_tokens
+}
+
 list_providers() {
   local tool_name="${1:-}"
-  local all=(vertex-gemini vertex-anthropic gemini-api antigravity claude-code anthropic-api codex)
-  local _p
-  while IFS= read -r _p; do all+=("$_p"); done < <(_openai_compat_tokens)
+  local all=() _p
+  while IFS= read -r _p; do all+=("$_p"); done < <(_all_provider_tokens)
 
   if [[ -n "$tool_name" ]]; then
     local last ordered=()
@@ -295,9 +300,7 @@ parse_user_options() {
   local line trimmed section="" value emitted=$'\n'
   while IFS= read -r line || [[ -n "$line" ]]; do
     # Strip inline # comment then surrounding whitespace.
-    trimmed="${line%%#*}"
-    trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
-    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    trimmed=$(_trim "${line%%#*}")
     [[ -n "$trimmed" ]] || continue
 
     if [[ "$trimmed" =~ ^\[([^][]+)\]$ ]]; then
@@ -354,9 +357,7 @@ vertex_config_value() {
 
   local line trimmed section="" key val
   while IFS= read -r line || [[ -n "$line" ]]; do
-    trimmed="${line%%#*}"
-    trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
-    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    trimmed=$(_trim "${line%%#*}")
     [[ -n "$trimmed" ]] || continue
 
     if [[ "$trimmed" =~ ^\[([^][]+)\]$ ]]; then
@@ -366,12 +367,8 @@ vertex_config_value() {
 
     [[ "$section" == "$want_provider" ]] || continue
     [[ "$trimmed" == *=* ]] || continue
-    key="${trimmed%%=*}"
-    val="${trimmed#*=}"
-    key="${key#"${key%%[![:space:]]*}"}"
-    key="${key%"${key##*[![:space:]]}"}"
-    val="${val#"${val%%[![:space:]]*}"}"
-    val="${val%"${val##*[![:space:]]}"}"
+    key=$(_trim "${trimmed%%=*}")
+    val=$(_trim "${trimmed#*=}")
     if [[ "$key" == "$want_key" ]]; then
       # Match a literal leading '~/' and expand it ourselves; the tilde is data
       # here, not a path to be shell-expanded.
@@ -441,9 +438,8 @@ vertex_resolve() {
 # default provider/model catalog for this listing.
 list_options() {
   local tool_name="${1:-commit}"
-  local providers=(vertex-gemini vertex-anthropic gemini-api antigravity claude-code anthropic-api codex)
-  local _p
-  while IFS= read -r _p; do providers+=("$_p"); done < <(_openai_compat_tokens)
+  local providers=() _p
+  while IFS= read -r _p; do providers+=("$_p"); done < <(_all_provider_tokens)
 
   # Build candidate table as a newline-delimited "value<TAB>label" string
   # (bash 3.2 on macOS has no associative arrays).

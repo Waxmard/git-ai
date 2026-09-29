@@ -174,6 +174,17 @@ _fetch_models_antigravity() {
   agy models 2>/dev/null | awk -F'\t' 'NF>1 && $1 != "" {print $1}'
 }
 
+# _print_data_ids JSON — print each data[].id from a /models response.
+_print_data_ids() {
+  GIT_AI_JSON="$1" "${GIT_AI_PYTHON:-python3}" -c '
+import json, os
+for m in json.loads(os.environ["GIT_AI_JSON"]).get("data", []):
+    i = m.get("id")
+    if i:
+        print(i)
+' 2>/dev/null
+}
+
 # Anthropic — GET /v1/models (newest-first). Key in a header via curl config.
 _fetch_models_anthropic_api() {
   local key cfg resp st
@@ -186,13 +197,7 @@ _fetch_models_anthropic_api() {
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
-  GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
-import json, os
-for m in json.loads(os.environ["GIT_AI_JSON"]).get("data", []):
-    i = m.get("id")
-    if i:
-        print(i)
-' 2>/dev/null
+  _print_data_ids "$resp"
 }
 
 # OpenAI — GET /v1/models returns every model (embeddings, tts, …), so filter to
@@ -234,13 +239,7 @@ _fetch_models_openai_compat() {
   st=$?
   rm -f "$cfg"
   [[ $st -eq 0 ]] || return 1
-  GIT_AI_JSON="$resp" "${GIT_AI_PYTHON:-python3}" -c '
-import json, os
-for m in json.loads(os.environ["GIT_AI_JSON"]).get("data", []):
-    i = m.get("id")
-    if i:
-        print(i)
-' 2>/dev/null
+  _print_data_ids "$resp"
 }
 
 # Vertex AI — GET {region}-aiplatform.../publishers/{google|anthropic}/models
