@@ -204,6 +204,18 @@ _agy_prompt_arg() {
   printf '@%s' "$staged"
 }
 
+# _run_in_empty_dir CMD [ARG...]
+# Run CMD from a fresh empty temp dir (removed afterwards) so an agent CLI
+# never sees the repo it is summarizing; returns CMD's status.
+_run_in_empty_dir() {
+  local dir rc=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/git-ai-cwd.XXXXXX") ||
+    die "failed to create an empty working directory"
+  (cd "$dir" && "$@") || rc=$?
+  rm -rf "$dir"
+  return "$rc"
+}
+
 _vertex_endpoint() {
   local project="$1" region="$2" publisher="$3" model="$4" method="$5"
   local host
@@ -339,7 +351,8 @@ run_provider() {
         die "Claude Code auth requires the Claude Code CLI. See: https://claude.ai/code"
       # --max-turns must exceed 1: reasoning models spend a turn thinking, so a
       # cap of 1 aborts with "Reached max turns" before any text is emitted.
-      claude -p "$prompt" --max-turns 3 --model "$model" <<<"$input" ||
+      _run_in_empty_dir claude -p "$prompt" --max-turns 3 --model "$model" \
+        --tools "" --strict-mcp-config --no-session-persistence <<<"$input" ||
         die "Claude generation failed"
       ;;
     anthropic-api)
@@ -401,8 +414,9 @@ run_provider() {
       trap 'rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}' EXIT
       # --disable-slash-commands stops a diff line opening with `/` from being
       # expanded as a slash command.
-      output=$(agy -p "$agy_arg" \
-        --model "$model" --output-format text --disable-slash-commands 2>"$agy_err_file")
+      output=$(_run_in_empty_dir agy -p "$agy_arg" \
+        --model "$model" --output-format text --disable-slash-commands \
+        --sandbox --mode plan 2>"$agy_err_file")
       agy_status=$?
       agy_error=$(<"$agy_err_file")
       rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}
@@ -427,7 +441,10 @@ run_provider() {
         die "failed to create temporary error file"
       trap 'rm -f "$codex_output_file" "$codex_err_file"' EXIT
       printf '%s\n\n%s' "$prompt" "$input" |
-        codex exec --model "$model" --output-last-message "$codex_output_file" - \
+        _run_in_empty_dir codex exec --model "$model" --sandbox read-only \
+        --skip-git-repo-check --ephemeral --ignore-user-config \
+        -c 'web_search="disabled"' \
+        --output-last-message "$codex_output_file" - \
         >/dev/null 2>"$codex_err_file" || {
         local codex_error
         codex_error=$(<"$codex_err_file")
