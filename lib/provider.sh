@@ -420,7 +420,7 @@ run_provider() {
       # expanded as a slash command.
       output=$(_run_in_empty_dir agy -p "$agy_arg" \
         --model "$model" --output-format text --disable-slash-commands \
-        --sandbox --mode plan 2>"$agy_err_file")
+        --sandbox 2>"$agy_err_file")
       agy_status=$?
       agy_error=$(<"$agy_err_file")
       rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}
