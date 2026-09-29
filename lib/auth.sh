@@ -317,12 +317,12 @@ GIT_AI_RECOMMENDED_MODELS_FILE="${GIT_AI_RECOMMENDED_MODELS_FILE:-${GIT_AI_PKG_D
 
 # recommended_model PROVIDER
 # Print the recommended model id for PROVIDER's family, read from
-# recommended-models.conf (`family = model-id` lines). Used by the setup
-# wizard's fast path so a new (often non-technical) user gets a sensible pin
-# without having to choose one. Empty output means "no recommendation" (caller
-# leaves the model unpinned). Suggestions only: discovery still feeds the
-# picker and any id remains overridable — this is intentionally a single
-# curated default per family, not the (deliberately non-existent) full catalog.
+# recommended-models.conf (`family = model-id` lines). It is the default model
+# whenever no model is given and the tool has no saved pick, and the setup
+# wizard's fast-path pin. Empty output means "no recommendation". Discovery
+# still feeds the picker and any id remains overridable — this is intentionally
+# a single curated default per family, not the (deliberately non-existent) full
+# catalog.
 recommended_model() {
   local family
   case "${1%%@*}" in

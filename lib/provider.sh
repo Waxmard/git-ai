@@ -37,22 +37,17 @@ pick_via_fzf() {
   printf '%s\n' "${choice%%|*}"
 }
 
-# With no curated catalog there's no hardcoded default. Prefer the tool's last
-# saved pick for this provider; otherwise fall back to the first model discovery
-# returns (which is the API's newest-first / our sort order). May print nothing
-# when offline with a cold cache and no saved pick — resolve_model surfaces that.
+# Prefer the tool's last saved pick for this provider; otherwise fall back to
+# the family's recommended model. Prints nothing when neither exists —
+# resolve_model surfaces that.
 default_model_for_provider() {
-  local tool_name="$1"
-  local provider="$2"
-  provider_family "$provider" >/dev/null || return 1
-
   local last
-  last=$(get_last_model "$tool_name" "$provider" "")
+  last=$(get_last_model "$1" "$2" "")
   if [[ -n "$last" ]]; then
     printf '%s\n' "$last"
     return 0
   fi
-  discover_models "$provider" 2>/dev/null | head -n1
+  recommended_model "$2"
 }
 
 # Model IDs are no longer validated against a fixed list: an explicit model is

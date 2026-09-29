@@ -55,7 +55,7 @@ Resolution order is authed API → keyless `models.dev/api.json` → free-text e
 - `antigravity` uses `agy models`, the only source for its effort-suffixed ids, and therefore has no models.dev mapping to fall back to.
 - Vertex reads Model Garden with a gcloud token, filtered to text-generation models.
 
-Discovery is suggestions-only. `resolve_model` passes an explicit model through verbatim — the provider API is the real validator — falling back to the tool's last saved pick, then the first discovered model.
+Discovery is suggestions-only. `resolve_model` passes an explicit model through verbatim — the provider API is the real validator — falling back to the tool's last saved pick, then `recommended_model`. Discovery never picks a default: catalog order (models.dev is sorted reverse-lexically) says nothing about which id an account can use.
 
 ## `options.conf` (`config.sh`)
 
