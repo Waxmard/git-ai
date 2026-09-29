@@ -378,7 +378,7 @@ claude-sonnet-4-6
 
 - `account=` selects a human Google login (authenticate each once with `gcloud auth login`); `credentials=` selects a service-account JSON. Set one or the other — with neither, plain gcloud ADC is used.
 - Config values override the corresponding environment variables.
-- Before each call, git-ai prints the account/project it used to stderr (e.g. `git-ai: Vertex account me@acme.com · project acme-prod (us-east5)`).
+- Before each call, git-ai prints the account/project it used to stderr (e.g. `git-ai: Vertex account me@acme.com · project acme-prod [options.conf] (us-east5)`).
 
 To choose between **multiple projects/accounts from the picker**, give each a profile suffix — `[vertex-anthropic@<profile>]`. Every profile becomes its own picker entry (labelled `Vertex AI [<profile>]`), so the same account across two projects is fully supported:
 

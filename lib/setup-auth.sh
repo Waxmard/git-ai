@@ -15,7 +15,8 @@ _setup_probe_key() (
   [[ -z "${GIT_AI_NO_KEY_PROBE:-}" ]] || return 2
   command -v curl >/dev/null 2>&1 || return 2
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 2
-  trap 'rm -f "$cfg"' EXIT
+  # shellcheck disable=SC2016
+  _rm_on_exit 'rm -f "$cfg"'
   # curl's config parser reads \ and " inside a quoted value as escapes, so an
   # unescaped key silently probes a truncated string and reports a false reject.
   esc=${probe_key//\\/\\\\}

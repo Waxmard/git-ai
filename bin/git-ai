@@ -325,6 +325,8 @@ cmd_pr() {
   check_diff_size_or_die "$DIFF"
 
   local BUILD_FILE PROMPT_NAME PROMPT INPUT DIFF_FILE LOG_FILE STAT_FILE RELEASE_FILE EXISTING_FILE CHURN_FILE INSTR_FILE
+  # shellcheck disable=SC2016
+  _rm_on_exit 'rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"'
   BUILD_FILE=$(mktemp) || die "failed to allocate temp file"
   DIFF_FILE=$(mktemp) || die "failed to allocate temp file"
   LOG_FILE=$(mktemp) || die "failed to allocate temp file"
@@ -353,7 +355,6 @@ cmd_pr() {
     --churn-subjects-file "$CHURN_FILE" \
     --repo-instructions-file "$INSTR_FILE" \
     --diff-scope "$DIFF_SCOPE" >"$BUILD_FILE" || {
-      rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
       die "failed to build PR prompt input"
     }
   INPUT=$("${GIT_AI_PYTHON:-python3}" - <<'PY' "$BUILD_FILE"
@@ -367,6 +368,7 @@ PY
   PROMPT_NAME=${INPUT%%$'\n'*}
   INPUT=${INPUT#*$'\n'}
   rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
+  trap - EXIT HUP
 
   case "$PROMPT_NAME" in
     pr-two-pass.txt | pr-fallback.txt) ;;

@@ -54,5 +54,28 @@ def test_main_execs_with_unconditional_pkg_dir(
     assert captured["env"]["GIT_AI_PKG_DIR"] == str(tmp_path)  # type: ignore[index]
 
 
+def test_main_prefers_repo_checkout_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pkg_dir = tmp_path / "python" / "git_ai"
+    repo_cli = tmp_path / "bin" / "git-ai"
+    for cli in (repo_cli, pkg_dir / "_sh" / "bin" / "git-ai"):
+        cli.parent.mkdir(parents=True)
+        cli.write_text("#!/bin/bash\n")
+    _point_pkg_dir_at(monkeypatch, pkg_dir)
+    monkeypatch.setattr(sys, "argv", ["git-ai", "pr"])
+
+    captured: dict[str, object] = {}
+
+    def fake_execvpe(file: str, args: list[str], env: dict[str, str]) -> None:
+        captured.update(args=args)
+
+    monkeypatch.setattr(os, "execvpe", fake_execvpe)
+
+    _launcher.main()
+
+    assert captured["args"] == ["bash", str(repo_cli), "pr"]
+
+
 def _never_called(*_args: object, **_kwargs: object) -> None:
     raise AssertionError("os.execvpe should not run when the CLI is missing")

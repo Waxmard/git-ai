@@ -30,11 +30,6 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
     return _orig.build_wheel(wheel_directory, config_settings, metadata_directory)
 
 
-def build_editable(wheel_directory, config_settings=None, metadata_directory=None):
-    _sync_bash()
-    return _orig.build_editable(wheel_directory, config_settings, metadata_directory)
-
-
 def build_sdist(sdist_directory, config_settings=None):
     _sync_bash()
     return _orig.build_sdist(sdist_directory, config_settings)

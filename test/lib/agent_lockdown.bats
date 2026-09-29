@@ -48,13 +48,15 @@ assert_ran_outside_repo() {
   grep -qF '[--tools][]' "$LOG"
 }
 
-@test "run_provider: codex runs in a removed empty dir, read-only, no user config" {
+@test "run_provider: codex runs in a removed empty dir, read-only, no user config, no shell" {
   run run_provider commit codex p i m
   assert_success
   assert_output --partial ok
   assert_ran_outside_repo
   grep -qF '[--sandbox][read-only]' "$LOG"
   grep -qF '[--ignore-user-config]' "$LOG"
+  grep -qF '[--disable][shell_tool]' "$LOG"
+  grep -qF '[--disable][unified_exec]' "$LOG"
 }
 
 @test "run_provider: antigravity runs in a removed empty dir, sandboxed" {
