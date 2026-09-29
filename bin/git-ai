@@ -13,50 +13,6 @@ source "${SCRIPT_DIR}/../lib/setup.sh"
 # PR cache helpers
 # ---------------------------------------------------------------------------
 
-current_branch_name() {
-  local branch
-  branch=$(git branch --show-current 2>/dev/null) || return 1
-  [[ -n "$branch" ]] || return 1
-  printf '%s\n' "$branch"
-}
-
-branch_cache_path() {
-  local git_dir="$1"
-  local branch_name="$2"
-  local base_branch="$3"
-  "${GIT_AI_PYTHON:-python3}" - <<'PY' "$GIT_AI_PKG_DIR" "$git_dir" "$branch_name" "$base_branch" || return 1
-import sys
-from pathlib import Path
-
-pkg_dir, git_dir, branch_name, base_branch = sys.argv[1:]
-sys.path.insert(0, str(Path(pkg_dir).resolve()))
-from _pr_incremental import branch_cache_path
-
-print(branch_cache_path(git_dir, branch_name, base_branch))
-PY
-}
-
-load_cached_pr() {
-  local git_dir="$1"
-  local branch_name="$2"
-  local base_branch="$3"
-  local cache_file
-  cache_file=$(branch_cache_path "$git_dir" "$branch_name" "$base_branch") || return 1
-  [[ -r "$cache_file" ]] || return 1
-  cat "$cache_file"
-}
-
-load_cached_pr_sha() {
-  local git_dir="$1"
-  local branch_name="$2"
-  local base_branch="$3"
-  local cache_file sha_file
-  cache_file=$(branch_cache_path "$git_dir" "$branch_name" "$base_branch") || return 1
-  sha_file="$(dirname "$cache_file")/last-head-sha"
-  [[ -r "$sha_file" ]] || return 1
-  cat "$sha_file"
-}
-
 save_cached_pr() {
   local git_dir="$1"
   local branch_name="$2"
@@ -400,18 +356,16 @@ cmd_pr() {
       rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
       die "failed to build PR prompt input"
     }
-  PROMPT_NAME=$("${GIT_AI_PYTHON:-python3}" - <<'PY' "$BUILD_FILE"
-import json, sys
-from pathlib import Path
-print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["prompt_name"])
-PY
-)
   INPUT=$("${GIT_AI_PYTHON:-python3}" - <<'PY' "$BUILD_FILE"
 import json, sys
 from pathlib import Path
-print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["user_input"])
+d = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(d["prompt_name"])
+print(d["user_input"])
 PY
 )
+  PROMPT_NAME=${INPUT%%$'\n'*}
+  INPUT=${INPUT#*$'\n'}
   rm -f "$BUILD_FILE" "$DIFF_FILE" "$LOG_FILE" "$STAT_FILE" "$RELEASE_FILE" "$EXISTING_FILE" "$CHURN_FILE" "$INSTR_FILE"
 
   case "$PROMPT_NAME" in

@@ -35,7 +35,7 @@ jobs:
             p/security-audit
             p/secrets
             p/owasp-top-ten
-      - uses: github/codeql-action/upload-sarif@v4.37.9
+      - uses: github/codeql-action/upload-sarif@v4.38.0
         if: always()
         with:
           sarif_file: semgrep.sarif
@@ -47,6 +47,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_INCLUDE_DEV_DEPS: 'true'
         with:
           scan-type: fs
           scan-ref: .
@@ -54,7 +56,7 @@ jobs:
           output: trivy-fs.sarif
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
-      - uses: github/codeql-action/upload-sarif@v4.37.9
+      - uses: github/codeql-action/upload-sarif@v4.38.0
         if: always()
         with:
           sarif_file: trivy-fs.sarif

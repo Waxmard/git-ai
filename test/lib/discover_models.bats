@@ -160,12 +160,12 @@ JSON
 @test "_fetch_models_openai_compat: deepseek lists data[].id in order" {
   export DEEPSEEK_API_KEY=x
   stub_curl_ok <<'JSON'
-{"data":[{"id":"deepseek-chat","object":"model"},{"id":"deepseek-reasoner","object":"model"}]}
+{"data":[{"id":"deepseek-flash","object":"model"},{"id":"deepseek-v4-pro","object":"model"}]}
 JSON
   run _fetch_models_openai_compat deepseek-api
   assert_success
-  assert_line --index 0 "deepseek-chat"
-  assert_line --index 1 "deepseek-reasoner"
+  assert_line --index 0 "deepseek-flash"
+  assert_line --index 1 "deepseek-v4-pro"
 }
 
 @test "_fetch_models_vertex: family filter + text-only, strips path and non-text variants" {
@@ -219,13 +219,13 @@ JSON
 
 @test "_fetch_models_modelsdev: deepseek mapping keeps only deepseek-prefixed ids" {
   cat >"${CACHE}/_modelsdev.json" <<'JSON'
-{"deepseek":{"models":{"deepseek-chat":{},"deepseek-reasoner":{}}},
+{"deepseek":{"models":{"deepseek-flash":{},"deepseek-v4-pro":{}}},
  "openai":{"models":{"gpt-5.4":{}}}}
 JSON
   run _fetch_models_modelsdev deepseek-api
   assert_success
-  assert_line "deepseek-chat"
-  assert_line "deepseek-reasoner"
+  assert_line "deepseek-flash"
+  assert_line "deepseek-v4-pro"
   refute_line "gpt-5.4"
 }
 

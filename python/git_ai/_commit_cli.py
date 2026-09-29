@@ -18,21 +18,17 @@ if TYPE_CHECKING:
         parse_commit_response,
         wrap_commit_body,
     )
-    from ._ignore import load_ignore_patterns, to_pathspec_args
     from ._instructions import load_repo_instructions
 elif __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     _generate = importlib.import_module("_generate")
-    _ignore = importlib.import_module("_ignore")
     SUBJECT_LIMIT = _generate.SUBJECT_LIMIT
     build_repo_commit_prompt = _generate.build_repo_commit_prompt
     enforce_subject_limit = _generate.enforce_subject_limit
-    load_ignore_patterns = _ignore.load_ignore_patterns
     load_repo_instructions = importlib.import_module(
         "_instructions"
     ).load_repo_instructions
     parse_commit_response = _generate.parse_commit_response
-    to_pathspec_args = _ignore.to_pathspec_args
     wrap_commit_body = _generate.wrap_commit_body
 else:
     from ._generate import (
@@ -42,7 +38,6 @@ else:
         parse_commit_response,
         wrap_commit_body,
     )
-    from ._ignore import load_ignore_patterns, to_pathspec_args
     from ._instructions import load_repo_instructions
 
 
@@ -84,10 +79,6 @@ def main(argv: list[str] | None = None) -> int:
         "format", help="parse, wrap, and subject-limit a raw provider response"
     )
     fmt.add_argument("--note-file", default=None)
-    pathspec = sub.add_parser(
-        "ignore-pathspec", help="print git pathspec excludes, one per line"
-    )
-    pathspec.add_argument("--repo", default=".")
     instructions = sub.add_parser(
         "instructions", help="print the repo's .git-ai-instructions contents"
     )
@@ -101,9 +92,6 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(user_input)
         elif args.command == "format":
             _emit_formatted_commit(sys.stdin.read(), args.note_file)
-        elif args.command == "ignore-pathspec":
-            for arg in to_pathspec_args(load_ignore_patterns(args.repo)):
-                sys.stdout.write(f"{arg}\n")
         elif args.command == "instructions":
             text = load_repo_instructions(args.repo)
             if text:

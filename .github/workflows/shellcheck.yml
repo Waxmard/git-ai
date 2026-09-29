@@ -20,13 +20,5 @@ jobs:
       - name: Install ShellCheck (mise-pinned)
         uses: jdx/mise-action@v4.3.0
 
-      - name: Run ShellCheck on lib/
-        run: shellcheck -x lib/*.sh
-
-      - name: Run ShellCheck on bin/ scripts
-        run: |
-          for f in bin/*; do
-            if head -1 "$f" | grep -q '^#!.*bash'; then
-              shellcheck -x "$f"
-            fi
-          done
+      - name: Run ShellCheck
+        run: make lint
