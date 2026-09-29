@@ -120,3 +120,14 @@ teardown() {
   assert_success
   assert_line --index 0 "last|reuse saved message"
 }
+
+@test "list_options: dirs.conf hides disallowed providers" {
+  printf '%s vertex-*,codex\n' "$TEST_REPO" >"${XDG_CONFIG_HOME}/git-ai/dirs.conf"
+  run list_options commit
+  assert_success
+  assert_output --partial "vertex-gemini:gemini-3.1-pro-preview|"
+  assert_output --partial "codex:gpt-5.4|"
+  refute_output --partial "deepseek-api:"
+  refute_output --partial "claude-code:"
+  refute_output --partial "anthropic-api:"
+}

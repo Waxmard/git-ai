@@ -327,6 +327,10 @@ run_provider() {
   # A provider may be profile-qualified (base@profile); dispatch on the base,
   # but look up account/project config under the full token (= section name).
   provider_base_name="${provider%%@*}"
+  local rule
+  if rule=$(dirs_rule) && ! _policy_permits "${rule#* }" "$provider"; then
+    die "$provider is not allowed in $(pwd -P) (dirs.conf: $rule)"
+  fi
   model=$(resolve_model "$tool_name" "$provider" "$selected_model")
 
   case $provider_base_name in

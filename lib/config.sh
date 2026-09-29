@@ -79,6 +79,46 @@ user_options_path() {
   printf '%s/git-ai/options.conf\n' "$xdg"
 }
 
+# dirs_policy_path — per-directory provider policy file.
+dirs_policy_path() {
+  printf '%s/git-ai/dirs.conf\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
+}
+
+# dirs_rule — print "<resolved-path> <providers>" for the longest dirs.conf
+# path containing the physical cwd; non-zero when no file or no rule matches.
+dirs_rule() {
+  local f here best="" list="" p l _rest
+  f=$(dirs_policy_path)
+  [[ -r "$f" ]] || return 1
+  here=$(pwd -P)
+  while read -r p l _rest || [[ -n "$p" ]]; do
+    [[ -n "$l" && "$p" != \#* ]] || continue
+    p=$(cd "${p/#\~/$HOME}" 2>/dev/null && pwd -P) || continue
+    if [[ ("$here" == "$p" || "$here" == "$p"/*) && ${#p} -gt ${#best} ]]; then
+      best=$p list=$l
+    fi
+  done <"$f"
+  [[ -n "$best" ]] && printf '%s %s\n' "$best" "$list"
+}
+
+# _policy_permits LIST PROVIDER — 0 when the comma-separated glob LIST allows
+# PROVIDER (full token or its base before '@'); '!'-entries deny and win.
+_policy_permits() {
+  local base="${2%%@*}" e pat has_allow=0 matched=0
+  local -a entries
+  IFS=',' read -ra entries <<<"$1"
+  for e in "${entries[@]}"; do
+    pat="${e#!}"
+    # shellcheck disable=SC2053  # $pat is a glob by design
+    if [[ "$2" == $pat || "$base" == $pat ]]; then
+      [[ "$e" == !* ]] && return 1
+      matched=1
+    fi
+    [[ "$e" == !* ]] || has_allow=1
+  done
+  ((!has_allow || matched))
+}
+
 # render_options_conf
 # Read "provider:model" lines on stdin (one per enabled combo) and emit a
 # git-ai options.conf body: one [provider] header per distinct provider in
@@ -440,6 +480,8 @@ list_options() {
   local tool_name="${1:-commit}"
   local providers=() _p
   while IFS= read -r _p; do providers+=("$_p"); done < <(_all_provider_tokens)
+  local policy=""
+  policy=$(dirs_rule) && policy="${policy#* }"
 
   # Build candidate table as a newline-delimited "value<TAB>label" string
   # (bash 3.2 on macOS has no associative arrays).
@@ -468,12 +510,14 @@ list_options() {
   if [[ -r "$(user_options_path)" ]]; then
     while IFS=':' read -r provider model; do
       [[ -n "$provider" && -n "$model" ]] || continue
+      [[ -z "$policy" ]] || _policy_permits "$policy" "$provider" || continue
       display=$(provider_display_name "$provider")
       short="${model%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
       table+="${provider}:${model}"$'\t'"${short} · ${display}"$'\n'
     done <<< "$user_entries"
   else
     for provider in "${providers[@]}"; do
+      [[ -z "$policy" ]] || _policy_permits "$policy" "$provider" || continue
       display=$(provider_display_name "$provider")
       while IFS= read -r model; do
         [[ -n "$model" ]] || continue
