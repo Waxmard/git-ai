@@ -79,44 +79,26 @@ user_options_path() {
   printf '%s/git-ai/options.conf\n' "$xdg"
 }
 
-# dirs_policy_path — per-directory provider policy file.
-dirs_policy_path() {
-  printf '%s/git-ai/dirs.conf\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
-}
-
-# dirs_rule — print "<resolved-path> <providers>" for the longest dirs.conf
-# path containing the physical cwd; non-zero when no file or no rule matches.
-dirs_rule() {
-  local f here best="" list="" p l _rest
-  f=$(dirs_policy_path)
-  [[ -r "$f" ]] || return 1
-  here=$(pwd -P)
-  while read -r p l _rest || [[ -n "$p" ]]; do
-    [[ -n "$l" && "$p" != \#* ]] || continue
-    p=$(cd "${p/#\~/$HOME}" 2>/dev/null && pwd -P) || continue
-    if [[ ("$here" == "$p" || "$here" == "$p"/*) && ${#p} -gt ${#best} ]]; then
-      best=$p list=$l
-    fi
-  done <"$f"
-  [[ -n "$best" ]] && printf '%s %s\n' "$best" "$list"
-}
-
-# _policy_permits LIST PROVIDER — 0 when the comma-separated glob LIST allows
-# PROVIDER (full token or its base before '@'); '!'-entries deny and win.
-_policy_permits() {
-  local base="${2%%@*}" e pat has_allow=0 matched=0
+# provider_blocked_dir TOKEN — print the deny_dirs directory (physical path) of
+# TOKEN's section, or for base@profile also its base section, that contains
+# the physical cwd; non-zero when TOKEN is not blocked here.
+provider_blocked_dir() {
+  local here raw e d
   local -a entries
-  IFS=',' read -ra entries <<<"$1"
+  here=$(pwd -P)
+  raw=$(vertex_config_value "$1" deny_dirs)
+  [[ "$1" == *@* ]] && raw+=",$(vertex_config_value "${1%%@*}" deny_dirs)"
+  IFS=',' read -ra entries <<<"$raw"
   for e in "${entries[@]}"; do
-    pat="${e#!}"
-    # shellcheck disable=SC2053  # $pat is a glob by design
-    if [[ "$2" == $pat || "$base" == $pat ]]; then
-      [[ "$e" == !* ]] && return 1
-      matched=1
+    e=$(_trim "$e")
+    [[ -n "$e" ]] || continue
+    d=$(cd "${e/#\~/$HOME}" 2>/dev/null && pwd -P) || continue
+    if [[ "$here" == "$d" || "$here" == "$d"/* ]]; then
+      printf '%s\n' "$d"
+      return 0
     fi
-    [[ "$e" == !* ]] || has_allow=1
   done
-  ((!has_allow || matched))
+  return 1
 }
 
 # render_options_conf
@@ -274,7 +256,7 @@ conf_remove_section_setting() {
 conf_set_section_setting() {
   local target="$1" key="$2" value="$3"
   local newline="${key} = ${value}"
-  local line in_target=0 found=0 emitted=0 k
+  local line in_target=0 found=0 emitted=0 k blanks=""
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ ^\[(.+)\]$ ]]; then
       # Leaving the target without having emitted: the key was new, so append
@@ -283,6 +265,8 @@ conf_set_section_setting() {
         printf '%s\n' "$newline"
         emitted=1
       fi
+      printf '%s' "$blanks"
+      blanks=""
       in_target=0
       printf '%s\n' "$line"
       if [[ "${BASH_REMATCH[1]}" == "$target" ]]; then
@@ -291,6 +275,12 @@ conf_set_section_setting() {
       fi
       continue
     fi
+    if [[ $in_target -eq 1 && -z "$line" ]]; then
+      blanks+=$'\n'
+      continue
+    fi
+    printf '%s' "$blanks"
+    blanks=""
     if [[ $in_target -eq 1 && "$line" == *=* ]]; then
       k="${line%%=*}"
       k=$(_trim "$k")
@@ -307,6 +297,7 @@ conf_set_section_setting() {
     printf '%s\n' "$newline"
     emitted=1
   fi
+  printf '%s' "$blanks"
   if [[ $found -eq 0 ]]; then
     printf '\n[%s]\n%s\n' "$target" "$newline"
   fi
@@ -480,8 +471,6 @@ list_options() {
   local tool_name="${1:-commit}"
   local providers=() _p
   while IFS= read -r _p; do providers+=("$_p"); done < <(_all_provider_tokens)
-  local policy=""
-  policy=$(dirs_rule) && policy="${policy#* }"
 
   # Build candidate table as a newline-delimited "value<TAB>label" string
   # (bash 3.2 on macOS has no associative arrays).
@@ -510,14 +499,14 @@ list_options() {
   if [[ -r "$(user_options_path)" ]]; then
     while IFS=':' read -r provider model; do
       [[ -n "$provider" && -n "$model" ]] || continue
-      [[ -z "$policy" ]] || _policy_permits "$policy" "$provider" || continue
+      provider_blocked_dir "$provider" >/dev/null && continue
       display=$(provider_display_name "$provider")
       short="${model%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
       table+="${provider}:${model}"$'\t'"${short} · ${display}"$'\n'
     done <<< "$user_entries"
   else
     for provider in "${providers[@]}"; do
-      [[ -z "$policy" ]] || _policy_permits "$policy" "$provider" || continue
+      provider_blocked_dir "$provider" >/dev/null && continue
       display=$(provider_display_name "$provider")
       while IFS= read -r model; do
         [[ -n "$model" ]] || continue

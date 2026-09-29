@@ -121,13 +121,10 @@ teardown() {
   assert_line --index 0 "last|reuse saved message"
 }
 
-@test "list_options: dirs.conf hides disallowed providers" {
-  printf '%s vertex-*,codex\n' "$TEST_REPO" >"${XDG_CONFIG_HOME}/git-ai/dirs.conf"
+@test "list_options: deny_dirs hides a blocked provider" {
+  printf '[codex]\ngpt-5.4\ndeny_dirs = %s\n\n[deepseek-api]\ndeepseek-flash\n' "$TEST_REPO" >"${XDG_CONFIG_HOME}/git-ai/options.conf"
   run list_options commit
   assert_success
-  assert_output --partial "vertex-gemini:gemini-3.1-pro-preview|"
-  assert_output --partial "codex:gpt-5.4|"
-  refute_output --partial "deepseek-api:"
-  refute_output --partial "claude-code:"
-  refute_output --partial "anthropic-api:"
+  assert_output --partial "deepseek-api:deepseek-flash|"
+  refute_output --partial "codex:"
 }

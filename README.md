@@ -361,6 +361,16 @@ gpt-5.4-mini
 - Delete the file to restore the full shipped catalog.
 - See [`examples/options.conf`](examples/options.conf) for a starter.
 
+### Blocking a provider in some directories
+
+Any `[provider]` section accepts `deny_dirs = <dir>, <dir>`. Inside those directories and their subdirectories the provider disappears from the picker, and running it fails. `~` expands to `$HOME`, and directories that don't exist are ignored. A `deny_dirs` in a base section such as `[vertex-gemini]` also applies to its `@profile` sections. `git-ai setup` → "Block a provider in directories" edits the list for you.
+
+```ini
+[codex]
+gpt-5.4-mini
+deny_dirs = ~/work, ~/clients/acme
+```
+
 ### Pinning a GCP account (Vertex)
 
 `git-ai setup` writes `project` / `region` / `account` for a single Vertex provider for you. This section is the manual reference for that, plus the advanced cases the wizard leaves alone: service-account `credentials=`, the shared `[vertex]` block, and multi-project profiles.

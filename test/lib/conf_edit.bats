@@ -115,6 +115,13 @@ teardown() {
   assert_line '[vertex-gemini]'
 }
 
+@test "conf_set_section_setting: new key goes before the section's trailing blanks" {
+  printf '[codex]\ngpt-5.4\n\n\n[deepseek-api]\ndeepseek-flash\n' >"${TEST_DIR}/b.conf"
+  run conf_set_section_setting codex deny_dirs /tmp <"${TEST_DIR}/b.conf"
+  assert_success
+  assert_output "$(printf '[codex]\ngpt-5.4\ndeny_dirs = /tmp\n\n\n[deepseek-api]\ndeepseek-flash')"
+}
+
 @test "conf_set_section_setting: updates an existing key in place (no dup)" {
   printf '[vertex-gemini]\nregion = us-central1\ngemini-3.5-flash\n' >"${TEST_DIR}/v.conf"
   run conf_set_section_setting vertex-gemini region us-east5 <"${TEST_DIR}/v.conf"
