@@ -68,7 +68,6 @@ _trim() {
 get_last_choice() {
   local key="$1"
   local fallback="$2"
-  local valid="$3"
   local git_dir
   git_dir=$(git rev-parse --git-dir 2>/dev/null) || { printf '%s\n' "$fallback"; return 0; }
   local state_file="${git_dir}/${key}"
@@ -76,16 +75,8 @@ get_last_choice() {
     local stored
     stored=$(<"$state_file")
     stored="${stored%"${stored##*[![:space:]]}"}"
-    # A "*" valid set accepts any stored value (caller validates separately —
-    # e.g. profile-qualified provider tokens that no static alternation lists).
-    if [[ "$valid" == "*" ]]; then
-      printf '%s\n' "$stored"
-      return 0
-    fi
-    if [[ "|${valid}|" == *"|${stored}|"* ]]; then
-      printf '%s\n' "$stored"
-      return 0
-    fi
+    printf '%s\n' "$stored"
+    return 0
   fi
   printf '%s\n' "$fallback"
 }
@@ -102,7 +93,7 @@ get_last_provider() {
   # Accept any stored token, then validate with provider_is_valid so that
   # profile-qualified providers (e.g. vertex-anthropic@proj-a) round-trip.
   local stored
-  stored=$(get_last_choice "${1}-last-provider" "${2:-}" "*")
+  stored=$(get_last_choice "${1}-last-provider" "${2:-}")
   if [[ -n "$stored" ]] && provider_is_valid "$stored"; then
     printf '%s\n' "$stored"
   else
@@ -114,13 +105,12 @@ save_last_provider() {
   save_last_choice "${1}-last-provider" "$2"
 }
 
-# Models are no longer a fixed catalog, so any saved id round-trips ("*" accepts
-# the stored value as-is). The provider API validates the model at call time.
+# Models are no longer a fixed catalog, so any saved id round-trips; the provider API validates the model at call time.
 get_last_model() {
   local tool_name="$1"
   local provider="$2"
   local fallback="$3"
-  get_last_choice "${tool_name}-${provider}-last-model" "$fallback" "*"
+  get_last_choice "${tool_name}-${provider}-last-model" "$fallback"
 }
 
 save_last_model() {

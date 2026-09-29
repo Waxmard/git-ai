@@ -404,12 +404,7 @@ def format_commit_log(commits: Iterable[tuple[str, str]]) -> str:
 _DIFF_FILE_HEADER = re.compile(r"^diff --git a/(?P<a>.+?) b/(?P<b>.+)$")
 
 
-def derive_diff_stat(diff: str) -> str:
-    """Approximate `git diff --stat` from a raw unified diff.
-
-    One line per file (count + a +/- bar) and a footer; binary files show
-    "Bin" instead of counts.
-    """
+def _diff_file_counts(diff: str) -> list[tuple[str, int, int, bool]]:
     files: list[tuple[str, int, int, bool]] = []
     current_path: str | None = None
     insertions = 0
@@ -441,6 +436,16 @@ def derive_diff_stat(diff: str) -> str:
         elif line.startswith("-"):
             deletions += 1
     flush()
+    return files
+
+
+def derive_diff_stat(diff: str) -> str:
+    """Approximate `git diff --stat` from a raw unified diff.
+
+    One line per file (count + a +/- bar) and a footer; binary files show
+    "Bin" instead of counts.
+    """
+    files = _diff_file_counts(diff)
 
     if not files:
         return ""
@@ -476,68 +481,6 @@ def largest_diff_files(diff: str, n: int = 5) -> list[tuple[str, int, int]]:
 
     Feeds the "Largest staged files" hint when a diff exceeds the size guard.
     """
-    files: list[tuple[str, int, int]] = []
-    current_path: str | None = None
-    insertions = 0
-    deletions = 0
-
-    def flush() -> None:
-        if current_path is not None:
-            files.append((current_path, insertions, deletions))
-
-    for line in diff.splitlines():
-        header_match = _DIFF_FILE_HEADER.match(line)
-        if header_match:
-            flush()
-            current_path = header_match.group("b")
-            insertions = 0
-            deletions = 0
-            continue
-        if current_path is None:
-            continue
-        if line.startswith("+++") or line.startswith("---"):
-            continue
-        if line.startswith("+"):
-            insertions += 1
-        elif line.startswith("-"):
-            deletions += 1
-    flush()
-
+    files = [(p, i, d) for p, i, d, _ in _diff_file_counts(diff)]
     files.sort(key=lambda entry: entry[1] + entry[2], reverse=True)
     return files[:n]
-
-
-def build_draft_body(log: str) -> str:
-    sections = [
-        ("Features", "feat"),
-        ("Bug Fixes", "fix"),
-        ("Refactors", "refactor"),
-        ("Docs", "docs"),
-        ("Chores", "chore"),
-        ("Continuous Integration", "ci"),
-        ("Tests", "test"),
-        ("Style", "style"),
-        ("Performance", "perf"),
-        ("Build", "build"),
-    ]
-
-    draft = ""
-    for header, commit_type in sections:
-        lines: list[str] = []
-        capturing = False
-        for line in log.splitlines():
-            if line.startswith("GITAI_COMMIT "):
-                capturing = False
-                msg = line[len("GITAI_COMMIT ") :]
-                type_match = re.match(r"^([a-z]+)[!(:]", msg)
-                if type_match and type_match.group(1) == commit_type:
-                    desc = msg.split(": ", 1)[-1] if ": " in msg else msg
-                    lines.append(f"- {desc}")
-                    capturing = True
-            elif capturing and line.strip():
-                lines.append(f"  {line}")
-
-        if lines:
-            draft += f"### {header}\n" + "\n".join(lines) + "\n\n"
-
-    return draft

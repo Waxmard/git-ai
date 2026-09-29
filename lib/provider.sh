@@ -230,14 +230,20 @@ print(text)
 '
 }
 
-_run_vertex_anthropic_api() {
-  local model="$1" prompt="$2" input="$3" project="$4" region="$5" account="${6:-}"
-  local token body_file url curl_cfg response
+# _run_vertex_api KIND MODEL PROMPT INPUT PROJECT REGION [ACCOUNT] — KIND is anthropic|gemini.
+_run_vertex_api() {
+  local kind="$1" model="$2" prompt="$3" input="$4" project="$5" region="$6" account="${7:-}"
+  local shape publisher method extract label token body_file url curl_cfg response
+  case "$kind" in
+    anthropic) shape=vertex-anthropic publisher=anthropic method=rawPredict extract=_extract_anthropic_text label="Vertex Anthropic" ;;
+    gemini) shape=gemini publisher=google method=generateContent extract=_extract_gemini_text label="Vertex Gemini" ;;
+    *) die "unknown Vertex kind: $kind" ;;
+  esac
   token=$(_vertex_access_token "$account") ||
     die "Vertex auth: gcloud print-access-token failed."
-  body_file=$(printf '%s' "$input" | _stage_request_body vertex-anthropic "$prompt") ||
-    die "Failed to build Vertex Anthropic request"
-  url=$(_vertex_endpoint "$project" "$region" "anthropic" "$model" "rawPredict")
+  body_file=$(printf '%s' "$input" | _stage_request_body "$shape" "$prompt") ||
+    die "Failed to build ${label} request"
+  url=$(_vertex_endpoint "$project" "$region" "$publisher" "$model" "$method")
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
   trap 'rm -f "$curl_cfg" "$body_file"' EXIT
   printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
@@ -245,27 +251,8 @@ _run_vertex_anthropic_api() {
     --data-binary "@$body_file" "$url")
   local curl_status=$?
   rm -f "$curl_cfg" "$body_file"
-  [[ $curl_status -eq 0 ]] || die "Vertex Anthropic API request failed"
-  _extract_anthropic_text <<<"$response" || die "Failed to parse Vertex Anthropic response"
-}
-
-_run_vertex_gemini_api() {
-  local model="$1" prompt="$2" input="$3" project="$4" region="$5" account="${6:-}"
-  local token body_file url curl_cfg response
-  token=$(_vertex_access_token "$account") ||
-    die "Vertex auth: gcloud print-access-token failed."
-  body_file=$(printf '%s' "$input" | _stage_request_body gemini "$prompt") ||
-    die "Failed to build Vertex Gemini request"
-  url=$(_vertex_endpoint "$project" "$region" "google" "$model" "generateContent")
-  curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$curl_cfg" "$body_file"' EXIT
-  printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
-  response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" \
-    --data-binary "@$body_file" "$url")
-  local curl_status=$?
-  rm -f "$curl_cfg" "$body_file"
-  [[ $curl_status -eq 0 ]] || die "Vertex Gemini API request failed"
-  _extract_gemini_text <<<"$response" || die "Failed to parse Vertex Gemini response"
+  [[ $curl_status -eq 0 ]] || die "${label} API request failed"
+  "$extract" <<<"$response" || die "Failed to parse ${label} response"
 }
 
 _run_anthropic_api() {
@@ -388,11 +375,7 @@ run_provider() {
         echo "git-ai: Vertex ADC · project ${vertex_project} (${vertex_region})" >&2
       fi
 
-      if [[ "$provider_base_name" == "vertex-anthropic" ]]; then
-        _run_vertex_anthropic_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account"
-      else
-        _run_vertex_gemini_api "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account"
-      fi
+      _run_vertex_api "${provider_base_name#vertex-}" "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account"
       ;;
     gemini-api)
       local gemini_api_key
