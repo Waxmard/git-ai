@@ -54,6 +54,14 @@ teardown() {
   assert_failure
 }
 
+@test "list_options: hides every entry of a blocked provider, keeps others" {
+  printf '[codex]\ngpt-5.4\ngpt-5.4-mini\ndeny_dirs = %s\n[claude-code]\nclaude-sonnet-4-6\n' "$TEST_REPO" >"$CONF"
+  run list_options commit
+  assert_success
+  refute_output --partial "codex:"
+  assert_output --partial "claude-code:claude-sonnet-4-6"
+}
+
 @test "run_provider: refuses a blocked provider before model resolution" {
   printf '[codex]\ndeny_dirs = %s\n' "$TEST_REPO" >"$CONF"
   resolve_model() { echo SHOULD-NOT-RUN; }

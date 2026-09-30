@@ -170,6 +170,21 @@ JSON
   assert_line --index 1 "beta-pro"
 }
 
+@test "discover_models: base_url gets its own cache, not the default host's" {
+  printf 'gpt-5.4\n' >"${CACHE}/openai-api.list"
+  export OPENAI_API_KEY=x
+  printf '[openai-api]\nbase_url = https://example.test/\n' >"${TEST_XDG}/git-ai/options.conf"
+  stub_curl_ok <<'JSON'
+{"data":[{"id":"alpha-flash"}]}
+JSON
+  run discover_models openai-api
+  assert_success
+  assert_output "alpha-flash"
+  stub_curl_fail
+  run discover_models openai-api
+  assert_output "alpha-flash"
+}
+
 @test "openai_compat_base_url: config override wins and drops a trailing slash" {
   run openai_compat_base_url openai-api
   assert_output "https://api.openai.com/v1"

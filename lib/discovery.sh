@@ -18,8 +18,12 @@ _models_cache_dir() {
 
 # Per-provider cache file. Profile-qualified tokens (vertex-x@profile) get their
 # own file so different projects don't clobber each other's catalogs.
+# A section's base_url = is part of the key, so switching hosts never serves the old host's list.
 _models_cache_path() {
-  local safe="${1//[^a-zA-Z0-9._@-]/_}"
+  local key="$1" url
+  url=$(vertex_config_value "${1%%@*}" base_url)
+  [[ -z "$url" ]] || key+="--${url%/}"
+  local safe="${key//[^a-zA-Z0-9._@-]/_}"
   printf '%s/%s.list\n' "$(_models_cache_dir)" "$safe"
 }
 

@@ -79,13 +79,14 @@ user_options_path() {
   printf '%s/git-ai/options.conf\n' "$xdg"
 }
 
-# provider_blocked_dir TOKEN — print the deny_dirs directory (physical path) of
+# provider_blocked_dir TOKEN [HERE] — print the deny_dirs directory (physical path) of
 # TOKEN's section, or for base@profile also its base section, that contains
-# the physical cwd; non-zero when TOKEN is not blocked here.
+# the physical cwd; non-zero when TOKEN is not blocked here. HERE (a physical
+# path) skips the pwd -P when the caller checks many tokens.
 provider_blocked_dir() {
   local here raw e d
   local -a entries
-  here=$(pwd -P)
+  here="${2:-$(pwd -P)}"
   raw=$(vertex_config_value "$1" deny_dirs)
   [[ "$1" == *@* ]] && raw+=",$(vertex_config_value "${1%%@*}" deny_dirs)"
   IFS=',' read -ra entries <<<"$raw"
@@ -498,16 +499,24 @@ list_options() {
   # existing-but-unreadable file must fall through to discovery rather than
   # enter this branch with an empty entry list and show zero options.
   if [[ -r "$(user_options_path)" ]]; then
+    local here checked=$'\n' blocked=$'\n'
+    here=$(pwd -P)
     while IFS=':' read -r provider model; do
       [[ -n "$provider" && -n "$model" ]] || continue
-      provider_blocked_dir "$provider" >/dev/null && continue
+      case "$checked" in
+        *$'\n'"$provider"$'\n'*) ;;
+        *)
+          checked+="${provider}"$'\n'
+          provider_blocked_dir "$provider" "$here" >/dev/null && blocked+="${provider}"$'\n'
+          ;;
+      esac
+      case "$blocked" in *$'\n'"$provider"$'\n'*) continue ;; esac
       display=$(provider_display_name "$provider")
       short="${model%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
       table+="${provider}:${model}"$'\t'"${short} · ${display}"$'\n'
     done <<< "$user_entries"
   else
     for provider in "${providers[@]}"; do
-      provider_blocked_dir "$provider" >/dev/null && continue
       display=$(provider_display_name "$provider")
       while IFS= read -r model; do
         [[ -n "$model" ]] || continue
