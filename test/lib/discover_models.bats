@@ -157,15 +157,42 @@ JSON
   refute_line "dall-e-3"
 }
 
-@test "_fetch_models_openai_compat: deepseek lists data[].id in order" {
-  export DEEPSEEK_API_KEY=x
+@test "_fetch_models: openai-api with base_url lists that host's ids unfiltered" {
+  export OPENAI_API_KEY=x
+  mkdir -p "${TEST_XDG}/git-ai"
+  printf '[openai-api]\nbase_url = https://example.test/\n' >"${TEST_XDG}/git-ai/options.conf"
   stub_curl_ok <<'JSON'
-{"data":[{"id":"deepseek-flash","object":"model"},{"id":"deepseek-v4-pro","object":"model"}]}
+{"data":[{"id":"alpha-flash"},{"id":"beta-pro"}]}
 JSON
-  run _fetch_models_openai_compat deepseek-api
+  run _fetch_models openai-api
   assert_success
-  assert_line --index 0 "deepseek-flash"
-  assert_line --index 1 "deepseek-v4-pro"
+  assert_line --index 0 "alpha-flash"
+  assert_line --index 1 "beta-pro"
+}
+
+@test "discover_models: base_url gets its own cache, not the default host's" {
+  printf 'gpt-5.4\n' >"${CACHE}/openai-api.list"
+  export OPENAI_API_KEY=x
+  printf '[openai-api]\nbase_url = https://example.test/\n' >"${TEST_XDG}/git-ai/options.conf"
+  stub_curl_ok <<'JSON'
+{"data":[{"id":"alpha-flash"}]}
+JSON
+  run discover_models openai-api
+  assert_success
+  assert_output "alpha-flash"
+  stub_curl_fail
+  run discover_models openai-api
+  assert_output "alpha-flash"
+}
+
+@test "openai_compat_base_url: config override wins and drops a trailing slash" {
+  run openai_compat_base_url openai-api
+  assert_output "https://api.openai.com/v1"
+  mkdir -p "${TEST_XDG}/git-ai"
+  printf '[openai-api]\nbase_url = https://example.test/\n' >"${TEST_XDG}/git-ai/options.conf"
+  run openai_compat_base_url openai-api
+  assert_success
+  assert_output "https://example.test"
 }
 
 @test "_fetch_models_vertex: family filter + text-only, strips path and non-text variants" {
@@ -215,18 +242,6 @@ JSON
   assert_line "o3"
   refute_line "text-embedding-3"
   refute_line "dall-e-3"
-}
-
-@test "_fetch_models_modelsdev: deepseek mapping keeps only deepseek-prefixed ids" {
-  cat >"${CACHE}/_modelsdev.json" <<'JSON'
-{"deepseek":{"models":{"deepseek-flash":{},"deepseek-v4-pro":{}}},
- "openai":{"models":{"gpt-5.4":{}}}}
-JSON
-  run _fetch_models_modelsdev deepseek-api
-  assert_success
-  assert_line "deepseek-flash"
-  assert_line "deepseek-v4-pro"
-  refute_line "gpt-5.4"
 }
 
 @test "discover_models: a keyless CLI provider falls back to models.dev" {

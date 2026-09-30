@@ -348,6 +348,29 @@ _setup_action_remove() {
     printf 'Removed %s.\n' "$(provider_display_name "$provider")"
 }
 
+# Set the directories where one configured provider section is blocked
+# (deny_dirs, comma-separated); a blank answer clears the list.
+_setup_action_deny() {
+  local conf="$1" p data="" provider current ans
+  while IFS= read -r p; do
+    provider_is_valid "$p" && [[ "$p" != last ]] || continue
+    data+="${p}"$'\t'"${p}"$'\n'
+  done < <(conf_section_providers <"$conf")
+  [[ -n "$data" ]] || { printf 'No providers configured.\n'; return 0; }
+  provider=$(_setup_select 'Block which provider? ' "$data") || { printf 'Cancelled.\n'; return 0; }
+  current=$(vertex_config_value "$provider" deny_dirs)
+  printf 'Currently blocked in: %s\n' "${current:-nowhere}"
+  _setup_read ans 'Directories to block (comma-separated, blank clears): ' || { printf 'Cancelled.\n'; return 0; }
+  ans=$(_trim "$ans")
+  if [[ -z "$ans" ]]; then
+    _conf_apply "$conf" conf_remove_section_setting "$provider" deny_dirs &&
+      printf 'Unblocked %s everywhere.\n' "$provider"
+  else
+    _conf_apply "$conf" conf_set_section_setting "$provider" deny_dirs "$ans" &&
+      printf 'Blocked %s in: %s\n' "$provider" "$ans"
+  fi
+}
+
 # Print the models PROVIDER currently pins (deduped). `vertex` is the union
 # across both internal sections and every project; `vertex@<project>` narrows it
 # to one project. An internal token (`vertex-gemini`) keeps the old base-section

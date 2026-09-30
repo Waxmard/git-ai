@@ -101,7 +101,9 @@ def main(argv: list[str]) -> int:
             if current != render(template, variables):
                 stale.append(out)
         if stale:
-            print("Stale generated prompts (run `make prompts-build`):", file=sys.stderr)
+            print(
+                "Stale generated prompts (run `make prompts-build`):", file=sys.stderr
+            )
             for out in stale:
                 print(f"  - {out}", file=sys.stderr)
             return 1

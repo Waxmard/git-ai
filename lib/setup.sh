@@ -509,6 +509,7 @@ _setup_edit_existing() {
     menu+=$'add\tAdd a provider\n'
     menu+=$'remove\tRemove a provider\n'
     menu+="models"$'\t'"Change a provider's models"$'\n'
+    menu+=$'deny\tBlock a provider in directories\n'
     # No standalone auth action: "Add a provider" runs auth-assist itself, and
     # a broken setup is recovered via reset. Project selection IS surfaced —
     # it's the vertex edit users actually reach for.
@@ -520,6 +521,7 @@ _setup_edit_existing() {
       add) _setup_action_add "$conf" ;;
       remove) _setup_action_remove "$conf" ;;
       models) _setup_action_models "$conf" ;;
+      deny) _setup_action_deny "$conf" ;;
       projects) _setup_change_vertex_projects "$conf" ;;
       # A confirmed reset re-runs the fresh flow, which lands in its own edit
       # loop — return instead of break so this one doesn't re-print on top.
