@@ -561,6 +561,27 @@ def test_resolve_commit_base_stacked_parent_after_parent_advances(
     assert resolve_commit_base(repo) == "feature-a"
 
 
+def test_resolve_commit_base_ignores_branch_merged_into_head(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "deps")
+    _commit_files(repo, {"lock.txt": "1\n"}, "chore: deps")
+    _checkout(repo, "main")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.py": "f\n"}, "feat: f")
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-edit", "deps"], cwd=repo, check=True
+    )
+
+    # deps..HEAD = 2 < main..HEAD = 3, but deps was merged in, not forked from.
+    assert resolve_commit_base(repo) == "main"
+    assert not any("forked from" in w for w in base_warnings(repo, "main", "feature"))
+
+
 def test_resolve_commit_base_honors_override(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

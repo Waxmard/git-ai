@@ -348,11 +348,12 @@ def _nearest_fork_parent(
 ) -> str | None:
     """Return the branch HEAD most likely forked from, or None.
 
-    Scores every other branch by ``(commits-ahead, commits-behind, name-rank)``
-    and takes the smallest — the nearest ancestor with the least divergence.
-    Name-agnostic, so it finds ``release/*``, ``staging``, or a stacked parent
-    branch, not just ``main``/``master``/``dev``. Branches that already contain
-    all of HEAD are skipped.
+    Picks the branch(es) containing HEAD's first-parent fork point — the
+    nearest first-parent commit shared with any other branch — breaking ties
+    by fewest ref-only commits, then name-rank. Name-agnostic, so it finds
+    ``release/*``, ``staging``, or a stacked parent branch, not just
+    ``main``/``master``/``dev``. Branches that already contain all of HEAD are
+    skipped, and side branches merged into HEAD don't count as fork parents.
     """
     default_name = get_default_branch(repo_path)
     rows = _branch_ahead_behind(repo_path, current_branch)
@@ -362,16 +363,48 @@ def _nearest_fork_parent(
             for ref in _list_branch_refs(repo_path, current_branch)
             if (ahead_behind := _ahead_behind(repo_path, ref)) is not None
         ]
-    best_key: tuple[int, int, int] | None = None
-    best_ref: str | None = None
-    for ref, ahead, behind in rows:
-        if ahead == 0:
-            continue
-        key = (ahead, behind, _base_name_rank(ref, default_name))
-        if best_key is None or key < best_key:
-            best_key = key
-            best_ref = ref
-    return best_ref
+    candidates = {ref: behind for ref, ahead, behind in rows if ahead > 0}
+    if not candidates:
+        return None
+    full_refs = [
+        f"refs/remotes/{ref}" if ref.startswith("origin/") else f"refs/heads/{ref}"
+        for ref in candidates
+    ]
+    count = subprocess.run(
+        ["git", "rev-list", "--first-parent", "--count", "HEAD", "--not", *full_refs],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if count.returncode != 0 or not count.stdout.strip().isdigit():
+        return None
+    contains = subprocess.run(
+        [
+            "git",
+            "for-each-ref",
+            f"--contains=HEAD~{int(count.stdout)}",
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/remotes/origin",
+        ],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if contains.returncode != 0:
+        return None
+    containing = [
+        ref
+        for line in contains.stdout.splitlines()
+        if (ref := _shorten_ref(line.strip())) in candidates
+    ]
+    return min(
+        containing,
+        key=lambda r: (candidates[r], _base_name_rank(r, default_name)),
+        default=None,
+    )
 
 
 def resolve_commit_base(
