@@ -168,13 +168,13 @@ persist_key_to_rc() {
 #
 # Fields: token|display name|env var|keychain service|base url|models.dev key|models.dev family prefix|family
 #   base url is everything before "/chat/completions" and "/models" — include
-#   a provider's own "/v1" here if it needs one (OpenAI does; DeepSeek doesn't).
+#   a provider's own "/v1" here if it needs one; a user's [section] base_url =
+#   overrides it (see openai_compat_base_url).
 #   family feeds both provider_family (a runtime-recognition gate) and
 #   recommended_model's family lookup; for every row here the two happen to
 #   want the same string.
 GIT_AI_OPENAI_COMPAT=(
   "openai-api|OpenAI API|OPENAI_API_KEY|openai-api-key|https://api.openai.com/v1|openai||openai"
-  "deepseek-api|DeepSeek API|DEEPSEEK_API_KEY|deepseek-api-key|https://api.deepseek.com|deepseek|deepseek|deepseek"
 )
 
 # _openai_compat_field PROVIDER INDEX — 1-based field from PROVIDER's row
@@ -197,6 +197,15 @@ _openai_compat_tokens() {
   for row in "${GIT_AI_OPENAI_COMPAT[@]}"; do
     printf '%s\n' "${row%%|*}"
   done
+}
+
+# openai_compat_base_url PROVIDER — `base_url =` from PROVIDER's options.conf
+# section when set (one trailing / dropped), else the table's field 5.
+openai_compat_base_url() {
+  local p="${1%%@*}" url
+  url=$(vertex_config_value "$p" base_url)
+  [[ -n "$url" ]] || url=$(_openai_compat_field "$p" 5) || return 1
+  printf '%s\n' "${url%/}"
 }
 
 # provider_ready PROVIDER
@@ -317,12 +326,12 @@ GIT_AI_RECOMMENDED_MODELS_FILE="${GIT_AI_RECOMMENDED_MODELS_FILE:-${GIT_AI_PKG_D
 
 # recommended_model PROVIDER
 # Print the recommended model id for PROVIDER's family, read from
-# recommended-models.conf (`family = model-id` lines). Used by the setup
-# wizard's fast path so a new (often non-technical) user gets a sensible pin
-# without having to choose one. Empty output means "no recommendation" (caller
-# leaves the model unpinned). Suggestions only: discovery still feeds the
-# picker and any id remains overridable — this is intentionally a single
-# curated default per family, not the (deliberately non-existent) full catalog.
+# recommended-models.conf (`family = model-id` lines). It is the default model
+# whenever no model is given and the tool has no saved pick, and the setup
+# wizard's fast-path pin. Empty output means "no recommendation". Discovery
+# still feeds the picker and any id remains overridable — this is intentionally
+# a single curated default per family, not the (deliberately non-existent) full
+# catalog.
 recommended_model() {
   local family
   case "${1%%@*}" in
@@ -332,7 +341,16 @@ recommended_model() {
     # Its own family: agy's ids carry a reasoning-effort suffix
     # (gemini-3.7-flash-medium), so a bare google id is not a valid pin.
     antigravity) family=antigravity ;;
-    *) family=$(_openai_compat_field "$1" 8) || return 0 ;;
+    *)
+      family=$(_openai_compat_field "$1" 8) || return 0
+      if [[ -n "$(vertex_config_value "${1%%@*}" base_url)" ]]; then
+        local combo
+        while IFS= read -r combo; do
+          [[ "$combo" == "${1%%@*}:"* ]] && { printf '%s\n' "${combo#*:}"; return 0; }
+        done < <(parse_user_options)
+        return 0
+      fi
+      ;;
   esac
 
   [[ -r "$GIT_AI_RECOMMENDED_MODELS_FILE" ]] || return 0

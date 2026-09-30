@@ -58,6 +58,14 @@ check_diff_size_or_die() {
   exit 1
 }
 
+# _rm_on_exit CMD — run CMD on exit, including a terminal hangup (bash skips
+# the EXIT trap when SIGHUP kills a non-interactive shell).
+_rm_on_exit() {
+  # shellcheck disable=SC2064 # CMD is the caller's single-quoted string; expands when trapped
+  trap "$1" EXIT
+  trap 'exit 129' HUP
+}
+
 # Print $1 with leading/trailing whitespace stripped.
 _trim() {
   local s="$1"

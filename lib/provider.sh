@@ -16,6 +16,7 @@ pick_or_recall_provider() {
   fi
   picked=$(get_last_provider "$tool_name")
   [[ -n "$picked" ]] || return 1
+  printf 'git-ai: using saved provider %s for %s (from .git/%s-last-provider)\n' "$picked" "$tool_name" "$tool_name" >&2
   printf '%s\n' "$picked"
 }
 
@@ -37,22 +38,17 @@ pick_via_fzf() {
   printf '%s\n' "${choice%%|*}"
 }
 
-# With no curated catalog there's no hardcoded default. Prefer the tool's last
-# saved pick for this provider; otherwise fall back to the first model discovery
-# returns (which is the API's newest-first / our sort order). May print nothing
-# when offline with a cold cache and no saved pick — resolve_model surfaces that.
+# Prefer the tool's last saved pick for this provider; otherwise fall back to
+# the family's recommended model. Prints nothing when neither exists —
+# resolve_model surfaces that.
 default_model_for_provider() {
-  local tool_name="$1"
-  local provider="$2"
-  provider_family "$provider" >/dev/null || return 1
-
   local last
-  last=$(get_last_model "$tool_name" "$provider" "")
+  last=$(get_last_model "$1" "$2" "")
   if [[ -n "$last" ]]; then
     printf '%s\n' "$last"
     return 0
   fi
-  discover_models "$provider" 2>/dev/null | head -n1
+  recommended_model "$2"
 }
 
 # Model IDs are no longer validated against a fixed list: an explicit model is
@@ -156,7 +152,8 @@ _run_gemini_api() {
   body_file=$(printf '%s' "$input" | _stage_request_body gemini "$prompt") ||
     die "Failed to build Gemini API request"
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$cfg" "$body_file"' EXIT
+  # shellcheck disable=SC2016
+  _rm_on_exit 'rm -f "$cfg" "$body_file"'
   # The key is a URL parameter, so the whole URL goes in the curl config file
   # rather than argv (keeps the key out of `ps`).
   printf 'url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"\n' \
@@ -204,6 +201,18 @@ _agy_prompt_arg() {
   printf '@%s' "$staged"
 }
 
+# _run_in_empty_dir CMD [ARG...]
+# Run CMD from a fresh empty temp dir (removed afterwards) so an agent CLI
+# never sees the repo it is summarizing; returns CMD's status.
+_run_in_empty_dir() {
+  local dir rc=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/git-ai-cwd.XXXXXX") ||
+    die "failed to create an empty working directory"
+  (cd "$dir" && "$@") || rc=$?
+  rm -rf "$dir"
+  return "$rc"
+}
+
 _vertex_endpoint() {
   local project="$1" region="$2" publisher="$3" model="$4" method="$5"
   local host
@@ -245,7 +254,8 @@ _run_vertex_api() {
     die "Failed to build ${label} request"
   url=$(_vertex_endpoint "$project" "$region" "$publisher" "$model" "$method")
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$curl_cfg" "$body_file"' EXIT
+  # shellcheck disable=SC2016
+  _rm_on_exit 'rm -f "$curl_cfg" "$body_file"'
   printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
   response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" \
     --data-binary "@$body_file" "$url")
@@ -264,7 +274,8 @@ _run_anthropic_api() {
   body_file=$(printf '%s' "$input" | _stage_request_body anthropic "$prompt" "$model") ||
     die "Failed to build Anthropic API request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$curl_cfg" "$body_file"' EXIT
+  # shellcheck disable=SC2016
+  _rm_on_exit 'rm -f "$curl_cfg" "$body_file"'
   printf 'header = "x-api-key: %s"\n' "$key" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
@@ -296,7 +307,8 @@ _run_openai_compat_api() {
   body_file=$(printf '%s' "$input" | _stage_request_body openai "$prompt" "$model") ||
     die "Failed to build ${label} request"
   curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  trap 'rm -f "$curl_cfg" "$body_file"' EXIT
+  # shellcheck disable=SC2016
+  _rm_on_exit 'rm -f "$curl_cfg" "$body_file"'
   printf 'header = "Authorization: Bearer %s"\n' "$key" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
@@ -327,6 +339,10 @@ run_provider() {
   # A provider may be profile-qualified (base@profile); dispatch on the base,
   # but look up account/project config under the full token (= section name).
   provider_base_name="${provider%%@*}"
+  local blocked
+  if blocked=$(provider_blocked_dir "$provider"); then
+    die "$provider is blocked in $blocked (deny_dirs in $(user_options_path))"
+  fi
   model=$(resolve_model "$tool_name" "$provider" "$selected_model")
 
   case $provider_base_name in
@@ -335,7 +351,8 @@ run_provider() {
         die "Claude Code auth requires the Claude Code CLI. See: https://claude.ai/code"
       # --max-turns must exceed 1: reasoning models spend a turn thinking, so a
       # cap of 1 aborts with "Reached max turns" before any text is emitted.
-      claude -p "$prompt" --max-turns 3 --model "$model" <<<"$input" ||
+      _run_in_empty_dir claude -p "$prompt" --max-turns 3 --model "$model" \
+        --tools "" --strict-mcp-config --no-session-persistence <<<"$input" ||
         die "Claude generation failed"
       ;;
     anthropic-api)
@@ -350,11 +367,14 @@ run_provider() {
       # Per-provider account config (options.conf) overrides env. account=
       # selects a gcloud user credential; credentials= points ADC at a
       # service-account JSON. Both are optional — absent both, plain ADC is used.
-      local vertex_project vertex_region vertex_account vertex_creds
+      local vertex_project vertex_region vertex_account vertex_creds vertex_project_src=options.conf
       vertex_account=$(vertex_resolve "$provider" account)
       vertex_creds=$(vertex_resolve "$provider" credentials)
       vertex_project=$(vertex_resolve "$provider" project)
-      vertex_project="${vertex_project:-${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
+      if [[ -z "$vertex_project" ]]; then
+        vertex_project="${GOOGLE_VERTEX_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}"
+        vertex_project_src='env'
+      fi
       vertex_region=$(vertex_resolve "$provider" region)
       vertex_region="${vertex_region:-${VERTEX_LOCATION:-${GOOGLE_VERTEX_LOCATION:-${GOOGLE_CLOUD_LOCATION:-us-central1}}}}"
 
@@ -368,11 +388,11 @@ run_provider() {
         die "Vertex auth requires a project (set project= under [$provider] in options.conf, or GOOGLE_CLOUD_PROJECT/GOOGLE_VERTEX_PROJECT)."
 
       if [[ -n "$vertex_account" ]]; then
-        echo "git-ai: Vertex account ${vertex_account} · project ${vertex_project} (${vertex_region})" >&2
+        echo "git-ai: Vertex account ${vertex_account} · project ${vertex_project} [${vertex_project_src}] (${vertex_region})" >&2
       elif [[ -n "$vertex_creds" ]]; then
-        echo "git-ai: Vertex credentials ${vertex_creds} · project ${vertex_project} (${vertex_region})" >&2
+        echo "git-ai: Vertex credentials ${vertex_creds} · project ${vertex_project} [${vertex_project_src}] (${vertex_region})" >&2
       else
-        echo "git-ai: Vertex ADC · project ${vertex_project} (${vertex_region})" >&2
+        echo "git-ai: Vertex ADC · project ${vertex_project} [${vertex_project_src}] (${vertex_region})" >&2
       fi
 
       _run_vertex_api "${provider_base_name#vertex-}" "$model" "$prompt" "$input" "$vertex_project" "$vertex_region" "$vertex_account"
@@ -394,11 +414,13 @@ run_provider() {
       # An @-prefixed arg means the payload was staged past the argv limit, and
       # that file is ours to clean up.
       [[ "$agy_arg" == @* ]] && agy_prompt_file="${agy_arg#@}"
-      trap 'rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}' EXIT
+      # shellcheck disable=SC2016
+      _rm_on_exit 'rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}'
       # --disable-slash-commands stops a diff line opening with `/` from being
       # expanded as a slash command.
-      output=$(agy -p "$agy_arg" \
-        --model "$model" --output-format text --disable-slash-commands 2>"$agy_err_file")
+      output=$(_run_in_empty_dir agy -p "$agy_arg" \
+        --model "$model" --output-format text --disable-slash-commands \
+        --sandbox 2>"$agy_err_file")
       agy_status=$?
       agy_error=$(<"$agy_err_file")
       rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}
@@ -421,9 +443,14 @@ run_provider() {
         die "failed to create temporary output file"
       codex_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-codex-err.XXXXXX") ||
         die "failed to create temporary error file"
-      trap 'rm -f "$codex_output_file" "$codex_err_file"' EXIT
+      # shellcheck disable=SC2016
+      _rm_on_exit 'rm -f "$codex_output_file" "$codex_err_file"'
       printf '%s\n\n%s' "$prompt" "$input" |
-        codex exec --model "$model" --output-last-message "$codex_output_file" - \
+        _run_in_empty_dir codex exec --model "$model" --sandbox read-only \
+        --skip-git-repo-check --ephemeral --ignore-user-config \
+        -c 'web_search="disabled"' \
+        --disable shell_tool --disable unified_exec \
+        --output-last-message "$codex_output_file" - \
         >/dev/null 2>"$codex_err_file" || {
         local codex_error
         codex_error=$(<"$codex_err_file")
@@ -444,7 +471,7 @@ run_provider() {
       local envvar keyservice label api_key base_url
       if envvar=$(_openai_compat_field "$provider_base_name" 3); then
         keyservice=$(_openai_compat_field "$provider_base_name" 4)
-        base_url=$(_openai_compat_field "$provider_base_name" 5)
+        base_url=$(openai_compat_base_url "$provider_base_name")
         label=$(provider_display_name "$provider_base_name")
         api_key=$(resolve_api_key "$keyservice" "$envvar") ||
           die "${label} auth not found. Set ${envvar} or store '${keyservice}' in your keychain."
