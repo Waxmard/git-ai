@@ -376,8 +376,9 @@ parse_user_options() {
 # vertex_config_value PROVIDER KEY
 # Emit the value of a key=value line under the given provider's section in the
 # user options file. Recognised keys: project, projects, region, account,
-# credentials. (`projects` is the comma/space-separated list read from the
-# shared [vertex] section to expand profiles; see parse_user_options.)
+# credentials, and base_url (for openai-api). (`projects` is the comma/space-
+# separated list read from the shared [vertex] section to expand profiles; see
+# parse_user_options.)
 # A leading '~/' in the value is expanded to $HOME. Prints nothing (and returns
 # 0) when the file, section, or key is absent.
 vertex_config_value() {

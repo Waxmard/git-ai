@@ -34,7 +34,7 @@ _setup_probe_key() (
       ;;
     *)
       local base
-      base=$(_openai_compat_field "${provider%%@*}" 5) || return 2
+      base=$(openai_compat_base_url "${provider%%@*}") || return 2
       printf 'header = "Authorization: Bearer %s"\n' "$esc" >"$cfg"
       url="${base}/models"
       ;;

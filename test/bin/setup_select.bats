@@ -1513,7 +1513,7 @@ _curl_code_stub() { # DIR CODE
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
     store_api_key() { printf "STORED:%s\n" "$2"; }
-    printf $"\e[200~sk-real-key\n\e[201~1\n" | _setup_prompt_api_key deepseek-api deepseek-api-key DEEPSEEK_API_KEY "DeepSeek API"
+    printf $"\e[200~sk-real-key\n\e[201~1\n" | _setup_prompt_api_key openai-api openai-api-key OPENAI_API_KEY "OpenAI API"
   '
   rm -rf "$stub"
   assert_success
@@ -1534,7 +1534,7 @@ _curl_code_stub() { # DIR CODE
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
     store_api_key() { printf "STORED:%s\n" "$2"; }
-    printf "sk-typed-key\n1\n" | _setup_prompt_api_key deepseek-api deepseek-api-key DEEPSEEK_API_KEY "DeepSeek API"
+    printf "sk-typed-key\n1\n" | _setup_prompt_api_key openai-api openai-api-key OPENAI_API_KEY "OpenAI API"
   '
   rm -rf "$stub"
   assert_success
@@ -1553,7 +1553,7 @@ _curl_code_stub() { # DIR CODE
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
     store_api_key() { printf "STORED:%s\n" "$2"; }
-    printf "\ny\n1\n" | _setup_prompt_api_key deepseek-api deepseek-api-key DEEPSEEK_API_KEY "DeepSeek API"
+    printf "\ny\n1\n" | _setup_prompt_api_key openai-api openai-api-key OPENAI_API_KEY "OpenAI API"
   '
   rm -rf "$stub"
   assert_success
@@ -1571,7 +1571,7 @@ _curl_code_stub() { # DIR CODE
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
     store_api_key() { printf "STORED:%s\n" "$2"; }
-    printf "\nn\n" | _setup_prompt_api_key deepseek-api deepseek-api-key DEEPSEEK_API_KEY "DeepSeek API"
+    printf "\nn\n" | _setup_prompt_api_key openai-api openai-api-key OPENAI_API_KEY "OpenAI API"
   '
   rm -rf "$stub"
   assert_success

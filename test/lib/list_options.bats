@@ -21,7 +21,6 @@ setup_file() {
   printf 'claude-opus-4-6\n' >"${CACHE_TPL}/vertex-anthropic.list"
   printf 'gemini-3.1-flash\n' >"${CACHE_TPL}/gemini-api.list"
   printf 'gpt-5.4\n' >"${CACHE_TPL}/openai-api.list"
-  printf 'deepseek-flash\n' >"${CACHE_TPL}/deepseek-api.list"
 }
 
 teardown_file() {
@@ -62,7 +61,6 @@ teardown() {
   run list_options commit
   assert_success
   assert_output --partial "openai-api:gpt-5.4|gpt-5.4 · OpenAI API"
-  assert_output --partial "deepseek-api:deepseek-flash|deepseek-flash · DeepSeek API"
 }
 
 @test "list_options: date suffix stripped from display, kept in value" {
@@ -122,9 +120,9 @@ teardown() {
 }
 
 @test "list_options: deny_dirs hides a blocked provider" {
-  printf '[codex]\ngpt-5.4\ndeny_dirs = %s\n\n[deepseek-api]\ndeepseek-flash\n' "$TEST_REPO" >"${XDG_CONFIG_HOME}/git-ai/options.conf"
+  printf '[codex]\ngpt-5.4\ndeny_dirs = %s\n\n[openai-api]\ngpt-5.4\n' "$TEST_REPO" >"${XDG_CONFIG_HOME}/git-ai/options.conf"
   run list_options commit
   assert_success
-  assert_output --partial "deepseek-api:deepseek-flash|"
+  assert_output --partial "openai-api:gpt-5.4|"
   refute_output --partial "codex:"
 }

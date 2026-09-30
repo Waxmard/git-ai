@@ -116,10 +116,10 @@ teardown() {
 }
 
 @test "conf_set_section_setting: new key goes before the section's trailing blanks" {
-  printf '[codex]\ngpt-5.4\n\n\n[deepseek-api]\ndeepseek-flash\n' >"${TEST_DIR}/b.conf"
+  printf '[codex]\ngpt-5.4\n\n\n[openai-api]\ngpt-5.4\n' >"${TEST_DIR}/b.conf"
   run conf_set_section_setting codex deny_dirs /tmp <"${TEST_DIR}/b.conf"
   assert_success
-  assert_output "$(printf '[codex]\ngpt-5.4\ndeny_dirs = /tmp\n\n\n[deepseek-api]\ndeepseek-flash')"
+  assert_output "$(printf '[codex]\ngpt-5.4\ndeny_dirs = /tmp\n\n\n[openai-api]\ngpt-5.4')"
 }
 
 @test "conf_set_section_setting: updates an existing key in place (no dup)" {

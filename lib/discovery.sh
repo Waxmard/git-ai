@@ -73,6 +73,7 @@ _models_dev_key() {
     codex)                                      printf 'openai\t\n' ;;
     *)
       local mdkey mdfam
+      [[ -z "$(vertex_config_value "${1%%@*}" base_url)" ]] || return 1
       mdkey=$(_openai_compat_field "$1" 6) && [[ -n "$mdkey" ]] || return 1
       mdfam=$(_openai_compat_field "$1" 7)
       printf '%s\t%s\n' "$mdkey" "$mdfam"
@@ -132,7 +133,12 @@ _fetch_models() {
     vertex-gemini)    _fetch_models_vertex "$1" google ;;
     vertex-anthropic) _fetch_models_vertex "$1" anthropic ;;
     anthropic-api)    _fetch_models_anthropic_api ;;
-    openai-api)       _fetch_models_openai_api ;;
+    openai-api)
+      if [[ -n "$(vertex_config_value openai-api base_url)" ]]; then
+        _fetch_models_openai_compat openai-api
+      else
+        _fetch_models_openai_api
+      fi ;;
     claude-code)      _fetch_models_anthropic_api ;;
     codex)            _fetch_models_openai_api ;;
     *)
@@ -232,7 +238,7 @@ for i in sorted(set(keep), reverse=True):
 # embeddings/tts/etc. noise to filter, unlike OpenAI's own catalog (above).
 _fetch_models_openai_compat() {
   local provider="$1" base key cfg resp st
-  base=$(_openai_compat_field "$provider" 5) || return 1
+  base=$(openai_compat_base_url "$provider") || return 1
   key=$(resolve_api_key "$(_openai_compat_field "$provider" 4)" "$(_openai_compat_field "$provider" 3)") &&
     [[ -n "$key" ]] || return 1
   cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1

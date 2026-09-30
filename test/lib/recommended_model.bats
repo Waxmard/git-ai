@@ -3,16 +3,17 @@ load '../helpers/common'
 
 setup() {
   load_bats_libs
+  export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR"
   source "${REPO_ROOT}/lib/ai-common.sh"
 }
 
 @test "recommended_model: each provider resolves to its family's pin" {
   GIT_AI_RECOMMENDED_MODELS_FILE="$BATS_TEST_TMPDIR/rec.conf"
   printf '%s\n' 'anthropic = a-model' 'google = g-model' 'openai = o-model' \
-    'deepseek = d-model' 'antigravity = ag-model' >"$GIT_AI_RECOMMENDED_MODELS_FILE"
+    'antigravity = ag-model' >"$GIT_AI_RECOMMENDED_MODELS_FILE"
   for pair in claude-code:a-model anthropic-api:a-model vertex-anthropic:a-model \
               vertex-anthropic@acme:a-model gemini-api:g-model vertex-gemini:g-model \
-              openai-api:o-model codex:o-model deepseek-api:d-model antigravity:ag-model; do
+              openai-api:o-model codex:o-model antigravity:ag-model; do
     run recommended_model "${pair%%:*}"
     assert_success
     assert_output "${pair#*:}"
@@ -48,4 +49,15 @@ setup() {
   rm -f "$GIT_AI_RECOMMENDED_MODELS_FILE"
   assert_success
   assert_output ""
+}
+
+@test "recommended_model: openai-api with base_url defaults to its first pinned model" {
+  GIT_AI_RECOMMENDED_MODELS_FILE="$BATS_TEST_TMPDIR/rec.conf"
+  printf 'openai = o-model\n' >"$GIT_AI_RECOMMENDED_MODELS_FILE"
+  mkdir -p "$XDG_CONFIG_HOME/git-ai"
+  printf '[openai-api]\nbase_url = https://example.test\nfirst-model\nsecond-model\n' \
+    >"$XDG_CONFIG_HOME/git-ai/options.conf"
+  run recommended_model openai-api
+  assert_success
+  assert_output "first-model"
 }

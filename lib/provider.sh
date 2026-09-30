@@ -471,7 +471,7 @@ run_provider() {
       local envvar keyservice label api_key base_url
       if envvar=$(_openai_compat_field "$provider_base_name" 3); then
         keyservice=$(_openai_compat_field "$provider_base_name" 4)
-        base_url=$(_openai_compat_field "$provider_base_name" 5)
+        base_url=$(openai_compat_base_url "$provider_base_name")
         label=$(provider_display_name "$provider_base_name")
         api_key=$(resolve_api_key "$keyservice" "$envvar") ||
           die "${label} auth not found. Set ${envvar} or store '${keyservice}' in your keychain."
