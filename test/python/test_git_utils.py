@@ -625,6 +625,33 @@ def test_resolve_commit_base_keeps_base_synced_into_head(tmp_path: Path) -> None
     assert resolve_commit_base(repo) == "main"
 
 
+def test_resolve_commit_base_ignores_merged_branch_that_moved_on(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
+    )
+    _checkout(repo, "-b", "deps")
+    _commit_files(repo, {"lock.txt": "1\n"}, "chore: deps")
+    _checkout(repo, "main")
+    _checkout(repo, "-b", "feature")
+    _commit_files(repo, {"f.py": "f\n"}, "feat: f")
+    subprocess.run(
+        ["git", "merge", "--no-ff", "--no-edit", "deps"], cwd=repo, check=True
+    )
+    _checkout(repo, "deps")
+    _commit_files(repo, {"lock.txt": "2\n"}, "chore: deps again")
+    _checkout(repo, "main")
+    _commit_files(repo, {"m.py": "m\n"}, "chore: main moves")
+    _commit_files(repo, {"m2.py": "m\n"}, "chore: main moves again")
+    _checkout(repo, "feature")
+
+    assert resolve_commit_base(repo) == "main"
+
+
 def test_resolve_commit_base_honors_override(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

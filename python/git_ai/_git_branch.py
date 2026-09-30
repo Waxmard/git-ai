@@ -343,6 +343,18 @@ def _branch_ahead_behind(
     return rows
 
 
+def _forked_at(repo_path: str | Path, refname: str, fork_sha: str) -> bool:
+    """Whether ``fork_sha`` is a merge-base of HEAD and ``refname``."""
+    result = subprocess.run(
+        ["git", "merge-base", "--all", "HEAD", refname],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and fork_sha in result.stdout.split()
+
+
 def _nearest_fork_parent(
     repo_path: str | Path, current_branch: str | None
 ) -> str | None:
@@ -353,8 +365,8 @@ def _nearest_fork_parent(
     by fewest ref-only commits, then name-rank. Name-agnostic, so it finds
     ``release/*``, ``staging``, or a stacked parent branch, not just
     ``main``/``master``/``dev``. Branches that already contain all of HEAD are
-    skipped, and a side branch merged into HEAD loses to any candidate it
-    merely sits beside.
+    skipped, and a side branch merged into HEAD — even one that has moved on
+    since — loses to any candidate it merely sits beside.
     """
     default_name = get_default_branch(repo_path)
     rows = _branch_ahead_behind(repo_path, current_branch)
@@ -386,7 +398,7 @@ def _nearest_fork_parent(
             "git",
             "for-each-ref",
             f"--contains={fork}",
-            "--format=%(refname) %(objectname)",
+            "--format=%(refname)",
             "refs/heads",
             "refs/remotes/origin",
         ],
@@ -397,28 +409,26 @@ def _nearest_fork_parent(
     )
     if contains.returncode != 0:
         return None
-    fork_sha = subprocess.run(
+    rev = subprocess.run(
         ["git", "rev-parse", "--verify", fork],
         cwd=str(repo_path),
         capture_output=True,
         text=True,
         check=False,
     )
-    if fork_sha.returncode != 0:
+    if rev.returncode != 0:
         return None
-    refs = []
-    for line in contains.stdout.splitlines():
-        refname, _, sha = line.strip().partition(" ")
-        if (ref := _shorten_ref(refname)) in candidates:
-            refs.append((ref, sha))
-    containing = [ref for ref, _ in refs]
+    fork_sha = rev.stdout.strip()
+    containing = [
+        (ref, refname)
+        for line in contains.stdout.splitlines()
+        if (ref := _shorten_ref(refname := line.strip())) in candidates
+    ]
     forked = [
-        ref
-        for ref, sha in refs
-        if candidates[ref] > 0 or sha == fork_sha.stdout.strip()
+        ref for ref, refname in containing if _forked_at(repo_path, refname, fork_sha)
     ]
     return min(
-        forked or containing,
+        forked or [ref for ref, _ in containing],
         key=lambda r: (candidates[r], _base_name_rank(r, default_name)),
         default=None,
     )
