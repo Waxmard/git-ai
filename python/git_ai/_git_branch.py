@@ -353,7 +353,8 @@ def _nearest_fork_parent(
     by fewest ref-only commits, then name-rank. Name-agnostic, so it finds
     ``release/*``, ``staging``, or a stacked parent branch, not just
     ``main``/``master``/``dev``. Branches that already contain all of HEAD are
-    skipped, and side branches merged into HEAD don't count as fork parents.
+    skipped, and a side branch merged into HEAD loses to any candidate it
+    merely sits beside.
     """
     default_name = get_default_branch(repo_path)
     rows = _branch_ahead_behind(repo_path, current_branch)
@@ -379,12 +380,13 @@ def _nearest_fork_parent(
     )
     if count.returncode != 0 or not count.stdout.strip().isdigit():
         return None
+    fork = f"HEAD~{int(count.stdout)}"
     contains = subprocess.run(
         [
             "git",
             "for-each-ref",
-            f"--contains=HEAD~{int(count.stdout)}",
-            "--format=%(refname)",
+            f"--contains={fork}",
+            "--format=%(refname) %(objectname)",
             "refs/heads",
             "refs/remotes/origin",
         ],
@@ -395,13 +397,28 @@ def _nearest_fork_parent(
     )
     if contains.returncode != 0:
         return None
-    containing = [
+    fork_sha = subprocess.run(
+        ["git", "rev-parse", "--verify", fork],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if fork_sha.returncode != 0:
+        return None
+    refs = []
+    for line in contains.stdout.splitlines():
+        refname, _, sha = line.strip().partition(" ")
+        if (ref := _shorten_ref(refname)) in candidates:
+            refs.append((ref, sha))
+    containing = [ref for ref, _ in refs]
+    forked = [
         ref
-        for line in contains.stdout.splitlines()
-        if (ref := _shorten_ref(line.strip())) in candidates
+        for ref, sha in refs
+        if candidates[ref] > 0 or sha == fork_sha.stdout.strip()
     ]
     return min(
-        containing,
+        forked or containing,
         key=lambda r: (candidates[r], _base_name_rank(r, default_name)),
         default=None,
     )
