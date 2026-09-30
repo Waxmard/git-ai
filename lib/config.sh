@@ -79,6 +79,29 @@ user_options_path() {
   printf '%s/git-ai/options.conf\n' "$xdg"
 }
 
+# provider_blocked_dir TOKEN [HERE] — print the deny_dirs directory (physical path) of
+# TOKEN's section, or for base@profile also its base section, that contains
+# the physical cwd; non-zero when TOKEN is not blocked here. HERE (a physical
+# path) skips the pwd -P when the caller checks many tokens.
+provider_blocked_dir() {
+  local here raw e d
+  local -a entries
+  here="${2:-$(pwd -P)}"
+  raw=$(vertex_config_value "$1" deny_dirs)
+  [[ "$1" == *@* ]] && raw+=",$(vertex_config_value "${1%%@*}" deny_dirs)"
+  IFS=',' read -ra entries <<<"$raw"
+  for e in "${entries[@]}"; do
+    e=$(_trim "$e")
+    [[ -n "$e" ]] || continue
+    d=$(cd "${e/#\~/$HOME}" 2>/dev/null && pwd -P) || continue
+    if [[ "$here" == "$d" || "$here" == "$d"/* ]]; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # render_options_conf
 # Read "provider:model" lines on stdin (one per enabled combo) and emit a
 # git-ai options.conf body: one [provider] header per distinct provider in
@@ -234,7 +257,7 @@ conf_remove_section_setting() {
 conf_set_section_setting() {
   local target="$1" key="$2" value="$3"
   local newline="${key} = ${value}"
-  local line in_target=0 found=0 emitted=0 k
+  local line in_target=0 found=0 emitted=0 k blanks=""
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ ^\[(.+)\]$ ]]; then
       # Leaving the target without having emitted: the key was new, so append
@@ -243,6 +266,8 @@ conf_set_section_setting() {
         printf '%s\n' "$newline"
         emitted=1
       fi
+      printf '%s' "$blanks"
+      blanks=""
       in_target=0
       printf '%s\n' "$line"
       if [[ "${BASH_REMATCH[1]}" == "$target" ]]; then
@@ -251,6 +276,12 @@ conf_set_section_setting() {
       fi
       continue
     fi
+    if [[ $in_target -eq 1 && -z "$line" ]]; then
+      blanks+=$'\n'
+      continue
+    fi
+    printf '%s' "$blanks"
+    blanks=""
     if [[ $in_target -eq 1 && "$line" == *=* ]]; then
       k="${line%%=*}"
       k=$(_trim "$k")
@@ -267,6 +298,7 @@ conf_set_section_setting() {
     printf '%s\n' "$newline"
     emitted=1
   fi
+  printf '%s' "$blanks"
   if [[ $found -eq 0 ]]; then
     printf '\n[%s]\n%s\n' "$target" "$newline"
   fi
@@ -345,8 +377,9 @@ parse_user_options() {
 # vertex_config_value PROVIDER KEY
 # Emit the value of a key=value line under the given provider's section in the
 # user options file. Recognised keys: project, projects, region, account,
-# credentials. (`projects` is the comma/space-separated list read from the
-# shared [vertex] section to expand profiles; see parse_user_options.)
+# credentials, and base_url (for openai-api). (`projects` is the comma/space-
+# separated list read from the shared [vertex] section to expand profiles; see
+# parse_user_options.)
 # A leading '~/' in the value is expanded to $HOME. Prints nothing (and returns
 # 0) when the file, section, or key is absent.
 vertex_config_value() {
@@ -466,8 +499,18 @@ list_options() {
   # existing-but-unreadable file must fall through to discovery rather than
   # enter this branch with an empty entry list and show zero options.
   if [[ -r "$(user_options_path)" ]]; then
+    local here checked=$'\n' blocked=$'\n'
+    here=$(pwd -P)
     while IFS=':' read -r provider model; do
       [[ -n "$provider" && -n "$model" ]] || continue
+      case "$checked" in
+        *$'\n'"$provider"$'\n'*) ;;
+        *)
+          checked+="${provider}"$'\n'
+          provider_blocked_dir "$provider" "$here" >/dev/null && blocked+="${provider}"$'\n'
+          ;;
+      esac
+      case "$blocked" in *$'\n'"$provider"$'\n'*) continue ;; esac
       display=$(provider_display_name "$provider")
       short="${model%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
       table+="${provider}:${model}"$'\t'"${short} · ${display}"$'\n'

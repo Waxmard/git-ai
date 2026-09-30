@@ -1,7 +1,8 @@
 """Console-script entry point for the pip-installed `git-ai` / `aigit` CLIs.
 
-The real CLI is the wheel-bundled Bash under ``git_ai/_sh/``. This points it at
-the installed package (``GIT_AI_PKG_DIR``) and execs it — no Python reimplementation.
+A source checkout or editable install runs the repo's ``bin/git-ai``; the wheel
+runs the bundled Bash under ``git_ai/_sh/``. This points it at the installed
+package (``GIT_AI_PKG_DIR``) and execs it — no Python reimplementation.
 """
 
 from __future__ import annotations
@@ -13,7 +14,11 @@ from pathlib import Path
 
 def main() -> None:
     pkg_dir = Path(__file__).resolve().parent
-    cli = pkg_dir / "_sh" / "bin" / "git-ai"
+    repo_cli = pkg_dir.parent.parent / "bin" / "git-ai"
+    if pkg_dir.parent.name == "python" and repo_cli.is_file():
+        cli = repo_cli
+    else:
+        cli = pkg_dir / "_sh" / "bin" / "git-ai"
     if not cli.is_file():
         sys.stderr.write(
             f"git-ai: bundled CLI not found at {cli}\n"

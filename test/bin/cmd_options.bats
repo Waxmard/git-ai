@@ -21,7 +21,6 @@ setup_file() {
   printf 'gemini-3.1-flash\n' >"${CACHE_TPL}/gemini-api.list"
   printf 'claude-opus-4-6\n' >"${CACHE_TPL}/anthropic-api.list"
   printf 'gpt-5.4\n' >"${CACHE_TPL}/openai-api.list"
-  printf 'deepseek-flash\n' >"${CACHE_TPL}/deepseek-api.list"
 }
 
 teardown_file() {
@@ -58,7 +57,6 @@ teardown() {
   run cmd_options commit
   assert_success
   assert_output --partial "openai-api:gpt-5.4|gpt-5.4 · OpenAI API"
-  assert_output --partial "deepseek-api:deepseek-flash|deepseek-flash · DeepSeek API"
 }
 
 @test "cmd_options pr: default tool is commit when missing arg" {

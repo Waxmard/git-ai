@@ -35,12 +35,6 @@ teardown() {
   assert_output "openai-api-key OPENAI_API_KEY"
 }
 
-@test "provider_key_meta: deepseek-api resolves via the shared compat table" {
-  run provider_key_meta deepseek-api
-  assert_success
-  assert_output "deepseek-api-key DEEPSEEK_API_KEY"
-}
-
 @test "provider_key_meta: CLI/vertex providers are not key-based" {
   run provider_key_meta claude-code
   assert_failure

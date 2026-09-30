@@ -60,12 +60,6 @@ setup() {
   assert_output "OpenAI API"
 }
 
-@test "provider_display_name: deepseek-api" {
-  run provider_display_name "deepseek-api"
-  assert_success
-  assert_output "DeepSeek API"
-}
-
 @test "provider_display_name: last" {
   run provider_display_name "last"
   assert_success
