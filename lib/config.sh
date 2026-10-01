@@ -94,7 +94,7 @@ provider_blocked_dir() {
     e=$(_trim "$e")
     [[ -n "$e" ]] || continue
     d=$(cd "${e/#\~/$HOME}" 2>/dev/null && pwd -P) || continue
-    if [[ "$here" == "$d" || "$here" == "$d"/* ]]; then
+    if [[ "$here" == "$d" || "$here" == "${d%/}"/* ]]; then
       printf '%s\n' "$d"
       return 0
     fi

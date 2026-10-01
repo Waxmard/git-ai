@@ -39,6 +39,13 @@ teardown() {
   assert_failure
 }
 
+@test "provider_blocked_dir: / blocks every directory" {
+  printf '[codex]\ndeny_dirs = /\n' >"$CONF"
+  run provider_blocked_dir codex
+  assert_success
+  assert_output "/"
+}
+
 @test "provider_blocked_dir: ~ expands and nonexistent entries are skipped" {
   printf '[codex]\ndeny_dirs = /nonexistent/x, ~\n' >"$CONF"
   HOME="$TEST_REPO" run provider_blocked_dir codex
