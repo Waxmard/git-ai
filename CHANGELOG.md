@@ -1,5 +1,19 @@
 # Changelog
 
+## [6.11.0](https://github.com/Waxmard/git-ai/compare/v6.10.0...v6.11.0) (2026-10-01)
+
+
+### Features
+
+* add OpenAI-compatible dispatch ([#141](https://github.com/Waxmard/git-ai/issues/141)) ([4143368](https://github.com/Waxmard/git-ai/commit/41433686f5a35d2ad54b6684a5993cad31afdf09))
+* focus PR verification guidance on runtime behavior ([#145](https://github.com/Waxmard/git-ai/issues/145)) ([47e21da](https://github.com/Waxmard/git-ai/commit/47e21da35def1c0db8c7b3a7b17232fa5c978d5e))
+* target OpenAI-compatible hosts and block providers by directory ([#144](https://github.com/Waxmard/git-ai/issues/144)) ([872f888](https://github.com/Waxmard/git-ai/commit/872f8889238d982e8bdfa29b6ac045ea5689d395))
+
+
+### Code Refactoring
+
+* streamline shell and Python internal helpers ([#143](https://github.com/Waxmard/git-ai/issues/143)) ([6e360ce](https://github.com/Waxmard/git-ai/commit/6e360cefb2af478658a982ae03b7fbf409a8daf1))
+
 ## [6.10.0](https://github.com/Waxmard/git-ai/compare/v6.9.0...v6.10.0) (2026-09-14)
 
 
