@@ -239,6 +239,20 @@ print(text)
 '
 }
 
+# choices[0].message.content; fails on null/empty content (content-filter
+# refusals, reasoning models that spend the whole budget on reasoning).
+_extract_openai_text() {
+  "${GIT_AI_PYTHON:-python3}" -c '
+import json, sys
+data = json.loads(sys.stdin.read())
+choice = (data.get("choices") or [{}])[0]
+text = (choice.get("message") or {}).get("content") or ""
+if not isinstance(text, str) or not text.strip():
+    sys.exit(1)
+print(text)
+'
+}
+
 # _run_vertex_api KIND MODEL PROMPT INPUT PROJECT REGION [ACCOUNT] — KIND is anthropic|gemini.
 _run_vertex_api() {
   local kind="$1" model="$2" prompt="$3" input="$4" project="$5" region="$6" account="${7:-}"
@@ -318,11 +332,7 @@ _run_openai_compat_api() {
   local curl_status=$?
   rm -f "$curl_cfg" "$body_file"
   [[ $curl_status -eq 0 ]] || die "${label} request failed"
-  "${GIT_AI_PYTHON:-python3}" -c '
-import json, sys
-data = json.loads(sys.stdin.read())
-print(data["choices"][0]["message"]["content"])
-' <<<"$response" || die "Failed to parse ${label} response"
+  _extract_openai_text <<<"$response" || die "Failed to parse ${label} response"
 }
 
 # run_provider TOOL_NAME PROVIDER PROMPT INPUT [MODEL]

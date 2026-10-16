@@ -160,7 +160,7 @@ persist_key_to_rc() {
 # entry speaks the identical wire format (Authorization: Bearer header,
 # {model,messages} request body, {choices:[{message:{content}}]} response,
 # {data:[{id}]} model list), so a new one is a single row here instead of a
-# mirrored case arm in provider_ready / provider_display_name / provider_family
+# mirrored case arm in provider_ready / provider_display_name
 # / provider_key_meta below, run_provider's dispatch (provider.sh), and
 # discovery.sh's fetch dispatch. A provider whose catalog needs filtering
 # (like OpenAI's, which lists embeddings/tts/etc. alongside chat models) keeps
@@ -170,9 +170,7 @@ persist_key_to_rc() {
 #   base url is everything before "/chat/completions" and "/models" — include
 #   a provider's own "/v1" here if it needs one; a user's [section] base_url =
 #   overrides it (see openai_compat_base_url).
-#   family feeds both provider_family (a runtime-recognition gate) and
-#   recommended_model's family lookup; for every row here the two happen to
-#   want the same string.
+#   family is recommended_model's lookup key in recommended-models.conf.
 GIT_AI_OPENAI_COMPAT=(
   "openai-api|OpenAI API|OPENAI_API_KEY|openai-api-key|https://api.openai.com/v1|openai||openai"
 )
@@ -377,15 +375,6 @@ provider_is_valid() {
       ;;
     vertex-gemini|vertex-anthropic|gemini-api|antigravity|claude-code|anthropic-api|codex|last) return 0 ;;
     *) _openai_compat_field "$1" 1 >/dev/null ;;
-  esac
-}
-
-provider_family() {
-  case ${1%%@*} in
-    vertex-gemini|gemini-api|antigravity) printf '%s\n' "gemini" ;;
-    vertex-anthropic|claude-code|anthropic-api) printf '%s\n' "claude" ;;
-    codex) printf '%s\n' "openai" ;;
-    *) _openai_compat_field "$1" 8 ;;
   esac
 }
 
