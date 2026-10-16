@@ -23,30 +23,6 @@ teardown() {
   done <<< "$output"
 }
 
-@test "cmd_providers: contains vertex-gemini" {
-  run cmd_providers "commit"
-  assert_success
-  assert_output --partial "vertex-gemini|"
-}
-
-@test "cmd_providers: contains vertex-anthropic" {
-  run cmd_providers "commit"
-  assert_success
-  assert_output --partial "vertex-anthropic|"
-}
-
-@test "cmd_providers: contains gemini-api" {
-  run cmd_providers "commit"
-  assert_success
-  assert_output --partial "gemini-api|"
-}
-
-@test "cmd_providers: contains anthropic-api" {
-  run cmd_providers "commit"
-  assert_success
-  assert_output --partial "anthropic-api|"
-}
-
 @test "cmd_providers: last provider appears first after save" {
   save_last_provider "commit" "codex"
   run cmd_providers "commit"

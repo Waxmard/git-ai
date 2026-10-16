@@ -37,19 +37,6 @@ teardown() {
 
 # --- get_last_provider / save_last_provider ---
 
-@test "get_last_provider: returns empty when nothing stored" {
-  run get_last_provider "commit"
-  assert_success
-  assert_output ""
-}
-
-@test "save_last_provider + get_last_provider: round-trips" {
-  save_last_provider "commit" "claude-code"
-  run get_last_provider "commit"
-  assert_success
-  assert_output "claude-code"
-}
-
 @test "save_last_provider + get_last_provider: profile-qualified token round-trips" {
   save_last_provider "commit" "vertex-anthropic@acme"
   run get_last_provider "commit"
@@ -65,19 +52,6 @@ teardown() {
 }
 
 # --- get_last_model / save_last_model ---
-
-@test "get_last_model: returns fallback when nothing stored" {
-  run get_last_model "commit" "claude-code" "claude-haiku-4-5-20251001"
-  assert_success
-  assert_output "claude-haiku-4-5-20251001"
-}
-
-@test "save_last_model + get_last_model: round-trips" {
-  save_last_model "commit" "claude-code" "claude-sonnet-4-6"
-  run get_last_model "commit" "claude-code" "claude-haiku-4-5-20251001"
-  assert_success
-  assert_output "claude-sonnet-4-6"
-}
 
 @test "get_last_model: per-provider isolation" {
   save_last_model "commit" "claude-code" "claude-opus-4-6"

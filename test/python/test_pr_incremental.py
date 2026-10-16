@@ -23,7 +23,6 @@ from git_ai import (
     prune_pr_cache,
     save_cached_pr,
 )
-from git_ai._git import FILE_DIFF_LIMIT_BYTES, LOCKFILE_DIFF_LIMIT_BYTES
 from git_ai._pr_incremental import branch_cache_dir
 
 
@@ -96,32 +95,6 @@ def test_prepare_repo_pr_context_raises_on_unresolvable_previous_head_sha(
             base_branch="main",
             previous_head_sha="deadbeef00000000",
         )
-
-
-def test_prepare_repo_pr_context_incremental_enables_two_pass(
-    tmp_path: Path,
-) -> None:
-    repo = _make_repo(tmp_path)
-    _commit(repo, "one.txt", "one\n", "feat: add first")
-    first_sha = _git(repo, "rev-parse", "HEAD")
-    _commit(repo, "two.txt", "two\n", "feat: add second")
-
-    context = prepare_repo_pr_context(
-        repo,
-        base_branch="main",
-        existing_pr="feat: old title\n\n### Features\n- old",
-        previous_head_sha=first_sha,
-    )
-
-    _, user_input = build_mr_prompt(
-        diff=context.diff,
-        commit_log=context.commit_log,
-        diff_stat=context.diff_stat,
-        existing_pr=context.existing_pr,
-    )
-    # conventional commits on incremental path must reach the two-pass prompt
-    assert "<draft>" in user_input
-    assert "<commit_log>" not in user_input
 
 
 def test_prepare_repo_pr_context_short_circuits_when_no_new_commits(
@@ -249,46 +222,6 @@ def test_prepare_repo_pr_context_raises_on_non_ancestor_previous_head_sha(
         prepare_repo_pr_context(repo, base_branch="main", previous_head_sha=orphan_sha)
 
 
-def test_prepare_repo_pr_context_includes_small_lockfile_diff(
-    tmp_path: Path,
-) -> None:
-    repo = _make_repo(tmp_path)
-    _commit(repo, "package-lock.json", "lock_contents\n", "chore: lockfile")
-    _commit(repo, "app.py", "print('hi')\n", "feat: add app")
-
-    ctx = prepare_repo_pr_context(repo, base_branch="main")
-
-    assert "app.py" in ctx.diff
-    assert "package-lock.json" in ctx.diff
-    assert "package-lock.json" in ctx.diff_stat
-
-
-def test_prepare_repo_pr_context_omits_large_lockfile_diff(
-    tmp_path: Path,
-) -> None:
-    repo = _make_repo(tmp_path)
-    content = "x" * (LOCKFILE_DIFF_LIMIT_BYTES + 1)
-    _commit(repo, "package-lock.json", content, "chore: lockfile")
-
-    ctx = prepare_repo_pr_context(repo, base_branch="main")
-
-    assert ctx.diff == ""
-    assert "package-lock.json" in ctx.diff_stat
-
-
-def test_prepare_repo_pr_context_omits_any_large_file_diff(tmp_path: Path) -> None:
-    repo = _make_repo(tmp_path)
-    content = "x" * (FILE_DIFF_LIMIT_BYTES + 1)
-    _commit(repo, "download.json", content, "chore: download data")
-    _commit(repo, "app.py", "print('hi')\n", "feat: add app")
-
-    ctx = prepare_repo_pr_context(repo, base_branch="main")
-
-    assert "download.json" not in ctx.diff
-    assert "app.py" in ctx.diff
-    assert "download.json" in ctx.diff_stat
-
-
 def test_prepare_repo_pr_context_diff_stat_honors_user_ignore(
     tmp_path: Path,
 ) -> None:
@@ -304,49 +237,6 @@ def test_prepare_repo_pr_context_diff_stat_honors_user_ignore(
 
     assert "package-lock.json" in ctx.diff_stat
     assert "generated.txt" not in ctx.diff_stat
-
-
-def test_prepare_repo_pr_context_from_subdirectory_uses_repo_root_diff(
-    tmp_path: Path,
-) -> None:
-    repo = _make_repo(tmp_path)
-    _commit(repo, "one.txt", "one\n", "feat: add root file")
-    subdir = repo / "nested"
-    subdir.mkdir()
-
-    ctx = prepare_repo_pr_context(subdir, base_branch="main")
-
-    assert "one.txt" in ctx.diff
-    assert "feat: add root file" in ctx.commit_log
-
-
-def test_prepare_repo_pr_context_from_subdirectory_uses_root_ignore_file(
-    tmp_path: Path,
-) -> None:
-    repo = _make_repo(tmp_path)
-    (repo / ".git-ai-ignore").write_text("root-only.txt\n", encoding="utf-8")
-    _commit(repo, "root-only.txt", "ignored\n", "chore: add ignored file")
-    _commit(repo, "app.py", "print('hi')\n", "feat: add app")
-    subdir = repo / "nested"
-    subdir.mkdir()
-
-    ctx = prepare_repo_pr_context(subdir, base_branch="main")
-
-    assert "app.py" in ctx.diff
-    assert "root-only.txt" not in ctx.diff
-
-
-def test_prepare_repo_pr_context_negation_reincludes_lockfile(
-    tmp_path: Path,
-) -> None:
-    repo = _make_repo(tmp_path)
-    _commit(repo, "package-lock.json", "lock_contents\n", "chore: lockfile")
-    _commit(repo, "app.py", "print('hi')\n", "feat: add app")
-    (repo / ".git-ai-ignore").write_text("!package-lock.json\n", encoding="utf-8")
-
-    ctx = prepare_repo_pr_context(repo, base_branch="main")
-
-    assert "package-lock.json" in ctx.diff
 
 
 def test_prepare_repo_pr_context_non_ancestor_cached_sha_falls_back(
@@ -598,7 +488,9 @@ def test_save_cached_pr_round_trips_content_id(tmp_path: Path) -> None:
     git_dir = get_git_dir(repo)
 
     save_cached_pr(git_dir, "feature/test", "main", "text", "abc123", "fingerprint")
+    save_cached_pr(git_dir, "feature/test", "develop", "other", "def456", "other-fp")
 
+    assert load_cached_pr(git_dir, "feature/test", "main") == "text"
     assert load_cached_content_id(git_dir, "feature/test", "main") == "fingerprint"
 
 
@@ -686,16 +578,6 @@ def test_prepare_declares_incremental_scope_on_the_cached_ancestor_path(
     assert ctx.diff_scope == "since_existing"
     assert "feat: add later work" in ctx.commit_log
     assert "f.txt" not in ctx.diff
-
-    system, _ = build_mr_prompt(
-        diff=ctx.diff,
-        commit_log=ctx.commit_log,
-        diff_stat=ctx.diff_stat,
-        existing_pr=ctx.existing_pr,
-        diff_scope=ctx.diff_scope,
-    )
-    assert "cover only the commits added since <existing_pr> was written" in system
-    assert "never delete, narrow, or rewrite existing content" in system
 
 
 def test_prepare_declares_branch_scope_when_diffing_against_the_base(

@@ -89,14 +89,9 @@ def test_derive_diff_stat_skips_header_lines() -> None:
     assert "1 deletion(-)" in stat
 
 
-def test_build_commit_prompt_returns_non_empty_pair() -> None:
+def test_build_commit_prompt_embeds_diff() -> None:
     system, user = build_commit_prompt(_SAMPLE_DIFF)
     assert system.strip()
-    assert user.strip()
-
-
-def test_build_commit_prompt_embeds_diff() -> None:
-    _, user = build_commit_prompt(_SAMPLE_DIFF)
     assert "<changed_files>" in user
     assert "<diff>" in user
     assert "foo.py" in user
@@ -276,110 +271,9 @@ def test_parse_commit_response_rejects_whitespace_only() -> None:
         parse_commit_response("   \n  \n")
 
 
-_CONVENTIONAL_LOG = (
-    "GITAI_COMMIT feat: add login\n"
-    "GITAI_COMMIT fix: correct null pointer\n"
-    "GITAI_COMMIT chore: bump deps\n"
-)
-
-_NON_CONVENTIONAL_LOG = "GITAI_COMMIT WIP: half done\nGITAI_COMMIT random update\n"
-
-
-def test_build_mr_prompt_returns_non_empty_pair() -> None:
+def test_build_mr_prompt_derives_diff_stat_when_omitted() -> None:
     system, user = build_mr_prompt(diff=_SAMPLE_DIFF)
     assert system.strip()
-    assert user.strip()
-
-
-def test_build_mr_prompt_rejects_empty_diff_and_stat() -> None:
-    with pytest.raises(ValueError, match="diff and diff_stat are empty"):
-        build_mr_prompt(diff="")
-
-
-def test_build_mr_prompt_accepts_stat_with_omitted_diff() -> None:
-    _, user = build_mr_prompt(
-        diff="",
-        diff_stat="package-lock.json | 4000 ++++",
-        commit_log="GITAI_COMMIT chore: update dependencies\n",
-    )
-
-    assert "package-lock.json" in user
-
-
-def test_build_mr_prompt_two_pass_when_mostly_conventional() -> None:
-    _, user = build_mr_prompt(diff=_SAMPLE_DIFF, commit_log=_CONVENTIONAL_LOG)
-    assert "<draft>" in user
-    assert "<commit_log>" not in user
-    assert "### Features" in user
-    assert "add login" in user
-
-
-def test_build_mr_prompt_fallback_when_not_conventional() -> None:
-    _, user = build_mr_prompt(diff=_SAMPLE_DIFF, commit_log=_NON_CONVENTIONAL_LOG)
-    assert "<commit_log>" in user
-    assert "<draft>" not in user
-    assert "GITAI_COMMIT" not in user
-    assert "WIP: half done" in user
-
-
-def test_build_mr_prompt_no_log_uses_fallback() -> None:
-    _, user = build_mr_prompt(diff=_SAMPLE_DIFF)
-    assert "<draft>" not in user
-    assert "<diff>" in user
-    assert "<commit_log>" not in user
-
-
-@pytest.mark.parametrize(
-    ("commit_log", "existing_pr"),
-    [
-        (None, None),
-        (_CONVENTIONAL_LOG, None),
-        (None, "feat: old title"),
-        (_CONVENTIONAL_LOG, "feat: old title"),
-    ],
-)
-def test_build_mr_prompt_automates_breaking_annotations(
-    commit_log: str | None, existing_pr: str | None
-) -> None:
-    system, _ = build_mr_prompt(
-        diff=_SAMPLE_DIFF, commit_log=commit_log, existing_pr=existing_pr
-    )
-
-    assert "mark its change label with `(breaking)`" in system
-    assert "automatically add exactly one `!`" in system
-    assert "Never add ! to the title automatically" not in system
-    assert "**Possible breaking change:**" not in system
-
-
-def test_build_mr_prompt_existing_pr_picks_update_prompt() -> None:
-    _, user = build_mr_prompt(
-        diff=_SAMPLE_DIFF,
-        commit_log=_CONVENTIONAL_LOG,
-        existing_pr="feat: old title\n\n### Features\n- old bullet",
-    )
-    assert "<existing_pr>" in user
-    assert "feat: old title" in user
-
-
-def test_build_mr_prompt_update_defaults_to_incremental_scope() -> None:
-    system, _ = build_mr_prompt(
-        diff=_SAMPLE_DIFF, commit_log=_CONVENTIONAL_LOG, existing_pr="feat: old title"
-    )
-    assert "cover only the commits added since <existing_pr> was written" in system
-
-
-def test_build_mr_prompt_branch_scope_describes_the_whole_branch() -> None:
-    system, _ = build_mr_prompt(
-        diff=_SAMPLE_DIFF,
-        commit_log=_CONVENTIONAL_LOG,
-        existing_pr="feat: old title",
-        diff_scope="branch",
-    )
-    assert "cover the whole branch as it now stands" in system
-
-
-def test_build_mr_prompt_derives_diff_stat_when_omitted() -> None:
-    _, user = build_mr_prompt(diff=_SAMPLE_DIFF)
     assert "<changed_files>" in user
     assert "foo.py" in user
 

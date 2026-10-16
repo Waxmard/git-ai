@@ -6,7 +6,7 @@
 # Check KEY against PROVIDER's models endpoint so a typo'd, revoked, or
 # wrong-provider key is caught here rather than at the user's first commit.
 # Returns 0 accepted, 1 rejected, 2 indeterminate (no curl, offline, unexpected
-# status) — the caller saves on 2, since a flaky network must not block setup.
+# status) — the caller asks before saving on anything but 0.
 # Body runs in a subshell so the key-file cleanup trap can't outlive the call
 # and clobber the wizard's own traps. The key goes in a curl config file rather
 # than argv, keeping it out of `ps`.
@@ -54,7 +54,7 @@ _setup_probe_key() (
 # service name and ENVVAR the variable resolve_api_key consults.
 _setup_prompt_api_key() {
   local provider="$1" service="$2" envvar="$3" label="$4"
-  local key how rc ans
+  local key how rc ans probe
 
   printf '\n%s needs an API key.\n' "$label"
   # fzf (the provider/model pickers immediately before this prompt) turns on
@@ -98,30 +98,20 @@ _setup_prompt_api_key() {
   printf '  Captured %s chars ending "%s".\n' "${#key}" "${key: -4}"
   printf '  Checking key… '
   _setup_probe_key "$provider" "$key"
-  case $? in
+  probe=$?
+  case $probe in
     0) printf 'accepted.\n' ;;
-    1)
-      printf '%s rejected it.\n' "$label"
-      _setup_read ans '  Save it anyway? [y/N]: ' || ans=""
-      case "$ans" in
-        y | Y | yes | Yes) ;;
-        *)
-          printf '  Not saved — re-run "git-ai setup" with the right key.\n'
-          return 0
-          ;;
-      esac
-      ;;
     *)
       # Unverifiable (offline, no curl, an unexpected status) is not the same
       # as rejected, but it is also not proof the key is good — a corrupted
-      # paste and a flaky network look identical here, so this still asks
-      # rather than silently storing whatever was captured.
-      printf 'could not verify (offline?).\n'
+      # paste and a flaky network look identical here, so both ask rather
+      # than silently storing whatever was captured.
+      if [[ $probe -eq 1 ]]; then printf '%s rejected it.\n' "$label"; else printf 'could not verify (offline?).\n'; fi
       _setup_read ans '  Save it anyway? [y/N]: ' || ans=""
       case "$ans" in
         y | Y | yes | Yes) ;;
         *)
-          printf '  Not saved — re-run "git-ai setup" once you can verify it.\n'
+          printf '  Not saved — re-run "git-ai setup" once you have a working key.\n'
           return 0
           ;;
       esac

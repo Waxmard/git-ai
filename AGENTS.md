@@ -51,7 +51,6 @@ Keep command logic in `bin/git-ai` and reusable helpers in `lib/`. Everything lo
 - **Per-file line cap: 800** for hand-written shell and Python, enforced by `scripts/check-line-limit.sh` in lefthook and CI. When a file nears the cap, split it into focused modules using the umbrella pattern so the public source contract is unchanged.
 - **Prompts are generated.** Edit the templates under `prompts/src/`, then `make prompts-build`; hand-editing `python/git_ai/prompts/pr-*.txt` is reverted by the staleness gate. `commit.txt` is the exception — standalone and edited directly.
 - **There is no model catalog.** Lists are discovered live from each provider; `recommended-models.conf` holds one default per family, not a catalog. Never hardcode model ids in code.
-- **`AGENTS.md` is the real file** at each level (root, `lib/`, `python/`, `test/`); the `CLAUDE.md` beside it is a symlink. Edit `AGENTS.md`.
 - Context payloads are wrapped in XML-style tags (`<release_context>`, `<branch>`, `<branch_commits>`, `<branch_diffstat>`, `<diff>`, `<commit_log>`, `<existing_pr>`) so the model can tell sections apart.
 
 ## Coding conventions

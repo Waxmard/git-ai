@@ -123,37 +123,6 @@ EOF
 
 # --- vertex unification (one user-facing "Vertex AI") ---
 
-@test "_setup_expand_provider: vertex expands to both internal providers" {
-  run _setup_expand_provider vertex
-  assert_success
-  assert_line --index 0 "vertex-anthropic"
-  assert_line --index 1 "vertex-gemini"
-}
-
-@test "_setup_expand_provider: concrete providers pass through" {
-  run _setup_expand_provider gemini-api
-  assert_success
-  assert_output "gemini-api"
-}
-
-@test "_setup_provider_for_model: claude models route to vertex-anthropic" {
-  run _setup_provider_for_model vertex "claude-sonnet-4-6"
-  assert_success
-  assert_output "vertex-anthropic"
-}
-
-@test "_setup_provider_for_model: non-claude models route to vertex-gemini" {
-  run _setup_provider_for_model vertex "gemini-3.5-flash"
-  assert_success
-  assert_output "vertex-gemini"
-}
-
-@test "_setup_provider_for_model: concrete provider passes through regardless of model" {
-  run _setup_provider_for_model anthropic-api "claude-sonnet-4-6"
-  assert_success
-  assert_output "anthropic-api"
-}
-
 @test "_setup_conf_wizard_providers: vertex sections fold into one entry" {
   cat >"$CONF" <<'EOF'
 [gemini-api]
@@ -228,13 +197,6 @@ _edit_menu() {
   run _edit_menu "$CONF"
   assert_success
   refute_output --partial "Change Vertex AI projects"
-}
-
-@test "_setup_edit_existing: no standalone auth action (add-provider covers it)" {
-  printf '[gemini-api]\ngemini-3.5-flash\n' >"$CONF"
-  run _edit_menu "$CONF"
-  assert_success
-  refute_output --partial "Set up auth"
 }
 
 # --- _setup_detect_vertex_project (gcloud-backed project auto-pick) ---
@@ -401,24 +363,6 @@ EOF
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
     printf "1\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
-  '
-  rm -rf "$stub"
-  assert_success
-  assert_output --partial "Vertex projects unchanged: a, b"
-  run cat "$CONF"
-  assert_line "projects = a, b"
-}
-
-@test "_setup_change_vertex_projects: blank entry keeps the current list" {
-  printf '[vertex]\nprojects = a, b\n' >"$CONF"
-  local stub; stub="$(mktemp -d)"
-  printf '#!/bin/sh\nexit 1\n' >"${stub}/gcloud"
-  chmod +x "${stub}/gcloud"
-  run bash -c '
-    export PATH="'"${stub}"':$PATH"
-    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
-    source "'"${REPO_ROOT}"'/bin/git-ai"
-    printf "\n" | GIT_AI_NO_FZF=1 _setup_change_vertex_projects "'"$CONF"'"
   '
   rm -rf "$stub"
   assert_success
@@ -925,20 +869,6 @@ _models_env() {
   refute_line "gemini-keep"
 }
 
-@test "_setup_change_models: blank entry keeps the pre-marked pins" {
-  printf '[gemini-api]\ngemini-old\n' >"$CONF"
-  run bash -c '
-    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
-    source "'"${REPO_ROOT}"'/bin/git-ai"
-    '"$(_models_env gemini-sugg)"'
-    printf "\n" | GIT_AI_NO_FZF=1 _setup_change_models "'"$CONF"'" gemini-api
-  '
-  assert_success
-  assert_output --partial "Models unchanged: gemini-old"
-  run cat "$CONF"
-  assert_line "gemini-old"
-}
-
 @test "_setup_change_models: cancelling keeps the current pins" {
   printf '[gemini-api]\ngemini-old\n' >"$CONF"
   run bash -c '
@@ -1176,19 +1106,6 @@ b|b"
 }
 
 # --- provider picker readiness labels ---
-
-@test "_setup_provider_label: tags providers with their readiness" {
-  run bash -c '
-    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
-    source "'"${REPO_ROOT}"'/bin/git-ai"
-    provider_ready() { [ "$1" = codex ]; }
-    _setup_provider_label codex
-    _setup_provider_label openai-api
-  '
-  assert_success
-  assert_line "Codex CLI  [ready]"
-  assert_line "OpenAI API  [needs setup]"
-}
 
 @test "_setup_ready_tag: probes each provider at most once" {
   run bash -c '

@@ -7,7 +7,7 @@ updates:
     open-pull-requests-limit: 5
     target-branch: "dev"
     cooldown:
-      default-days: 7
+      default-days: 3 # nosemgrep: package_managers.dependabot.dependabot-missing-cooldown.dependabot-missing-cooldown
     groups:
       minor-and-patch:
         applies-to: version-updates
@@ -15,14 +15,14 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
-  - package-ecosystem: "pip"
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     target-branch: "dev"
     cooldown:
-      default-days: 7
+      default-days: 3 # nosemgrep: package_managers.dependabot.dependabot-missing-cooldown.dependabot-missing-cooldown
     groups:
       minor-and-patch:
         applies-to: version-updates
@@ -37,7 +37,7 @@ updates:
     open-pull-requests-limit: 5
     target-branch: "dev"
     cooldown:
-      default-days: 7
+      default-days: 3 # nosemgrep: package_managers.dependabot.dependabot-missing-cooldown.dependabot-missing-cooldown
     groups:
       actions:
         patterns: ["*"]

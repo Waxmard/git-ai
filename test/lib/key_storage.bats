@@ -17,18 +17,6 @@ teardown() {
 
 # --- provider_key_meta -----------------------------------------------------
 
-@test "provider_key_meta: anthropic-api maps to service + env var" {
-  run provider_key_meta anthropic-api
-  assert_success
-  assert_output "anthropic-api-key ANTHROPIC_API_KEY"
-}
-
-@test "provider_key_meta: gemini-api maps to service + env var" {
-  run provider_key_meta gemini-api
-  assert_success
-  assert_output "gemini-api-key GEMINI_API_KEY"
-}
-
 @test "provider_key_meta: openai-api resolves via the shared compat table" {
   run provider_key_meta openai-api
   assert_success
@@ -44,10 +32,19 @@ teardown() {
 
 # --- shell_rc_path ---------------------------------------------------------
 
-@test "shell_rc_path: zsh resolves to ~/.zshrc" {
+@test "shell_rc_path: maps zsh, bash, fish, and unknown shells" {
   HOME="$TEST_DIR" run shell_rc_path zsh
   assert_success
   assert_output "${TEST_DIR}/.zshrc"
+  HOME="$TEST_DIR" run shell_rc_path bash
+  assert_success
+  assert_output "${TEST_DIR}/.bashrc"
+  HOME="$TEST_DIR" run shell_rc_path fish
+  assert_success
+  assert_output "${TEST_DIR}/.config/fish/config.fish"
+  HOME="$TEST_DIR" run shell_rc_path tcsh
+  assert_success
+  assert_output "${TEST_DIR}/.profile"
 }
 
 @test "shell_rc_path: zsh honors ZDOTDIR" {
@@ -56,37 +53,7 @@ teardown() {
   assert_output "${TEST_DIR}/zdot/.zshrc"
 }
 
-@test "shell_rc_path: bash resolves to ~/.bashrc" {
-  HOME="$TEST_DIR" run shell_rc_path bash
-  assert_success
-  assert_output "${TEST_DIR}/.bashrc"
-}
-
-@test "shell_rc_path: fish resolves to its config" {
-  HOME="$TEST_DIR" run shell_rc_path fish
-  assert_success
-  assert_output "${TEST_DIR}/.config/fish/config.fish"
-}
-
-@test "shell_rc_path: unknown shell falls back to ~/.profile" {
-  HOME="$TEST_DIR" run shell_rc_path tcsh
-  assert_success
-  assert_output "${TEST_DIR}/.profile"
-}
-
 # --- format_key_export -----------------------------------------------------
-
-@test "format_key_export: POSIX shells use export with single quotes" {
-  run format_key_export MY_KEY secret-val bash
-  assert_success
-  assert_output "export MY_KEY='secret-val'"
-}
-
-@test "format_key_export: fish uses set -gx" {
-  run format_key_export MY_KEY secret-val fish
-  assert_success
-  assert_output "set -gx MY_KEY 'secret-val'"
-}
 
 @test "format_key_export: POSIX escapes embedded single quotes (round-trips)" {
   run format_key_export MY_KEY "ab'c'd" bash

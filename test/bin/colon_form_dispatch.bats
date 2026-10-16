@@ -27,24 +27,19 @@ teardown() {
   rm -rf "$TEST_REPO"
 }
 
-@test "cmd_commit: accepts provider:model single-arg form" {
+@test "cmd_commit: accepts provider:model single-arg form and records history" {
   run cmd_commit "claude-code:claude-sonnet-4-6"
   assert_success
   assert_output --partial "provider=claude-code model=claude-sonnet-4-6"
+  run get_choice_history commit
+  assert_success
+  assert_line --index 0 "claude-code:claude-sonnet-4-6"
 }
 
 @test "cmd_commit: two-arg form still resolves identically" {
   run cmd_commit "claude-code" "claude-sonnet-4-6"
   assert_success
   assert_output --partial "provider=claude-code model=claude-sonnet-4-6"
-}
-
-@test "cmd_commit: success pushes provider:model into history" {
-  run cmd_commit "codex:gpt-5.4-mini"
-  assert_success
-  run get_choice_history commit
-  assert_success
-  assert_line --index 0 "codex:gpt-5.4-mini"
 }
 
 @test "cmd_commit: empty provider response never opens the editor" {
@@ -91,23 +86,19 @@ teardown() {
   assert_output --partial "urllib3"
 }
 
-@test "cmd_commit: accepts profile-qualified provider (base@profile:model)" {
+@test "cmd_commit: accepts profile-qualified provider (base@profile:model) and records history" {
   run cmd_commit "vertex-anthropic@acme:claude-sonnet-4-6"
   assert_success
   assert_output --partial "provider=vertex-anthropic@acme model=claude-sonnet-4-6"
+  run get_choice_history commit
+  assert_success
+  assert_line --index 0 "vertex-anthropic@acme:claude-sonnet-4-6"
 }
 
 @test "cmd_commit: profile-qualified two-arg form resolves identically" {
   run cmd_commit "vertex-anthropic@sandbox" "claude-sonnet-4-6"
   assert_success
   assert_output --partial "provider=vertex-anthropic@sandbox model=claude-sonnet-4-6"
-}
-
-@test "cmd_commit: profile token round-trips through choice history" {
-  run cmd_commit "vertex-anthropic@acme:claude-sonnet-4-6"
-  assert_success
-  run get_choice_history commit
-  assert_line --index 0 "vertex-anthropic@acme:claude-sonnet-4-6"
 }
 
 @test "cmd_commit last: pushes last into history" {
