@@ -123,3 +123,22 @@ def test_commit_log_is_declared_optional_wherever_it_is_named(name: str) -> None
         "present only when commit messages are available" in text
         or "(when present) <commit_log>" in text
     ), f"{name} names <commit_log> without declaring it optional"
+
+
+@pytest.mark.parametrize("name", PROMPT_FILES)
+def test_all_prompts_enforce_user_facing_subject_and_title_rules(name: str) -> None:
+    text = _load_prompt(name)
+    assert "at most 70 characters including the type prefix" in text
+    assert 'never join two changes with "and"' in text
+    assert "stop cutting off long chat answers" in text
+    assert "remove `max_tokens` cap" in text
+    assert "build backend images from locked dependencies" in text
+
+
+@pytest.mark.parametrize("name", PROMPT_FILES)
+def test_all_prompts_require_user_facing_lead_with_technical_grounding(
+    name: str,
+) -> None:
+    text = _load_prompt(name)
+    assert "user-facing or operational" in text
+    assert "essential technical cause or mechanism" in text
