@@ -11,5 +11,4 @@ __pycache__/
 dist/
 # Build output: bin/ + lib/ copied into the package by _build_backend.py
 python/git_ai/_sh/
-!CLAUDE.md
 build/

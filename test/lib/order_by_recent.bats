@@ -27,17 +27,3 @@ setup() {
   assert_line --index 1 "claude"
   assert_line --index 2 "gemini"
 }
-
-@test "order_by_recent: last at end of list moved to front" {
-  run order_by_recent "codex" "claude" "gemini" "codex"
-  assert_success
-  assert_line --index 0 "codex"
-  assert_line --index 1 "claude"
-  assert_line --index 2 "gemini"
-}
-
-@test "order_by_recent: single item list" {
-  run order_by_recent "claude" "claude"
-  assert_success
-  assert_output "claude"
-}

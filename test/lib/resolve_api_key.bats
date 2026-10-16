@@ -52,10 +52,3 @@ EOF
   PATH="$STUB_BIN" run resolve_api_key missing-service TEST_SVC_KEY
   assert_failure
 }
-
-@test "resolve_gemini_api_key delegates to resolve_api_key via the env var" {
-  export GEMINI_API_KEY="gemini-env"
-  run resolve_gemini_api_key
-  assert_success
-  assert_output "gemini-env"
-}

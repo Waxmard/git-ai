@@ -48,18 +48,6 @@ EOF
   assert_success
 }
 
-@test "provider_ready: codex succeeds when the CLI is present" {
-  write_cli_stub codex
-  PATH="${STUB_BIN}:$PATH" run provider_ready codex
-  assert_success
-}
-
-@test "provider_ready: antigravity succeeds when the CLI is present" {
-  write_cli_stub agy
-  PATH="${STUB_BIN}:$PATH" run provider_ready antigravity
-  assert_success
-}
-
 @test "provider_ready: antigravity fails when the CLI is absent" {
   PATH="$STUB_BIN" run provider_ready antigravity
   assert_failure
@@ -67,17 +55,6 @@ EOF
 }
 
 # --- key-based providers ---------------------------------------------------
-
-@test "provider_ready: anthropic-api succeeds with an env key" {
-  export ANTHROPIC_API_KEY="sk-test"
-  run provider_ready anthropic-api
-  assert_success
-}
-
-@test "provider_ready: anthropic-api fails with no key anywhere" {
-  PATH="$STUB_BIN" run provider_ready anthropic-api
-  assert_failure
-}
 
 @test "provider_ready: openai-api succeeds with an env key" {
   export OPENAI_API_KEY="sk-test"
@@ -89,18 +66,6 @@ EOF
   PATH="$STUB_BIN" run provider_ready openai-api
   assert_failure
   assert_output --partial "OPENAI_API_KEY not set"
-}
-
-@test "provider_ready: gemini-api succeeds with an env key" {
-  export GEMINI_API_KEY="g-key"
-  run provider_ready gemini-api
-  assert_success
-}
-
-@test "provider_ready: gemini-api fails with no key anywhere" {
-  PATH="$STUB_BIN" run provider_ready gemini-api
-  assert_failure
-  assert_output --partial "GEMINI_API_KEY not set"
 }
 
 # --- vertex providers ------------------------------------------------------

@@ -27,3 +27,14 @@ jobs:
         run: gh pr merge --rebase --auto --repo "${{ github.repository }}" "${{ fromJSON(steps.release.outputs.pr).number }}"
         env:
           GH_TOKEN: ${{ secrets.GIT_AI_RELEASE_PLEASE_TOKEN }}
+
+      - uses: actions/checkout@v7
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GIT_AI_RELEASE_PLEASE_TOKEN }}
+
+      - name: Back-sync dev
+        if: steps.release.outputs.release_created == 'true'
+        run: git push origin HEAD:dev || echo "::warning::dev moved ahead during release; merge main into dev manually"

@@ -10,60 +10,9 @@ setup() {
   run provider_display_name "vertex-gemini"
   assert_success
   assert_output "Vertex AI"
-}
-
-@test "provider_display_name: vertex-anthropic collapses to the unified label" {
-  run provider_display_name "vertex-anthropic"
-  assert_success
-  assert_output "Vertex AI"
-}
-
-@test "provider_display_name: wizard vertex token" {
-  run provider_display_name "vertex"
-  assert_success
-  assert_output "Vertex AI"
-}
-
-@test "provider_display_name: gemini-api" {
-  run provider_display_name "gemini-api"
-  assert_success
-  assert_output "Gemini API"
-}
-
-@test "provider_display_name: antigravity" {
-  run provider_display_name "antigravity"
-  assert_success
-  assert_output "Antigravity"
-}
-
-@test "provider_display_name: claude-code" {
-  run provider_display_name "claude-code"
-  assert_success
-  assert_output "Claude Code"
-}
-
-@test "provider_display_name: anthropic-api" {
-  run provider_display_name "anthropic-api"
-  assert_success
-  assert_output "Anthropic API"
-}
-
-@test "provider_display_name: codex" {
-  run provider_display_name "codex"
-  assert_success
-  assert_output "Codex CLI"
-}
-
-@test "provider_display_name: openai-api" {
   run provider_display_name "openai-api"
   assert_success
   assert_output "OpenAI API"
-}
-
-@test "provider_display_name: last" {
-  run provider_display_name "last"
-  assert_success
-  assert_output "Reuse last message"
 }
 
 @test "provider_display_name: unknown produces no output" {

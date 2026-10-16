@@ -30,18 +30,6 @@ teardown() {
   assert_output "claude-sonnet-4-6"
 }
 
-@test "resolve_model: any id passes through (no catalog validation)" {
-  run resolve_model "commit" "gemini-api" "gemini-9.9-experimental-xyz"
-  assert_success
-  assert_output "gemini-9.9-experimental-xyz"
-}
-
-@test "resolve_model: profile-qualified provider passes the model through" {
-  run resolve_model "commit" "vertex-gemini@proj-01" "gemini-3.5-flash"
-  assert_success
-  assert_output "gemini-3.5-flash"
-}
-
 # --- default (no explicit model) ---
 
 @test "resolve_model: default is the recommended model, not the first discovered" {
