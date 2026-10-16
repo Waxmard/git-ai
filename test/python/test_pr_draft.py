@@ -78,3 +78,8 @@ def test_churn_subject_must_match_full_subject() -> None:
     draft = draft_body(log, churn_subjects={"real win"})
     assert "### Performance" in draft
     assert "### Intra-branch refinements" not in draft
+
+
+def test_non_conventional_and_unmapped_types_omitted() -> None:
+    log = _log("feat: real feature", "wip: in progress", "plain subject")
+    assert draft_body(log) == "### Features\n- real feature\n"

@@ -357,7 +357,7 @@ gpt-5.4-mini
 
 - `[provider]` headers must be one of: `vertex-gemini`, `vertex-anthropic`, `gemini-api`, `antigravity`, `claude-code`, `anthropic-api`, `codex`, `openai-api`. Unknown headers are silently dropped.
 - Model IDs under a header are passed through to the provider verbatim, so you can list future model IDs (e.g. a newly released `claude-sonnet-5-0`) without waiting for a git-ai release.
-- `[openai-api]` accepts `base_url = <url>` to target any OpenAI-compatible API (e.g. `https://api.deepseek.com`); the model list is then fetched from that host unfiltered, and the first model listed becomes the default.
+- `[openai-api]` accepts `base_url = <url>` to target any OpenAI-compatible API (e.g. `https://api.deepseek.com`); the model list is then fetched from that host unfiltered, and the first model pinned under `[openai-api]` becomes the default.
 - Delete the file to restore the full shipped catalog.
 - See [`examples/options.conf`](examples/options.conf) for a starter.
 

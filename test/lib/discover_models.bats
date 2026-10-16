@@ -185,6 +185,16 @@ JSON
   assert_output "alpha-flash"
 }
 
+@test "discover_models: base_url never falls back to models.dev" {
+  printf '{"openai":{"models":{"gpt-5.4":{}}}}\n' >"${CACHE}/_modelsdev.json"
+  printf '[openai-api]\nbase_url = https://example.test\n' >"${TEST_XDG}/git-ai/options.conf"
+  export OPENAI_API_KEY=x
+  stub_curl_fail
+  run discover_models openai-api
+  assert_failure
+  assert_output ""
+}
+
 @test "openai_compat_base_url: config override wins and drops a trailing slash" {
   run openai_compat_base_url openai-api
   assert_output "https://api.openai.com/v1"

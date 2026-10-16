@@ -14,7 +14,7 @@ A provider token may be profile-qualified (`base@profile`): dispatch on the base
 identical `Authorization: Bearer` + `{model,messages}` + `{choices[0].message.content}`
 wire format — most new LLM launches do) needs **one row**, not a mirrored case
 arm: `GIT_AI_OPENAI_COMPAT` in `auth.sh`. That single table drives
-`provider_ready`/`provider_display_name`/`provider_family`/`provider_key_meta`
+`provider_ready`/`provider_display_name`/`provider_key_meta`/`recommended_model`
 (`auth.sh`), `run_provider`'s fallback dispatch and `_run_openai_compat_api`
 (`provider.sh`), `_models_dev_key`'s fallback and `_fetch_models_openai_compat`
 (`discovery.sh`), and the provider lists in `list_providers`/`list_options`

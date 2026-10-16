@@ -61,3 +61,13 @@ setup() {
   assert_success
   assert_output "first-model"
 }
+
+@test "recommended_model: openai-api with base_url and no pins yields nothing" {
+  GIT_AI_RECOMMENDED_MODELS_FILE="$BATS_TEST_TMPDIR/rec.conf"
+  printf 'openai = o-model\n' >"$GIT_AI_RECOMMENDED_MODELS_FILE"
+  mkdir -p "$XDG_CONFIG_HOME/git-ai"
+  printf '[openai-api]\nbase_url = https://example.test\n' >"$XDG_CONFIG_HOME/git-ai/options.conf"
+  run recommended_model openai-api
+  assert_success
+  assert_output ""
+}
