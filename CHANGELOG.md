@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.12.0](https://github.com/Waxmard/git-ai/compare/v6.11.0...v6.12.0) (2026-10-16)
+
+
+### Features
+
+* focus generated commits and PRs on user-facing outcomes ([#149](https://github.com/Waxmard/git-ai/issues/149)) ([e4a01b5](https://github.com/Waxmard/git-ai/commit/e4a01b59a2ce29d1ba9b4ec789d14c9cda668d91))
+
+
+### Bug Fixes
+
+* fail cleanly on empty or missing OpenAI chat response content ([748d130](https://github.com/Waxmard/git-ai/commit/748d1303449d9a7ea90ab4967e376276ac7e57b2))
+
 ## [6.11.0](https://github.com/Waxmard/git-ai/compare/v6.10.0...v6.11.0) (2026-10-01)
 
 
