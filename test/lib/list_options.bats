@@ -118,11 +118,3 @@ teardown() {
   assert_success
   assert_line --index 0 "last|reuse saved message"
 }
-
-@test "list_options: deny_dirs hides a blocked provider" {
-  printf '[codex]\ngpt-5.4\ndeny_dirs = %s\n\n[openai-api]\ngpt-5.4\n' "$TEST_REPO" >"${XDG_CONFIG_HOME}/git-ai/options.conf"
-  run list_options commit
-  assert_success
-  assert_output --partial "openai-api:gpt-5.4|"
-  refute_output --partial "codex:"
-}

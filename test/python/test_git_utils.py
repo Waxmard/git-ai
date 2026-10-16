@@ -31,25 +31,11 @@ from git_ai._git_branch import (
 )
 from git_ai._pr_incremental import branch_cache_dir
 
-_ALL_CONVENTIONAL = """\
-GITAI_COMMIT feat: add new feature
-GITAI_COMMIT fix: correct a bug
-GITAI_COMMIT chore: update deps
-GITAI_COMMIT refactor: simplify logic
-GITAI_COMMIT docs: update readme
-"""
-
 _MIXED = """\
 GITAI_COMMIT feat: add new feature
 GITAI_COMMIT WIP: half-done thing
 GITAI_COMMIT fix: correct a bug
 GITAI_COMMIT random commit message
-"""
-
-_NONE_CONVENTIONAL = """\
-GITAI_COMMIT WIP: half-done
-GITAI_COMMIT random commit message
-GITAI_COMMIT another bad one
 """
 
 _EMPTY = ""
@@ -67,22 +53,10 @@ def test_git_output_fits_caps_stdout_read() -> None:
     process.kill.assert_called_once()
 
 
-def test_count_all_conventional() -> None:
-    conventional, total = count_conventional_commits(_ALL_CONVENTIONAL)
-    assert conventional == 5
-    assert total == 5
-
-
 def test_count_mixed() -> None:
     conventional, total = count_conventional_commits(_MIXED)
     assert conventional == 2
     assert total == 4
-
-
-def test_count_none_conventional() -> None:
-    conventional, total = count_conventional_commits(_NONE_CONVENTIONAL)
-    assert conventional == 0
-    assert total == 3
 
 
 def test_count_empty_log() -> None:

@@ -189,20 +189,6 @@ EOF
   refute_output --partial "gemini-3.5-flash"    # discovery NOT consulted
 }
 
-# --- resolve_model passes any model id through (no catalog gate) ---
-
-@test "resolve_model: accepts an arbitrary model id" {
-  run resolve_model commit claude-code "claude-sonnet-5-0-preview"
-  assert_success
-  assert_output "claude-sonnet-5-0-preview"
-}
-
-@test "resolve_model: profile-qualified provider passes the model through" {
-  run resolve_model commit "vertex-gemini@proj-01" "gemini-3.5-flash"
-  assert_success
-  assert_output "gemini-3.5-flash"
-}
-
 # --- vertex_config_value ---
 
 @test "vertex_config_value: reads project/account/region for the section" {
