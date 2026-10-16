@@ -113,6 +113,7 @@ teardown() {
   assert_line 'project = my-proj'
   assert_line 'gemini-3.5-flash'
   assert_line '[vertex-gemini]'
+  assert_line 'projects = alpha, beta'
 }
 
 @test "conf_set_section_setting: new key goes before the section's trailing blanks" {
@@ -136,14 +137,6 @@ teardown() {
   assert_success
   assert_line '[vertex-anthropic]'
   assert_line 'project = acme'
-}
-
-@test "conf_set_section_setting: leaves the shared [vertex] block untouched" {
-  run conf_set_section_setting vertex-gemini region us-east5 <"$FIXTURE"
-  assert_success
-  # Setting goes in [vertex-gemini], not the shared [vertex] block.
-  assert_line 'account  = me@acme.com'
-  assert_line 'projects = alpha, beta'
 }
 
 # --- conf_remove_section_setting -------------------------------------------

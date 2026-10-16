@@ -366,7 +366,9 @@ def _nearest_fork_parent(
     ``release/*``, ``staging``, or a stacked parent branch, not just
     ``main``/``master``/``dev``. Branches that already contain all of HEAD are
     skipped, and a side branch merged into HEAD — even one that has moved on
-    since — loses to any candidate it merely sits beside.
+    since — loses to any candidate it merely sits beside. The default and
+    conventional primary branches are exempt from that check, since syncing
+    one into HEAD moves its merge-base past the fork point.
     """
     default_name = get_default_branch(repo_path)
     rows = _branch_ahead_behind(repo_path, current_branch)
@@ -425,7 +427,10 @@ def _nearest_fork_parent(
         if (ref := _shorten_ref(refname := line.strip())) in candidates
     ]
     forked = [
-        ref for ref, refname in containing if _forked_at(repo_path, refname, fork_sha)
+        ref
+        for ref, refname in containing
+        if _base_name_rank(ref, default_name) < 8
+        or _forked_at(repo_path, refname, fork_sha)
     ]
     return min(
         forked or [ref for ref, _ in containing],
