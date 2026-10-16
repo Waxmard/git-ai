@@ -587,6 +587,9 @@ def test_resolve_commit_base_keeps_base_synced_into_head(tmp_path: Path) -> None
     subprocess.run(
         ["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, check=True
     )
+    _checkout(repo, "-b", "sibling")
+    _commit_files(repo, {"s.py": "s\n"}, "feat: s")
+    _checkout(repo, "main")
     _checkout(repo, "-b", "feature")
     _commit_files(repo, {"f.py": "f\n"}, "feat: f")
     _checkout(repo, "main")

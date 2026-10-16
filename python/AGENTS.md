@@ -53,7 +53,7 @@ A post-exclude size guard (`GIT_AI_MAX_DIFF_BYTES`, default `900000`) hard-fails
 
 `git-ai commit` resolves the branch's base through a local-only cascade (`--base` / `GIT_AI_COMMIT_BASE` → git-ai PR-cache base → nearest fork-parent → none) in `resolve_commit_base`, then surfaces the branch name, its commit subjects, and its cumulative diffstat to the model. The prompt uses this **only** to disambiguate the prefix when the staged diff alone is ambiguous; per-commit types are preserved.
 
-`_nearest_fork_parent` scores every local and origin branch by `(commits-ahead, commits-behind, name-rank)` and takes the smallest, so the base is found by ancestry rather than by name — `main`/`master`/`dev` plus `release/*`, `staging`, and stacked parent branches all work. Capped at 50 branches (newest first) for speed. Divergence comes from a single `for-each-ref --format=%(ahead-behind:HEAD)` call, falling back to per-ref `git rev-list` probing only on git older than 2.41.
+`_nearest_fork_parent` finds HEAD's first-parent fork point (the nearest first-parent commit any other branch contains) and picks among the branches containing it by `(commits-behind, name-rank)`, so the base is found by ancestry rather than by name — `main`/`master`/`dev` plus `release/*`, `staging`, and stacked parent branches all work. A side branch merged into HEAD is dropped unless its merge-base with HEAD is still the fork point; the default and conventional primary branches skip that check, because syncing one into HEAD advances its merge-base. Capped at 50 branches (newest first) for speed. Divergence comes from a single `for-each-ref --format=%(ahead-behind:HEAD)` call, falling back to per-ref `git rev-list` probing only on git older than 2.41.
 
 ## PR caching
 
