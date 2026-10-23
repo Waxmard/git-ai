@@ -436,3 +436,83 @@ def test_parse_mr_response_keeps_a_body_fence_after_a_balanced_preamble() -> Non
     assert parse_mr_response(raw) == (
         "feat: add thing\n\n## Verification\n\n```\nmake test\n```"
     )
+
+
+def test_parse_commit_response_slices_at_first_end_marker_before_babble() -> None:
+    raw = (
+        "===COMMIT===\nfeat: add thing\n\nBody.\n===END===\n"
+        "Extra model commentary after the end marker.\n"
+        "# Hallucinated doc\n"
+    )
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody."
+
+
+def test_parse_mr_response_slices_at_first_end_marker_before_babble() -> None:
+    raw = (
+        "===TITLE===\nfeat: title\n===BODY===\n## Overview\n\nBody.\n===END===\n"
+        "Extra model commentary after the end marker.\n"
+    )
+    assert parse_mr_response(raw) == "feat: title\n\n## Overview\n\nBody."
+
+
+def test_parse_commit_response_strips_trailing_skill_file_and_markdown_dump() -> None:
+    raw = (
+        "===COMMIT===\n"
+        "feat: require complete review recovery and fix accounting in wrap-up\n\n"
+        "Wrap-up could record a reviewed head from a partial review run and drop\n"
+        "findings during Gate F.\n\n"
+        "Require failed review agents to finish inline or re-delegate before\n"
+        "writing the review memo, enforce a numbered fix ledger accounting for\n"
+        "every actionable finding, and rerun invalidated checks before handoff.\n"
+        ".claude/skills/wrap-up/references/wave-matrix.md\n"
+        "# Review wave: skills, tiers, and prerequisites\n\n"
+        "| Row | Skill | Tier / model |\n"
+        "| --- | --- | --- |\n"
+        "| 1 | `tooling-sync` | inline |\n\n"
+        "---\n\n"
+        ".claude/skills/workers-best-practices/references/performance.md\n"
+        "### 2. Request Collapsing\n"
+    )
+    assert parse_commit_response(raw) == (
+        "feat: require complete review recovery and fix accounting in wrap-up\n\n"
+        "Wrap-up could record a reviewed head from a partial review run and drop\n"
+        "findings during Gate F.\n\n"
+        "Require failed review agents to finish inline or re-delegate before\n"
+        "writing the review memo, enforce a numbered fix ledger accounting for\n"
+        "every actionable finding, and rerun invalidated checks before handoff."
+    )
+
+
+@pytest.mark.parametrize(
+    "dump",
+    [
+        "## Notes on execution\n- item",
+        "| Col A | Col B |\n| --- | --- |",
+        "---\nMore text",
+        "<skills>\n- wrap-up",
+        (
+            ".claude/skills/workers-best-practices/references/performance.md\n"
+            "When multiple requests arrive"
+        ),
+    ],
+)
+def test_parse_commit_response_strips_continuation_constructs(dump: str) -> None:
+    raw = f"===COMMIT===\nfeat: add thing\n\nBody paragraph.\n{dump}"
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody paragraph."
+
+
+def test_parse_commit_response_preserves_mid_sentence_path_and_issue_refs() -> None:
+    raw = (
+        "===COMMIT===\nfix: resolve path lookup\n\n"
+        "Fixes #123 where\n"
+        "python/git_ai/_generate.py\n"
+        "dropped valid lines.\n\n"
+        "```\n# comment inside code fence\n```"
+    )
+    assert parse_commit_response(raw) == (
+        "fix: resolve path lookup\n\n"
+        "Fixes #123 where\n"
+        "python/git_ai/_generate.py\n"
+        "dropped valid lines.\n\n"
+        "```\n# comment inside code fence\n```"
+    )

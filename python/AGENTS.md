@@ -28,9 +28,9 @@ Templates pull shared prose in with `include:partials/<name>.txt`, so wording th
 
 Parsing:
 
-- PR prompts wrap the answer in `===TITLE===` / `===BODY===` markers. `parse_mr_response` (`_extract_pr_sections`) slices those out, discarding any preamble or reasoning emitted before the title, and falls back to the raw fence-stripped text when the markers are absent.
-- `commit.txt` uses a single `===COMMIT===` marker. `parse_commit_response` (`_extract_commit_message`) takes everything after it, falling back to the first Conventional Commits subject line onward so a reasoning model's rationale cannot become the subject.
-- Both then run `_drop_trailing_noise`, stripping trailing `Co-Authored-By:` / `Generated with [...]` lines and stray `===WORD===` sentinels. Agent CLIs carry their own system prompt telling them to sign their work, and that outranks the git-ai prompt, so the trailer is removed after the fact rather than argued with. Both kinds are stripped in **one pass** because they interleave: an agent that signs below its own invented `===END===` would otherwise strand the marker. A response that is *only* trailers passes through untouched.
+- PR prompts wrap the answer in `===TITLE===` / `===BODY===` / `===END===` markers. `parse_mr_response` (`_extract_pr_sections`) slices those out, discarding any preamble before `===TITLE===` or chatter after `===END===`, and falls back to the raw fence-stripped text when the opening markers are absent.
+- `commit.txt` wraps the message in `===COMMIT===` / `===END===` markers. `parse_commit_response` (`_extract_commit_message`) slices between them, falling back to the first Conventional Commits subject line onward when `===COMMIT===` is absent, and truncates any post-message continuation dump (markdown headings, tables, horizontal rules, echoed prompt XML tags, or standalone file-path headers) when `===END===` is omitted.
+- Both also run `_drop_trailing_noise`, stripping trailing `Co-Authored-By:` / `Generated with [...]` lines and stray `===WORD===` sentinels. Agent CLIs carry their own system prompt telling them to sign their work, and that outranks the git-ai prompt, so the trailer is removed after the fact rather than argued with. A response that is *only* trailers passes through untouched.
 - `strip_fences` unwraps a fence **only** when one opens the first line and closes the last — a PR body's own fenced blocks are content the `## Verification` and `## Deployment` sections depend on.
 
 ## Deterministic formatting
