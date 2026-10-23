@@ -11,72 +11,27 @@ import re
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple
 
-if TYPE_CHECKING:
-    from ._git import (
-        DEFAULT_RELEASE_CONTEXT,
-        _omit_large_file_diffs,
-        derive_diff_stat,
-        get_current_branch,
-        get_diff_stat,
-        get_git_dir,
-        get_release_context,
-        get_repo_root,
-        get_staged_diff_context,
-        largest_diff_files,
-    )
-    from ._git_branch import (
-        format_branch_context,
-        get_branch_commit_subjects,
-        resolve_commit_base,
-    )
-    from ._instructions import format_repo_guidance, load_repo_instructions
-    from ._pr_prompt_build import DiffScope, build_mr_prompt_input
-elif __package__ in (None, ""):
-    import importlib
-
-    _git_mod = importlib.import_module("_git")
-    _git_branch_mod = importlib.import_module("_git_branch")
-    _pr_prompt_build_mod = importlib.import_module("_pr_prompt_build")
-    DEFAULT_RELEASE_CONTEXT = _git_mod.DEFAULT_RELEASE_CONTEXT
-    DiffScope = _pr_prompt_build_mod.DiffScope
-    build_mr_prompt_input = _pr_prompt_build_mod.build_mr_prompt_input
-    derive_diff_stat = _git_mod.derive_diff_stat
-    format_branch_context = _git_branch_mod.format_branch_context
-    get_branch_commit_subjects = _git_branch_mod.get_branch_commit_subjects
-    get_current_branch = _git_mod.get_current_branch
-    get_diff_stat = _git_mod.get_diff_stat
-    get_git_dir = _git_mod.get_git_dir
-    get_release_context = _git_mod.get_release_context
-    get_repo_root = _git_mod.get_repo_root
-    get_staged_diff_context = _git_mod.get_staged_diff_context
-    _instructions_mod = importlib.import_module("_instructions")
-    format_repo_guidance = _instructions_mod.format_repo_guidance
-    load_repo_instructions = _instructions_mod.load_repo_instructions
-    largest_diff_files = _git_mod.largest_diff_files
-    _omit_large_file_diffs = _git_mod._omit_large_file_diffs
-    resolve_commit_base = _git_branch_mod.resolve_commit_base
-else:
-    from ._git import (
-        DEFAULT_RELEASE_CONTEXT,
-        _omit_large_file_diffs,
-        derive_diff_stat,
-        get_current_branch,
-        get_diff_stat,
-        get_git_dir,
-        get_release_context,
-        get_repo_root,
-        get_staged_diff_context,
-        largest_diff_files,
-    )
-    from ._git_branch import (
-        format_branch_context,
-        get_branch_commit_subjects,
-        resolve_commit_base,
-    )
-    from ._instructions import format_repo_guidance, load_repo_instructions
-    from ._pr_prompt_build import DiffScope, build_mr_prompt_input
+from ._git import (
+    DEFAULT_RELEASE_CONTEXT,
+    _omit_large_file_diffs,
+    derive_diff_stat,
+    get_current_branch,
+    get_diff_stat,
+    get_git_dir,
+    get_release_context,
+    get_repo_root,
+    get_staged_diff_context,
+    largest_diff_files,
+)
+from ._git_branch import (
+    format_branch_context,
+    get_branch_commit_subjects,
+    resolve_commit_base,
+)
+from ._instructions import format_repo_guidance, load_repo_instructions
+from ._pr_prompt_build import DiffScope, build_mr_prompt_input
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _DEFAULT_MAX_DIFF_BYTES = 900_000

@@ -151,13 +151,13 @@ _run_gemini_api() {
   local body_file cfg response st http detail
   body_file=$(printf '%s' "$input" | _stage_request_body gemini "$prompt") ||
     die "Failed to build Gemini API request"
-  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
-  # shellcheck disable=SC2016
-  _rm_on_exit 'rm -f "$cfg" "$body_file"'
   # The key is a URL parameter, so the whole URL goes in the curl config file
   # rather than argv (keeps the key out of `ps`).
-  printf 'url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"\n' \
-    "$model" "$key" >"$cfg"
+  _curl_cfg cfg \
+    'url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"\n' \
+    "$model" "$key" || die "failed to create curl config file"
+  # shellcheck disable=SC2016
+  _rm_on_exit 'rm -f "$cfg" "$body_file"'
   # No -f: a rejected key or unknown model is a 4xx whose body explains why, and
   # this is the path a stale key lands on.
   response=$(curl -s -K "$cfg" -H "content-type: application/json" \
@@ -267,10 +267,10 @@ _run_vertex_api() {
   body_file=$(printf '%s' "$input" | _stage_request_body "$shape" "$prompt") ||
     die "Failed to build ${label} request"
   url=$(_vertex_endpoint "$project" "$region" "$publisher" "$model" "$method")
-  curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  _curl_cfg curl_cfg 'header = "Authorization: Bearer %s"\n' "$token" ||
+    die "failed to create curl config file"
   # shellcheck disable=SC2016
   _rm_on_exit 'rm -f "$curl_cfg" "$body_file"'
-  printf 'header = "Authorization: Bearer %s"\n' "$token" > "$curl_cfg"
   response=$(curl -sf -K "$curl_cfg" -H "content-type: application/json" \
     --data-binary "@$body_file" "$url")
   local curl_status=$?
@@ -287,10 +287,10 @@ _run_anthropic_api() {
   local body_file response curl_cfg
   body_file=$(printf '%s' "$input" | _stage_request_body anthropic "$prompt" "$model") ||
     die "Failed to build Anthropic API request"
-  curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  _curl_cfg curl_cfg 'header = "x-api-key: %s"\n' "$key" ||
+    die "failed to create curl config file"
   # shellcheck disable=SC2016
   _rm_on_exit 'rm -f "$curl_cfg" "$body_file"'
-  printf 'header = "x-api-key: %s"\n' "$key" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
     -H "anthropic-version: 2023-06-01" \
@@ -304,12 +304,10 @@ _run_anthropic_api() {
 }
 
 # _run_openai_compat_api BASE_URL MODEL PROMPT INPUT KEY LABEL
-# Generic runner for any OpenAI-compatible bearer-auth provider (see
-# GIT_AI_OPENAI_COMPAT in lib/auth.sh) — same request/response envelope,
-# different host. BASE_URL is everything before "/chat/completions". LABEL
-# (the provider's display name) names which provider failed in error
-# messages — with two-plus compat providers sharing this function, a bare
-# "API request failed" no longer says which one.
+# Runner for an OpenAI-compatible endpoint — same request/response envelope,
+# different host (openai-api with a custom base_url). BASE_URL is everything
+# before "/chat/completions". LABEL (the provider's display name) names which
+# provider failed in error messages.
 _run_openai_compat_api() {
   local base="$1"
   local model="$2"
@@ -320,10 +318,10 @@ _run_openai_compat_api() {
   local body_file response curl_cfg
   body_file=$(printf '%s' "$input" | _stage_request_body openai "$prompt" "$model") ||
     die "Failed to build ${label} request"
-  curl_cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || die "failed to create curl config file"
+  _curl_cfg curl_cfg 'header = "Authorization: Bearer %s"\n' "$key" ||
+    die "failed to create curl config file"
   # shellcheck disable=SC2016
   _rm_on_exit 'rm -f "$curl_cfg" "$body_file"'
-  printf 'header = "Authorization: Bearer %s"\n' "$key" > "$curl_cfg"
   response=$(curl -sf \
     -K "$curl_cfg" \
     -H "content-type: application/json" \
@@ -373,7 +371,6 @@ run_provider() {
         die "Anthropic API generation failed"
       ;;
     vertex-gemini|vertex-anthropic)
-      load_google_env
       # Per-provider account config (options.conf) overrides env. account=
       # selects a gcloud user credential; credentials= points ADC at a
       # service-account JSON. Both are optional — absent both, plain ADC is used.
@@ -409,7 +406,7 @@ run_provider() {
       ;;
     gemini-api)
       local gemini_api_key
-      gemini_api_key=$(resolve_gemini_api_key) ||
+      gemini_api_key=$(resolve_api_key gemini-api-key GEMINI_API_KEY) ||
         die "Gemini API auth not found. Set GEMINI_API_KEY or store 'gemini-api-key' in your keychain."
       _run_gemini_api "$model" "$prompt" "$input" "$gemini_api_key"
       ;;
@@ -474,22 +471,19 @@ run_provider() {
       [[ -n "$output" ]] || die "Codex generation failed: empty response"
       printf '%s\n' "$output"
       ;;
+    openai-api)
+      # A custom base_url points openai-api at any OpenAI-shaped host
+      # (DeepSeek, vLLM, ...); the wire format is identical.
+      local api_key base_url label
+      base_url=$(openai_compat_base_url "$provider_base_name")
+      label=$(provider_display_name "$provider_base_name")
+      api_key=$(resolve_api_key openai-api-key OPENAI_API_KEY) ||
+        die "${label} auth not found. Set OPENAI_API_KEY or store 'openai-api-key' in your keychain."
+      _run_openai_compat_api "$base_url" "$model" "$prompt" "$input" "$api_key" "$label" ||
+        die "${label} generation failed"
+      ;;
     *)
-      # Any provider registered in GIT_AI_OPENAI_COMPAT (lib/auth.sh) — a new
-      # bearer-auth, OpenAI-shaped provider needs no arm here at all, only a
-      # row in that table.
-      local envvar keyservice label api_key base_url
-      if envvar=$(_openai_compat_field "$provider_base_name" 3); then
-        keyservice=$(_openai_compat_field "$provider_base_name" 4)
-        base_url=$(openai_compat_base_url "$provider_base_name")
-        label=$(provider_display_name "$provider_base_name")
-        api_key=$(resolve_api_key "$keyservice" "$envvar") ||
-          die "${label} auth not found. Set ${envvar} or store '${keyservice}' in your keychain."
-        _run_openai_compat_api "$base_url" "$model" "$prompt" "$input" "$api_key" "$label" ||
-          die "${label} generation failed"
-      else
-        die "unknown provider: $provider"
-      fi
+      die "unknown provider: $provider"
       ;;
   esac
   save_last_provider "$tool_name" "$provider"
