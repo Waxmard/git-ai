@@ -23,7 +23,7 @@ from git_ai import (
     prune_pr_cache,
     save_cached_pr,
 )
-from git_ai._pr_incremental import branch_cache_dir
+from git_ai._git_branch import branch_cache_dir
 
 
 def _git(repo: Path, *args: str) -> str:

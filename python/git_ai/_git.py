@@ -6,19 +6,8 @@ import re
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from ._ignore import DEFAULT_EXCLUDES, load_ignore_patterns, to_pathspec_args
-elif __package__ in (None, ""):
-    import importlib
-
-    _ignore_mod = importlib.import_module("_ignore")
-    DEFAULT_EXCLUDES = _ignore_mod.DEFAULT_EXCLUDES
-    to_pathspec_args = _ignore_mod.to_pathspec_args
-    load_ignore_patterns = _ignore_mod.load_ignore_patterns
-else:
-    from ._ignore import DEFAULT_EXCLUDES, load_ignore_patterns, to_pathspec_args
+from ._ignore import DEFAULT_EXCLUDES, load_ignore_patterns, to_pathspec_args
 
 _CONVENTIONAL_TYPES = frozenset(
     ["feat", "fix", "refactor", "docs", "chore", "ci", "test", "style", "perf", "build"]
@@ -45,6 +34,21 @@ def _git(repo_path: str | Path, *args: str) -> str:
     )
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+def _git_try(repo_path: str | Path, *args: str, errors: str = "replace") -> str | None:
+    """Run git, returning stdout on success and None on any failure."""
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        errors=errors,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
     return result.stdout
 
 
@@ -103,49 +107,26 @@ def get_head_sha(repo_path: str | Path) -> str:
 
 
 def git_ref_exists(repo_path: str | Path, ref: str) -> bool:
-    result = subprocess.run(
-        ["git", "cat-file", "-e", f"{ref}^{{commit}}"],
-        cwd=str(repo_path),
-        capture_output=True,
-        check=False,
-    )
-    return result.returncode == 0
+    return _git_try(repo_path, "cat-file", "-e", f"{ref}^{{commit}}") is not None
 
 
 def git_is_ancestor(
     repo_path: str | Path, ancestor_ref: str, descendant_ref: str
 ) -> bool:
-    result = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref],
-        cwd=str(repo_path),
-        capture_output=True,
-        check=False,
+    return (
+        _git_try(repo_path, "merge-base", "--is-ancestor", ancestor_ref, descendant_ref)
+        is not None
     )
-    return result.returncode == 0
 
 
 def git_merge_base(repo_path: str | Path, ref_a: str, ref_b: str) -> str | None:
     """Return the merge-base SHA of two refs, or None when they share no history."""
-    result = subprocess.run(
-        ["git", "merge-base", ref_a, ref_b],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
+    out = _git_try(repo_path, "merge-base", ref_a, ref_b)
+    return (out or "").strip() or None
 
 
 def check_git_repo(repo_path: str | Path) -> None:
-    result = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        cwd=str(repo_path),
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
+    if _git_try(repo_path, "rev-parse", "--git-dir") is None:
         raise RuntimeError(f"{repo_path} is not inside a git repository")
 
 
@@ -170,13 +151,7 @@ def get_staged_diff(
     lockfile defaults; pass ``[]`` to opt out of filtering.
     """
     pathspec = to_pathspec_args(_resolve_exclude_patterns(repo_path, exclude_patterns))
-    quiet = subprocess.run(
-        ["git", "diff", "--staged", "--quiet", *pathspec],
-        cwd=str(repo_path),
-        capture_output=True,
-        check=False,
-    )
-    if quiet.returncode == 0:
+    if _git_try(repo_path, "diff", "--staged", "--quiet", *pathspec) is not None:
         raise RuntimeError("No staged changes to summarize")
     return _git(repo_path, "diff", "--staged", *pathspec)
 
@@ -237,26 +212,21 @@ def get_staged_diff_context(repo_path: str | Path) -> tuple[str, str]:
     return _omit_large_file_diffs(diff), stat
 
 
-def get_release_context(repo_path: str | Path) -> str:
-    result = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0"],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return DEFAULT_RELEASE_CONTEXT
+def _last_tag_distance(repo_path: str | Path) -> tuple[str, str] | None:
+    """Return (last tag, commits since it), or None when no tag is reachable."""
+    described = _git_try(repo_path, "describe", "--tags", "--abbrev=0")
+    last_tag = (described or "").strip()
+    if not last_tag:
+        return None
+    counted = _git_try(repo_path, "rev-list", "--count", f"{last_tag}..HEAD")
+    return last_tag, (counted or "?").strip()
 
-    last_tag = result.stdout.strip()
-    count = subprocess.run(
-        ["git", "rev-list", "--count", f"{last_tag}..HEAD"],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    commits_since = count.stdout.strip() if count.returncode == 0 else "?"
+
+def get_release_context(repo_path: str | Path) -> str:
+    tag_distance = _last_tag_distance(repo_path)
+    if tag_distance is None:
+        return DEFAULT_RELEASE_CONTEXT
+    last_tag, commits_since = tag_distance
     return (
         f"Release context: last tag {last_tag}, {commits_since} commits since"
         " — staged changes are unreleased"
@@ -265,25 +235,10 @@ def get_release_context(repo_path: str | Path) -> str:
 
 def get_mr_release_context(repo_path: str | Path) -> str:
     """Return release context string with semver guidance for MR descriptions."""
-    result = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0"],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
+    tag_distance = _last_tag_distance(repo_path)
+    if tag_distance is None:
         return DEFAULT_RELEASE_CONTEXT
-
-    last_tag = result.stdout.strip()
-    count = subprocess.run(
-        ["git", "rev-list", "--count", f"{last_tag}..HEAD"],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    commits_since = count.stdout.strip() if count.returncode == 0 else "?"
+    last_tag, commits_since = tag_distance
 
     semver_context = ""
     match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", last_tag)

@@ -4,41 +4,24 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    __package__ = "git_ai"
+
+from ._generate import (
+    SUBJECT_LIMIT,
+    build_repo_commit_prompt,
+    enforce_subject_limit,
+    parse_commit_response,
+    wrap_commit_body,
+)
+
 if TYPE_CHECKING:
-    from ._generate import (
-        SUBJECT_LIMIT,
-        SubjectTrim,
-        build_repo_commit_prompt,
-        enforce_subject_limit,
-        parse_commit_response,
-        wrap_commit_body,
-    )
-    from ._instructions import load_repo_instructions
-elif __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    _generate = importlib.import_module("_generate")
-    SUBJECT_LIMIT = _generate.SUBJECT_LIMIT
-    build_repo_commit_prompt = _generate.build_repo_commit_prompt
-    enforce_subject_limit = _generate.enforce_subject_limit
-    load_repo_instructions = importlib.import_module(
-        "_instructions"
-    ).load_repo_instructions
-    parse_commit_response = _generate.parse_commit_response
-    wrap_commit_body = _generate.wrap_commit_body
-else:
-    from ._generate import (
-        SUBJECT_LIMIT,
-        build_repo_commit_prompt,
-        enforce_subject_limit,
-        parse_commit_response,
-        wrap_commit_body,
-    )
-    from ._instructions import load_repo_instructions
+    from ._generate import SubjectTrim
 
 
 def _subject_note(trim: SubjectTrim) -> str:
@@ -79,10 +62,6 @@ def main(argv: list[str] | None = None) -> int:
         "format", help="parse, wrap, and subject-limit a raw provider response"
     )
     fmt.add_argument("--note-file", default=None)
-    instructions = sub.add_parser(
-        "instructions", help="print the repo's .git-ai-instructions contents"
-    )
-    instructions.add_argument("--repo", default=".")
     args = parser.parse_args(argv)
 
     try:
@@ -92,10 +71,6 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(user_input)
         elif args.command == "format":
             _emit_formatted_commit(sys.stdin.read(), args.note_file)
-        elif args.command == "instructions":
-            text = load_repo_instructions(args.repo)
-            if text:
-                sys.stdout.write(f"{text}\n")
     except (RuntimeError, ValueError, OSError) as exc:
         sys.stderr.write(f"git-ai: {exc}\n")
         return 1

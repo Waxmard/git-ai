@@ -1,31 +1,6 @@
 #!/bin/bash
 # auth.sh - provider auth, key resolution, provider metadata (sourced via lib/ai-common.sh).
 
-load_google_env() {
-  if [[ -n "${GOOGLE_CLOUD_PROJECT:-}" ]]; then
-    export GOOGLE_CLOUD_PROJECT
-    export GOOGLE_VERTEX_PROJECT="${GOOGLE_VERTEX_PROJECT:-$GOOGLE_CLOUD_PROJECT}"
-  fi
-
-  if [[ -n "${GOOGLE_CLOUD_LOCATION:-}" ]]; then
-    export GOOGLE_CLOUD_LOCATION
-    export VERTEX_LOCATION="${VERTEX_LOCATION:-$GOOGLE_CLOUD_LOCATION}"
-    export GOOGLE_VERTEX_LOCATION="${GOOGLE_VERTEX_LOCATION:-$GOOGLE_CLOUD_LOCATION}"
-  elif [[ -n "${VERTEX_LOCATION:-}" ]]; then
-    export VERTEX_LOCATION
-    export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-$VERTEX_LOCATION}"
-    export GOOGLE_VERTEX_LOCATION="${GOOGLE_VERTEX_LOCATION:-$VERTEX_LOCATION}"
-  elif [[ -n "${GOOGLE_VERTEX_LOCATION:-}" ]]; then
-    export GOOGLE_VERTEX_LOCATION
-    export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-$GOOGLE_VERTEX_LOCATION}"
-    export VERTEX_LOCATION="${VERTEX_LOCATION:-$GOOGLE_VERTEX_LOCATION}"
-  fi
-
-  if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
-    export GOOGLE_APPLICATION_CREDENTIALS
-  fi
-}
-
 # resolve_api_key SERVICE ENVVAR
 # Resolve a provider API key, first hit wins: the named env var, then the OS
 # secret store keyed on SERVICE (macOS Keychain, libsecret, pass, KDE Wallet).
@@ -82,11 +57,6 @@ resolve_api_key() {
   fi
 
   return 1
-}
-
-# Gemini key resolution is just the generic resolver under the gemini service.
-resolve_gemini_api_key() {
-  resolve_api_key gemini-api-key GEMINI_API_KEY
 }
 
 # store_api_key SERVICE KEY
@@ -156,53 +126,19 @@ persist_key_to_rc() {
   printf '%s\n' "$rc"
 }
 
-# OpenAI-compatible bearer-auth providers — DATA, not per-provider code. Every
-# entry speaks the identical wire format (Authorization: Bearer header,
-# {model,messages} request body, {choices:[{message:{content}}]} response,
-# {data:[{id}]} model list), so a new one is a single row here instead of a
-# mirrored case arm in provider_ready / provider_display_name
-# / provider_key_meta below, run_provider's dispatch (provider.sh), and
-# discovery.sh's fetch dispatch. A provider whose catalog needs filtering
-# (like OpenAI's, which lists embeddings/tts/etc. alongside chat models) keeps
-# its own bespoke fetch function instead of joining the generic one.
+# openai-api is the one OpenAI-compatible bearer-auth provider: Authorization:
+# Bearer header, {model,messages} request body, {choices:[{message:{content}}]}
+# response, {data:[{id}]} model list. It shares the generic runner/fetch
+# helpers with any future lookalike, but its metadata lives in the case arms
+# beside every other provider.
 #
-# Fields: token|display name|env var|keychain service|base url|models.dev key|models.dev family prefix|family
-#   base url is everything before "/chat/completions" and "/models" — include
-#   a provider's own "/v1" here if it needs one; a user's [section] base_url =
-#   overrides it (see openai_compat_base_url).
-#   family is recommended_model's lookup key in recommended-models.conf.
-GIT_AI_OPENAI_COMPAT=(
-  "openai-api|OpenAI API|OPENAI_API_KEY|openai-api-key|https://api.openai.com/v1|openai||openai"
-)
-
-# _openai_compat_field PROVIDER INDEX — 1-based field from PROVIDER's row
-# above. Non-zero (nothing printed) when PROVIDER isn't in the table.
-_openai_compat_field() {
-  local p="${1%%@*}" row
-  for row in "${GIT_AI_OPENAI_COMPAT[@]}"; do
-    [[ "$row" == "${p}|"* ]] || continue
-    local -a fields
-    IFS='|' read -ra fields <<<"$row"
-    printf '%s\n' "${fields[$(($2 - 1))]}"
-    return 0
-  done
-  return 1
-}
-
-# Every token GIT_AI_OPENAI_COMPAT lists, one per line.
-_openai_compat_tokens() {
-  local row
-  for row in "${GIT_AI_OPENAI_COMPAT[@]}"; do
-    printf '%s\n' "${row%%|*}"
-  done
-}
-
 # openai_compat_base_url PROVIDER — `base_url =` from PROVIDER's options.conf
-# section when set (one trailing / dropped), else the table's field 5.
+# section when set (one trailing / dropped), else OpenAI's API root. A custom
+# base_url points openai-api at any OpenAI-shaped host (DeepSeek, vLLM, ...).
 openai_compat_base_url() {
   local p="${1%%@*}" url
   url=$(vertex_config_value "$p" base_url)
-  [[ -n "$url" ]] || url=$(_openai_compat_field "$p" 5) || return 1
+  [[ -n "$url" ]] || url="https://api.openai.com/v1"
   printf '%s\n' "${url%/}"
 }
 
@@ -230,7 +166,7 @@ provider_ready() {
       resolve_api_key anthropic-api-key ANTHROPIC_API_KEY >/dev/null 2>&1 && return 0
       printf 'ANTHROPIC_API_KEY not set (env or keychain)\n' >&2 ;;
     gemini-api)
-      resolve_gemini_api_key >/dev/null 2>&1 && return 0
+      resolve_api_key gemini-api-key GEMINI_API_KEY >/dev/null 2>&1 && return 0
       printf 'GEMINI_API_KEY not set (env or keychain)\n' >&2 ;;
     vertex|vertex-gemini|vertex-anthropic)
       local account project
@@ -247,15 +183,11 @@ provider_ready() {
       project="${project:-$(vertex_section_projects | head -n1)}"
       [[ -n "$project" ]] && return 0
       printf 'Vertex project not set (project=, a [vertex-…@project] section, or GOOGLE_CLOUD_PROJECT)\n' >&2 ;;
+    openai-api)
+      resolve_api_key openai-api-key OPENAI_API_KEY >/dev/null 2>&1 && return 0
+      printf 'OPENAI_API_KEY not set (env or keychain)\n' >&2 ;;
     *)
-      local envvar keyservice
-      if envvar=$(_openai_compat_field "$provider" 3); then
-        keyservice=$(_openai_compat_field "$provider" 4)
-        resolve_api_key "$keyservice" "$envvar" >/dev/null 2>&1 && return 0
-        printf '%s not set (env or keychain)\n' "$envvar" >&2
-      else
-        printf 'unknown provider: %s\n' "$provider" >&2
-      fi
+      printf 'unknown provider: %s\n' "$provider" >&2
       ;;
   esac
   return 1
@@ -304,9 +236,10 @@ provider_display_name() {
     antigravity)   name="Antigravity" ;;
     claude-code)   name="Claude Code" ;;
     anthropic-api) name="Anthropic API" ;;
+    openai-api)    name="OpenAI API" ;;
     codex)         name="Codex CLI" ;;
     last)          name="Reuse last message" ;;
-    *) name=$(_openai_compat_field "$base" 2) || return 0 ;;
+    *) return 0 ;;
   esac
   if [[ -n "$profile" ]]; then
     printf '%s [%s]\n' "$name" "$profile"
@@ -339,8 +272,10 @@ recommended_model() {
     # Its own family: agy's ids carry a reasoning-effort suffix
     # (gemini-3.7-flash-medium), so a bare google id is not a valid pin.
     antigravity) family=antigravity ;;
-    *)
-      family=$(_openai_compat_field "$1" 8) || return 0
+    openai-api)
+      family=openai
+      # A custom base_url (DeepSeek, vLLM, ...) has no curated default: the
+      # user's own `openai-api:model` pin is the only recommendation.
       if [[ -n "$(vertex_config_value "${1%%@*}" base_url)" ]]; then
         local combo
         while IFS= read -r combo; do
@@ -349,6 +284,7 @@ recommended_model() {
         return 0
       fi
       ;;
+    *) return 0 ;;
   esac
 
   [[ -r "$GIT_AI_RECOMMENDED_MODELS_FILE" ]] || return 0
@@ -373,8 +309,8 @@ provider_is_valid() {
         *) return 1 ;;
       esac
       ;;
-    vertex-gemini|vertex-anthropic|gemini-api|antigravity|claude-code|anthropic-api|codex|last) return 0 ;;
-    *) _openai_compat_field "$1" 1 >/dev/null ;;
+    vertex-gemini|vertex-anthropic|gemini-api|antigravity|claude-code|anthropic-api|openai-api|codex|last) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -386,10 +322,7 @@ provider_key_meta() {
   case ${1%%@*} in
     anthropic-api) printf 'anthropic-api-key ANTHROPIC_API_KEY\n' ;;
     gemini-api)    printf 'gemini-api-key GEMINI_API_KEY\n' ;;
-    *)
-      local service envvar
-      service=$(_openai_compat_field "$1" 4) && envvar=$(_openai_compat_field "$1" 3) || return 1
-      printf '%s %s\n' "$service" "$envvar"
-      ;;
+    openai-api)    printf 'openai-api-key OPENAI_API_KEY\n' ;;
+    *) return 1 ;;
   esac
 }

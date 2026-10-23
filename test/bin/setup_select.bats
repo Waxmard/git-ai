@@ -967,6 +967,34 @@ EOF
   assert_output --partial "FRESH $CONF"
 }
 
+@test "_setup_action_remove: declining keeps the provider" {
+  printf '[vertex-gemini]\ngemini-3.6-flash\n\n[vertex]\nprojects = p1\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_warm_ready() { :; }
+    printf "1\nn\n" | GIT_AI_NO_FZF=1 _setup_action_remove "'"$CONF"'"
+  '
+  assert_success
+  assert_output --partial "Kept Vertex AI."
+  run cat "$CONF"
+  assert_line "[vertex-gemini]"
+}
+
+@test "_setup_action_remove: confirming removes the provider" {
+  printf '[vertex-gemini]\ngemini-3.6-flash\n\n[vertex]\nprojects = p1\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_warm_ready() { :; }
+    printf "1\ny\n" | GIT_AI_NO_FZF=1 _setup_action_remove "'"$CONF"'"
+  '
+  assert_success
+  assert_output --partial "Removed Vertex AI."
+  run cat "$CONF"
+  refute_output --partial "[vertex-gemini]"
+}
+
 @test "_setup_print_summary: both vertex sections render as one Vertex AI row" {
   cat >"$CONF" <<'EOF'
 [vertex-anthropic]
@@ -1279,7 +1307,7 @@ SH
 }
 
 @test "_setup_offer_account_pin: offers to pin the login that can see the project" {
-  printf '[vertex]\nprojects = proj-b\n' >"$CONF"
+  printf '[vertex-gemini@proj-b]\n\n[vertex-anthropic@proj-b]\n' >"$CONF"
   local stub; stub="$(mktemp -d)"
   _account_stub "$stub"
   run bash -c '
@@ -1290,14 +1318,15 @@ SH
   '
   rm -rf "$stub"
   assert_success
-  assert_output --partial "visible to b@y.com, but gcloud is active as a@x.com"
-  assert_output --partial "Set account = b@y.com"
+  assert_output --partial "proj-b is visible to b@y.com, but Vertex AI would use a@x.com"
+  assert_output --partial "Set account = b@y.com for proj-b"
   run cat "$CONF"
-  assert_line "account = b@y.com"
+  assert_equal "$(grep -c '^account = b@y.com$' "$CONF")" 2
+  refute_line "[vertex]"
 }
 
 @test "_setup_offer_account_pin: silent when the project belongs to the active login" {
-  printf '[vertex]\nprojects = proj-a\n' >"$CONF"
+  printf '[vertex-gemini@proj-a]\n\n[vertex-anthropic@proj-a]\n' >"$CONF"
   local stub; stub="$(mktemp -d)"
   _account_stub "$stub"
   run bash -c '
@@ -1311,8 +1340,25 @@ SH
   assert_output ""
 }
 
-@test "_setup_offer_account_pin: silent when an account is already pinned" {
-  printf '[vertex]\nprojects = proj-b\naccount = pinned@x.com\n' >"$CONF"
+@test "_setup_offer_account_pin: offers a per-project pin when the inherited account is wrong" {
+  printf '[vertex]\naccount = pinned@x.com\n\n[vertex-gemini@proj-b]\n\n[vertex-anthropic@proj-b]\n' >"$CONF"
+  local stub; stub="$(mktemp -d)"
+  _account_stub "$stub"
+  run bash -c '
+    export PATH="'"${stub}"':$PATH"
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    printf "\n" | _setup_offer_account_pin "'"$CONF"'" "proj-b'$'\t''b@y.com" proj-b
+  '
+  rm -rf "$stub"
+  assert_success
+  assert_output --partial "Vertex AI would use pinned@x.com"
+  assert_equal "$(grep -c '^account = pinned@x.com$' "$CONF")" 1
+  assert_equal "$(grep -c '^account = b@y.com$' "$CONF")" 2
+}
+
+@test "_setup_offer_account_pin: silent when the project's own section already pins its login" {
+  printf '[vertex]\naccount = pinned@x.com\n\n[vertex-gemini@proj-b]\naccount = b@y.com\n\n[vertex-anthropic@proj-b]\naccount = b@y.com\n' >"$CONF"
   local stub; stub="$(mktemp -d)"
   _account_stub "$stub"
   run bash -c '

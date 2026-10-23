@@ -14,10 +14,9 @@ order_by_recent() {
   done
 }
 
-# _all_provider_tokens — every runnable provider token: the static set, then GIT_AI_OPENAI_COMPAT rows.
+# _all_provider_tokens — every runnable provider token.
 _all_provider_tokens() {
-  printf '%s\n' vertex-gemini vertex-anthropic gemini-api antigravity claude-code anthropic-api codex
-  _openai_compat_tokens
+  printf '%s\n' vertex-gemini vertex-anthropic gemini-api antigravity claude-code anthropic-api openai-api codex
 }
 
 list_providers() {

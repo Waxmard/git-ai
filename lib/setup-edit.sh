@@ -216,6 +216,7 @@ _setup_pin_new_projects() {
   shift 2
   first="$1"
   shift
+  [[ $# -gt 0 ]] && printf 'Choosing models once for %d projects: %s\n' "$(($# + 1))" "$(_join_comma "$first" "$@")"
   [[ -n "$seed" ]] && printf 'Starting from the models pinned on your other projects.\n'
   _setup_change_models "$conf" "vertex@${first}" "$seed"
   [[ $# -gt 0 ]] || return 0
@@ -265,7 +266,7 @@ _setup_change_vertex_projects() {
   local -a picked=()
   local selected want_custom="" line pseen=$'\n' st
   selected=$(_setup_multiselect 'vertex projects> ' \
-    'Current projects start marked — Tab to add/drop; Enter saves the marked set; Esc keeps current' \
+    'Current projects start marked — Tab/Space to add/drop (new ones share one model pick); Enter saves the marked set; Esc keeps current' \
     '— keep current list —' "$rows" "$preselect")
   st=$?
   if [[ $st -ne 0 ]]; then
@@ -330,11 +331,17 @@ _setup_change_vertex_projects() {
 # wizard's `vertex` entry drops every per-project section, both base sections,
 # and the shared [vertex] settings block — nothing vertex-related is left behind.
 _setup_action_remove() {
-  local conf="$1" p
+  local conf="$1" p ans name
   local -a secs=()
   while IFS= read -r p; do secs+=("$p"); done < <(_setup_conf_wizard_providers "$conf")
   local provider
   provider=$(_setup_choose_provider 'Remove which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+  name=$(provider_display_name "$provider")
+  _setup_read ans "Remove ${name} and its model pins? [y/N]: " || ans=""
+  case "$ans" in
+    y | Y | yes | Yes) ;;
+    *) printf 'Kept %s.\n' "$name"; return 0 ;;
+  esac
   if [[ "$provider" == vertex ]]; then
     while IFS= read -r p; do
       _setup_vertex_drop_project "$conf" "$p"
@@ -345,7 +352,7 @@ _setup_action_remove() {
   else
     _conf_apply "$conf" conf_remove_section "$provider"
   fi &&
-    printf 'Removed %s.\n' "$(provider_display_name "$provider")"
+    printf 'Removed %s.\n' "$name"
 }
 
 # Set the directories where one configured provider section is blocked
@@ -448,7 +455,7 @@ _setup_change_models() {
   local -a picked=()
   local selected want_custom="" line pseen=$'\n' st
   selected=$(_setup_multiselect "models for $(provider_display_name "$provider")> " \
-    "${header} — Tab to add/drop; Enter saves the marked set; Esc keeps current" \
+    "${header} — Tab/Space to add/drop; Enter saves the marked set; Esc keeps current" \
     '— none: unpin every model —' "$rows" "$preselect")
   st=$?
   if [[ $st -ne 0 ]]; then
