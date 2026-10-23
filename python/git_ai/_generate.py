@@ -368,6 +368,23 @@ def _fence_open_at(lines: list[str]) -> bool:
     return sum(1 for line in lines if _FENCE_OPEN_RE.fullmatch(line)) % 2 == 1
 
 
+def _slice_at_closing_marker(text: str) -> str:
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if _CLOSING_MARKER_RE.match(line.strip()):
+            return "\n".join(lines[:i])
+    return text
+
+
+def _unwrap_trailing_fence(text: str, *, wrapped: bool) -> str:
+    text = _drop_trailing_noise(text)
+    if wrapped:
+        lines = text.split("\n")
+        if lines and _FENCE_CLOSE_RE.fullmatch(lines[-1]):
+            text = _drop_trailing_noise("\n".join(lines[:-1]))
+    return text
+
+
 def _finish_payload(payload: str, *, wrapped: bool) -> str:
     """Trim noise off a marker-delimited slice, plus a wrapper's closing fence.
 
@@ -375,12 +392,9 @@ def _finish_payload(payload: str, *, wrapped: bool) -> str:
     last line, so a model that reasons before the fence or signs its work after
     it leaves the closing ``` inside the payload.
     """
-    text = _drop_trailing_noise(payload)
-    if wrapped:
-        lines = text.split("\n")
-        if lines and _FENCE_CLOSE_RE.fullmatch(lines[-1]):
-            text = _drop_trailing_noise("\n".join(lines[:-1]))
-    return text.strip()
+    return _unwrap_trailing_fence(
+        _slice_at_closing_marker(payload), wrapped=wrapped
+    ).strip()
 
 
 def _extract_pr_sections(text: str) -> str:
@@ -409,6 +423,50 @@ _COMMIT_TYPES = "feat|fix|refactor|build|chore|docs|style|test|perf|ci|revert"
 _COMMIT_PREFIX_RE = re.compile(rf"^(?:{_COMMIT_TYPES})(?:\([^)]*\))?!?: ")
 _COMMIT_SUBJECT_RE = re.compile(rf"^(?:{_COMMIT_TYPES})(?:\([^)]*\))?!?: \S")
 
+_COMMIT_CONTINUATION_RE = re.compile(
+    r"^(?:"
+    r"#{1,6}[ \t]+\S"
+    r"|\|.+\|$"
+    r"|(?:-{3,}|\*{3,}|_{3,})$"
+    r"|</?(?:changed_files|diff|repo_guidance|release_context"
+    r"|branch(?:_commits|_diffstat)?|skills|preloaded_skill"
+    r"|user_information|USER_REQUEST|ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)\b"
+    r")"
+)
+_BARE_PATH_LINE_RE = re.compile(
+    r"^\.?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.[A-Za-z0-9]+"
+    r"(?:[ \t]+#{1,6}[ \t]+\S.*)?$"
+)
+
+
+def _strip_commit_continuation(text: str, *, wrapped: bool = False) -> str:
+    lines = text.split("\n")
+    fence: tuple[str, int] | None = None
+    for i in range(1, len(lines)):
+        if fence is None:
+            stripped = lines[i].strip()
+            if _COMMIT_CONTINUATION_RE.match(stripped):
+                cut = (
+                    i - 1
+                    if i > 1 and _BARE_PATH_LINE_RE.fullmatch(lines[i - 1].strip())
+                    else i
+                )
+                return _unwrap_trailing_fence(
+                    "\n".join(lines[:cut]), wrapped=wrapped
+                ).strip()
+            if _BARE_PATH_LINE_RE.fullmatch(stripped):
+                prev = lines[i - 1].strip().rstrip("'\"`)]>")
+                next_ln = lines[i + 1].strip() if i + 1 < len(lines) else ""
+                if "#" in stripped or (
+                    (not prev or prev.endswith((".", "!", "?", ":")))
+                    and not next_ln[:1].islower()
+                ):
+                    return _unwrap_trailing_fence(
+                        "\n".join(lines[:i]), wrapped=wrapped
+                    ).strip()
+        fence = _fence_state([lines[i]], fence)
+    return text
+
 
 def _extract_commit_message(text: str) -> str:
     """Slice the message out of a commit response, discarding any preamble.
@@ -422,15 +480,19 @@ def _extract_commit_message(text: str) -> str:
     lines = text.split("\n")
     idx = _marker_index(lines, _COMMIT_MARKER)
     if idx >= 0:
-        after = _finish_payload(
-            "\n".join(lines[idx + 1 :]), wrapped=_fence_open_at(lines[:idx])
+        wrapped = _fence_open_at(lines[:idx])
+        after = _strip_commit_continuation(
+            _finish_payload("\n".join(lines[idx + 1 :]), wrapped=wrapped),
+            wrapped=wrapped,
         )
         if after:
             return after
     for i, line in enumerate(lines):
         if _COMMIT_SUBJECT_RE.match(line.strip()):
-            return _finish_payload(
-                "\n".join(lines[i:]), wrapped=_fence_open_at(lines[:i])
+            wrapped = _fence_open_at(lines[:i])
+            return _strip_commit_continuation(
+                _finish_payload("\n".join(lines[i:]), wrapped=wrapped),
+                wrapped=wrapped,
             )
     return text
 
