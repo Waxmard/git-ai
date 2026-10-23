@@ -12,27 +12,26 @@ A provider token may be profile-qualified (`base@profile`): dispatch on the base
 
 **Adding an OpenAI-compatible bearer-auth provider** (a new API that speaks the
 identical `Authorization: Bearer` + `{model,messages}` + `{choices[0].message.content}`
-wire format — most new LLM launches do) needs **one row**, not a mirrored case
-arm: `GIT_AI_OPENAI_COMPAT` in `auth.sh`. That single table drives
-`provider_ready`/`provider_display_name`/`provider_key_meta`/`recommended_model`
-(`auth.sh`), `run_provider`'s fallback dispatch and `_run_openai_compat_api`
-(`provider.sh`), `_models_dev_key`'s fallback and `_fetch_models_openai_compat`
-(`discovery.sh`), and the provider lists in `list_providers`/`list_options`
-(`config.sh`) and `SETUP_PROVIDERS` (`setup.sh`) — all of it consumed through
-`_openai_compat_field PROVIDER INDEX` (plain bash field-split, deliberately not
-`cut`: the readiness tests run with an empty `PATH`, so a helper this central
-cannot shell out for something bash can do natively). A provider whose model
-list needs filtering (OpenAI's `/models` also lists embeddings/tts/etc.) keeps
-its own bespoke `_fetch_models_*` instead of joining the generic one — the
-table only covers what's actually identical across members.
+wire format): `openai-api` is the only member today, so its metadata lives in
+the ordinary per-provider `case` arms — `provider_ready`, `provider_display_name`,
+`provider_key_meta`, `recommended_model` and `provider_is_valid` (`auth.sh`),
+`run_provider` (`provider.sh`), `_models_dev_key` and `_fetch_models`
+(`discovery.sh`), `_all_provider_tokens` (`config.sh`), and `SETUP_PROVIDERS`
+(`setup.sh`). The wire format itself is still shared code:
+`_run_openai_compat_api` and `_fetch_models_openai_compat` take a base URL, so a
+second provider means a new arm in each of those lists rather than a new runner.
+A user's `base_url =` under `[openai-api]` points the same provider at any
+OpenAI-shaped host (DeepSeek, vLLM, …); `openai_compat_base_url` resolves it and
+falls back to OpenAI's root. A provider whose model list needs filtering
+(OpenAI's `/models` also lists embeddings/tts/etc.) keeps its own bespoke
+`_fetch_models_*` instead of joining the generic one.
 `examples/options.conf`'s comment, `README.md`'s provider table and key-resolution
-list, and — when the row introduces a new `family` value — a matching
+list, and — when the arm introduces a new `family` value — a matching
 `family = model-id` line in `recommended-models.conf` still need the token by
 hand. `bin/git-ai`'s arg parser does not: a `case` pattern can't be built from
 an expanded variable (`$var` inside a pattern position is one literal
 alternative, not `|`-split), so both `cmd_commit` and `cmd_pr`'s loops
-delegate to `provider_is_valid` (already table-aware) instead of hand-listing
-tokens a second time.
+delegate to `provider_is_valid` instead of hand-listing tokens a second time.
 
 Per-provider notes worth knowing before editing:
 
@@ -98,7 +97,7 @@ The wizard hides the internal `vertex-gemini` / `vertex-anthropic` split, routin
 - A section suffix is an *address*, not necessarily the GCP project: a hand-written `project =` can point `[vertex-anthropic@acme]` at `acme-prod`. `_setup_vertex_resolved_project` resolves that (checking both family sections, since either can carry the override) and `_setup_vertex_add_project` consults it before writing, so re-picking `acme-prod` recognises the existing alias instead of creating a second profile — returning **2**, not 0, because both callers pin models on every suffix they see reported as added and would recreate the duplicate the guard just declined to write. The summary renders the divergence as `acme (project: acme-prod)`. Fast-path reset snapshots and restores the override, or it would silently repoint the profile at its own suffix.
 - Re-adding an already-configured `vertex` means "attach another GCP project": straight to the project picker, then the model editor pre-marked with what vertex pins elsewhere. A batch of new projects is asked once and written to each.
 - `_setup_pick_vertex_scope` asks one-project-or-all only when more than one is configured. A config with no project anywhere stays on the base sections — vertex resolves its project from the environment at run time and must keep working.
-- Project suggestions sweep **every** `gcloud auth list` login (capped at 5, active first), not just the active one, and both pickers carry a `=custom=` row for an id no login can see. A login whose listing fails is named on stderr, or a dead credential is indistinguishable from an account with no projects. Picking a project only a *non-active* login can see prompts to pin `account =` (`_setup_offer_account_pin`), since vertex otherwise mints its token from the active login and fails at run time.
+- Project suggestions sweep **every** `gcloud auth list` login (capped at 5, active first), not just the active one, and both pickers carry a `=custom=` row for an id no login can see. A login whose listing fails is named on stderr, or a dead credential is indistinguishable from an account with no projects. A pin prompt (`_setup_offer_account_pin`) is offered per picked project whenever the account it would resolve to (inherited from `[vertex-<family>]`/`[vertex]`, or the active login) differs from the login that can see it; it is written to that project's own `[vertex-gemini@P]`/`[vertex-anthropic@P]` sections, never the shared `[vertex]`, since vertex otherwise mints its token from the wrong account and fails at run time.
 
 ### Auth-assist
 

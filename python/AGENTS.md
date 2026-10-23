@@ -16,7 +16,7 @@ The branch-context machinery (`get_default_branch`, `resolve_commit_base`, `_nea
 
 ## Shell bridges
 
-The Bash CLI reaches this package through `_commit_cli.py` (`build-prompt`, `format`, `instructions`), `_pr_repo_cli.py` (`prepare`, `build-input`, `format`, `save-cache`), and `_pr_render.py`. `_commit_cli.py build-prompt` puts the user input on stdout and the system prompt in `--prompt-file`. `format` puts the finished message on stdout, the subject-trim note in `--note-file`, and empty stdout means an empty model response the shell reports with the provider's name.
+The Bash CLI reaches this package through `_commit_cli.py` (`build-prompt`, `format`), `_pr_repo_cli.py` (`prepare`, `build-prompt`, `format`, `save-cache`), and `_pr_render.py`. Both `build-prompt` subcommands put the user input on stdout and the system prompt in `--prompt-file`, so the shell never assembles a prompt itself. `format` puts the finished message on stdout, the subject-trim note in `--note-file`, and empty stdout means an empty model response the shell reports with the provider's name.
 
 ## Prompts and response parsing
 

@@ -20,42 +20,20 @@ require_python() {
     die "requires python3 (set GIT_AI_PYTHON to point at an interpreter)"
 }
 
-# check_diff_size_or_die <diff>
-# Abort with a "Largest changed files" hint when the diff exceeds
-# ${GIT_AI_MAX_DIFF_BYTES:-900000}. Set GIT_AI_MAX_DIFF_BYTES=0 to disable.
-check_diff_size_or_die() {
-  local diff="$1"
-  local limit="${GIT_AI_MAX_DIFF_BYTES:-900000}"
-  [[ "$limit" =~ ^[0-9]+$ ]] || limit=900000
-  [[ "$limit" -gt 0 ]] || return 0
-  local size
-  size=$(printf '%s' "$diff" | wc -c | tr -d ' ')
-  [[ "$size" -le "$limit" ]] && return 0
-
-  local top
-  top=$(printf '%s' "$diff" | awk '
-    function flush() { if (path != "") { printf "%d\t%s\n", ins+del, path } }
-    /^diff --git a\// {
-      flush()
-      ins=0; del=0
-      if (match($0, / b\/.+$/)) {
-        path=substr($0, RSTART+3)
-      } else { path="" }
-      next
-    }
-    /^\+\+\+/ || /^---/ { next }
-    /^\+/ { ins++; next }
-    /^-/  { del++; next }
-    END   { flush() }
-  ' | sort -t$'\t' -k1,1nr | head -5 | awk -F'\t' '{ printf "   %6d lines  %s\n", $1, $2 }')
-
-  {
-    printf 'git-ai: diff is %s bytes, exceeds limit (%s).\n' "$size" "$limit"
-    printf 'Largest changed files:\n'
-    [[ -n "$top" ]] && printf '%s\n' "$top"
-    printf 'Add patterns to .git-ai-ignore (repo root) to skip them, unstage them, or raise GIT_AI_MAX_DIFF_BYTES.\n'
-  } >&2
-  exit 1
+# _curl_cfg VAR FORMAT [ARG...] — write printf FORMAT to a fresh curl config
+# file and store its path in VAR. Used to keep a key out of argv, where `ps`
+# would show it. The caller registers cleanup with _rm_on_exit: this cannot do
+# it, since a $(...) call's trap would die with its subshell.
+_curl_cfg() {
+  local __var="$1" __fmt="$2" __cfg
+  shift 2
+  __cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  # shellcheck disable=SC2059 # FORMAT is a literal from our own callers
+  if ! printf "$__fmt" "$@" >"$__cfg"; then
+    rm -f "$__cfg"
+    return 1
+  fi
+  printf -v "$__var" '%s' "$__cfg"
 }
 
 # _rm_on_exit CMD — run CMD on exit, including a terminal hangup (bash skips

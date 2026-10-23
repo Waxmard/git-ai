@@ -30,7 +30,7 @@ _setup_detect_vertex_project() {
     [[ $probed -ge 10 ]] && break
     probed=$((probed + 1))
     _setup_vertex_api_enabled "$p" && enabled+=("$p")
-  done < <(gcloud projects list --format="value(projectId)" 2>/dev/null)
+  done < <(gcloud projects list --format="value(projectId)" --billing-project= 2>/dev/null)
 
   if [[ ${#enabled[@]} -gt 0 ]]; then
     printf '%s\n' "${enabled[0]}"
@@ -43,7 +43,7 @@ _setup_detect_vertex_project() {
 _setup_vertex_api_enabled() {
   gcloud services list --enabled --project="$1" \
     --filter="config.name=aiplatform.googleapis.com" \
-    --format="value(config.name)" 2>/dev/null | grep -q aiplatform
+    --format="value(config.name)" --billing-project= 2>/dev/null | grep -q aiplatform
 }
 
 # Name the logins whose project listing failed. An expired, revoked, or
@@ -53,7 +53,7 @@ _setup_vertex_api_enabled() {
 _setup_warn_gcloud_failures() {
   [[ $# -gt 0 ]] || return 0
   printf 'gcloud could not list projects for: %s\n' "$(_join_comma "$@")" >&2
-  printf '  Re-auth with: gcloud auth login --account=<account>\n' >&2
+  printf '  See why: gcloud projects list --account=<account>\n' >&2
   printf '  (You can still type a project id via the custom row.)\n' >&2
 }
 
@@ -72,7 +72,7 @@ _setup_gcloud_projects() {
     [[ $probed -ge 5 ]] && break
     probed=$((probed + 1))
     any=1
-    if ! listed=$(gcloud projects list --account="$a" --format="value(projectId)" 2>/dev/null); then
+    if ! listed=$(gcloud projects list --account="$a" --format="value(projectId)" --billing-project= 2>/dev/null); then
       failed+=("$a")
       continue
     fi
@@ -93,7 +93,7 @@ _setup_gcloud_projects() {
   # default credential can see, with no account to tag it with.
   while IFS= read -r p; do
     [[ -n "$p" ]] && printf '%s\t\n' "$p"
-  done < <(gcloud projects list --format="value(projectId)" 2>/dev/null)
+  done < <(gcloud projects list --format="value(projectId)" --billing-project= 2>/dev/null)
 }
 
 # Picker rows ("value|label") for discoverable GCP projects, skipping any id in
@@ -105,7 +105,7 @@ _setup_project_rows() {
   local seen="${1:-$'\n'}" sweep="${2:-}"
   local -a pairs=()
   local line p a accounts=$'\n' n=0
-  [[ -n "$sweep" ]] || sweep=$(_setup_gcloud_projects)
+  [[ $# -ge 2 ]] || sweep=$(_setup_gcloud_projects)
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     pairs+=("$line")
@@ -148,41 +148,34 @@ _setup_gcloud_active_account() {
 }
 
 # _setup_offer_account_pin CONF SWEEP PROJECT...
-# Vertex mints its token from the active gcloud login unless a section names an
-# `account`, so a project only a *different* login can see fails at run time
-# with nothing in the wizard having hinted at it. _setup_vertex_assist only
-# offers `account =` for a provider that isn't ready yet, which this case isn't
-# — so offer it here, where the mismatch is actually detectable. No-op when an
-# account is already pinned or the picked projects span several logins (no
-# single right answer).
+# Vertex mints a project's token from the account its sections resolve to (own
+# section, then [vertex-<family>], then [vertex]) or, absent any, the active
+# gcloud login. A project only a *different* login can see then fails at run
+# time, so offer to pin that project's own login in its own sections — per
+# project, since picked projects may belong to different logins.
 _setup_offer_account_pin() {
   local conf="$1" sweep="$2"
   shift 2
-  local s p a only="" accounts=$'\n' n=0 active ans
-  for s in vertex vertex-anthropic vertex-gemini; do
-    [[ -n "$(vertex_resolve "$s" account)" ]] && return 0
-  done
+  local p a cur active ans fam
+  active=$(_setup_gcloud_active_account)
   for p in "$@"; do
     a=$(_setup_account_for_project "$p" "$sweep")
     [[ -n "$a" ]] || continue
-    case "$accounts" in *$'\n'"$a"$'\n'*) continue ;; esac
-    accounts+="$a"$'\n'
-    only="$a"
-    n=$((n + 1))
+    cur=$(vertex_resolve "vertex-gemini@${p}" account)
+    cur="${cur:-$active}"
+    [[ "$cur" != "$a" ]] || continue
+    printf '\n%s is visible to %s, but Vertex AI would use %s.\n' "$p" "$a" "${cur:-default ADC}"
+    _setup_read ans "  Pin account = ${a} for ${p}? [Y/n]: " || ans=""
+    case "$ans" in
+      n | N | no | No) printf '  Left unset — %s will use %s.\n' "$p" "${cur:-default ADC}" ;;
+      *)
+        for fam in vertex-gemini vertex-anthropic; do
+          _conf_apply "$conf" conf_set_section_setting "${fam}@${p}" account "$a" || return 1
+        done
+        printf '  Set account = %s for %s\n' "$a" "$p"
+        ;;
+    esac
   done
-  [[ $n -eq 1 ]] || return 0
-  active=$(_setup_gcloud_active_account)
-  [[ -n "$active" && "$active" != "$only" ]] || return 0
-
-  printf '\nThose projects are visible to %s, but gcloud is active as %s.\n' "$only" "$active"
-  _setup_read ans "  Pin account = ${only} for Vertex AI? [Y/n]: " || ans=""
-  case "$ans" in
-    n | N | no | No) printf '  Left unset — Vertex AI will use whichever login is active.\n' ;;
-    *)
-      _conf_apply "$conf" conf_set_section_setting vertex account "$only" &&
-        printf '  Set account = %s\n' "$only"
-      ;;
-  esac
 }
 
 # Multi-select GCP projects for vertex providers, from a pre-fetched SWEEP.
@@ -195,13 +188,13 @@ _setup_offer_account_pin() {
 # always exist.
 _setup_pick_projects() {
   local sweep="${1:-}" line p rows selected want_custom="" st
-  [[ -n "$sweep" ]] || sweep=$(_setup_gcloud_projects)
+  [[ $# -ge 1 ]] || sweep=$(_setup_gcloud_projects)
   rows=$(_setup_project_rows $'\n' "$sweep")
 
   if [[ -n "$rows" ]]; then
     rows+=$'\n'"$SETUP_CUSTOM_PROJECT_ROW"
     selected=$(_setup_multiselect 'vertex projects> ' \
-      'Tab marks GCP project(s); Enter confirms; Esc keeps current' \
+      'Tab/Space marks several projects (one model pick covers them all); Enter confirms; Esc keeps current' \
       '— skip / keep current —' "$rows")
     st=$?
     [[ $st -eq 0 ]] || return 0

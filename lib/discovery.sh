@@ -75,13 +75,12 @@ _models_dev_key() {
     gemini-api | vertex-gemini)                printf 'google\tgemini\n' ;;
     anthropic-api | claude-code | vertex-anthropic) printf 'anthropic\tclaude\n' ;;
     codex)                                      printf 'openai\t\n' ;;
-    *)
-      local mdkey mdfam
+    openai-api)
+      # A custom base_url has no models.dev entry to map onto.
       [[ -z "$(vertex_config_value "${1%%@*}" base_url)" ]] || return 1
-      mdkey=$(_openai_compat_field "$1" 6) && [[ -n "$mdkey" ]] || return 1
-      mdfam=$(_openai_compat_field "$1" 7)
-      printf '%s\t%s\n' "$mdkey" "$mdfam"
+      printf 'openai\t\n'
       ;;
+    *) return 1 ;;
   esac
 }
 
@@ -145,10 +144,7 @@ _fetch_models() {
       fi ;;
     claude-code)      _fetch_models_anthropic_api ;;
     codex)            _fetch_models_openai_api ;;
-    *)
-      _openai_compat_field "$1" 1 >/dev/null || return 1
-      _fetch_models_openai_compat "$1"
-      ;;
+    *) return 1 ;;
   esac
 }
 
@@ -157,11 +153,12 @@ _fetch_models() {
 # rather than argv (keeps the key out of `ps`).
 _fetch_models_gemini_api() {
   local key cfg resp st
-  key=$(resolve_gemini_api_key) && [[ -n "$key" ]] || return 1
-  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  key=$(resolve_api_key gemini-api-key GEMINI_API_KEY) && [[ -n "$key" ]] || return 1
+  _curl_cfg cfg \
+    'url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=%s"\n' \
+    "$key" || return 1
   # shellcheck disable=SC2016
   _rm_on_exit 'rm -f "$cfg"' # safety net: an interrupt mid-curl must not leak the key file
-  printf 'url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=%s"\n' "$key" >"$cfg"
   resp=$(curl -sf -m 10 -K "$cfg")
   st=$?
   rm -f "$cfg"
@@ -200,10 +197,9 @@ for m in json.loads(os.environ["GIT_AI_JSON"]).get("data", []):
 _fetch_models_anthropic_api() {
   local key cfg resp st
   key=$(resolve_api_key anthropic-api-key ANTHROPIC_API_KEY) && [[ -n "$key" ]] || return 1
-  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  _curl_cfg cfg 'header = "x-api-key: %s"\n' "$key" || return 1
   # shellcheck disable=SC2016
   _rm_on_exit 'rm -f "$cfg"' # safety net: an interrupt mid-curl must not leak the key file
-  printf 'header = "x-api-key: %s"\n' "$key" >"$cfg"
   resp=$(curl -sf -m 10 -K "$cfg" -H "anthropic-version: 2023-06-01" \
     "https://api.anthropic.com/v1/models?limit=1000")
   st=$?
@@ -217,10 +213,9 @@ _fetch_models_anthropic_api() {
 _fetch_models_openai_api() {
   local key cfg resp st
   key=$(resolve_api_key openai-api-key OPENAI_API_KEY) && [[ -n "$key" ]] || return 1
-  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  _curl_cfg cfg 'header = "Authorization: Bearer %s"\n' "$key" || return 1
   # shellcheck disable=SC2016
   _rm_on_exit 'rm -f "$cfg"' # safety net: an interrupt mid-curl must not leak the key file
-  printf 'header = "Authorization: Bearer %s"\n' "$key" >"$cfg"
   resp=$(curl -sf -m 10 -K "$cfg" "https://api.openai.com/v1/models")
   st=$?
   rm -f "$cfg"
@@ -237,18 +232,15 @@ for i in sorted(set(keep), reverse=True):
 ' 2>/dev/null
 }
 
-# Generic fetch for any OpenAI-compatible bearer-auth provider (see
-# GIT_AI_OPENAI_COMPAT in lib/auth.sh) with a clean model list — no
+# Generic fetch for an OpenAI-compatible endpoint with a clean model list — no
 # embeddings/tts/etc. noise to filter, unlike OpenAI's own catalog (above).
 _fetch_models_openai_compat() {
   local provider="$1" base key cfg resp st
   base=$(openai_compat_base_url "$provider") || return 1
-  key=$(resolve_api_key "$(_openai_compat_field "$provider" 4)" "$(_openai_compat_field "$provider" 3)") &&
-    [[ -n "$key" ]] || return 1
-  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  key=$(resolve_api_key openai-api-key OPENAI_API_KEY) && [[ -n "$key" ]] || return 1
+  _curl_cfg cfg 'header = "Authorization: Bearer %s"\n' "$key" || return 1
   # shellcheck disable=SC2016
   _rm_on_exit 'rm -f "$cfg"' # safety net: an interrupt mid-curl must not leak the key file
-  printf 'header = "Authorization: Bearer %s"\n' "$key" >"$cfg"
   resp=$(curl -sf -m 10 -K "$cfg" "${base}/models")
   st=$?
   rm -f "$cfg"
@@ -285,11 +277,11 @@ _fetch_models_vertex() {
 
   [[ "$region" == "global" ]] && host="aiplatform.googleapis.com" \
                               || host="${region}-aiplatform.googleapis.com"
-  cfg=$(mktemp "${TMPDIR:-/tmp}/git-ai-curl.XXXXXX") || return 1
+  _curl_cfg cfg \
+    'header = "Authorization: Bearer %s"\nheader = "X-Goog-User-Project: %s"\n' \
+    "$token" "$project" || return 1
   # shellcheck disable=SC2016
   _rm_on_exit 'rm -f "$cfg"' # safety net: an interrupt mid-curl must not leak the key file
-  printf 'header = "Authorization: Bearer %s"\nheader = "X-Goog-User-Project: %s"\n' \
-    "$token" "$project" >"$cfg"
 
   local page_token="" url resp st page=0 names="" parsed
   while ((page < 5)); do

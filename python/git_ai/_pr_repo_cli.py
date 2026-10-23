@@ -1,64 +1,44 @@
-"""CLI helpers for repo-mode PR preparation/cache persistence."""
+"""CLI helpers for repo-mode PR prompt building/cache persistence."""
 
 from __future__ import annotations
 
 import argparse
-import importlib
-import json
 import shlex
 import sys
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
-if TYPE_CHECKING:
-    from ._generate import parse_mr_response
-    from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
-    from ._pr_prompt_build import DIFF_SCOPES, DiffScope, build_mr_prompt_input
-elif __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    _generate = importlib.import_module("_generate")
-    _pr_incremental = importlib.import_module("_pr_incremental")
-    _pr_prompt_build = importlib.import_module("_pr_prompt_build")
-    parse_mr_response = _generate.parse_mr_response
-    prepare_repo_pr_context = _pr_incremental.prepare_repo_pr_context
-    save_cached_pr = _pr_incremental.save_cached_pr
-    build_mr_prompt_input = _pr_prompt_build.build_mr_prompt_input
-    DIFF_SCOPES = _pr_prompt_build.DIFF_SCOPES
-else:
-    from ._generate import parse_mr_response
-    from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
-    from ._pr_prompt_build import DIFF_SCOPES, DiffScope, build_mr_prompt_input
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    __package__ = "git_ai"
+
+from ._generate import build_mr_prompt, parse_mr_response
+from ._instructions import load_repo_instructions
+from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
+from ._pr_prompt_build import DIFF_SCOPES, DiffScope
 
 
 def _cmd_prepare(args: argparse.Namespace) -> int:
-    existing_pr = None
-    if args.existing_pr_file:
-        existing_pr = Path(args.existing_pr_file).read_text(encoding="utf-8")
     context = prepare_repo_pr_context(
         args.repo_path,
         base_branch=args.base_branch,
-        existing_pr=existing_pr,
         previous_head_sha=args.previous_head_sha,
         fresh=args.fresh,
     )
-    if args.format == "shell":
-        for key, value in asdict(context).items():
-            if value is None:
-                rendered = ""
-            elif isinstance(value, bool):
-                rendered = "true" if value else "false"
-            elif isinstance(value, list):
-                # Commit subjects and warning strings are single-line, so
-                # newline-join is a safe delimiter the build-input step can
-                # split back apart.
-                rendered = "\n".join(str(item) for item in value)
-            else:
-                rendered = str(value)
-            sys.stdout.write(f"{key.upper()}={shlex.quote(rendered)}\n")
-        return 0
-    sys.stdout.write(context.to_json())
+    for key, value in asdict(context).items():
+        if value is None:
+            rendered = ""
+        elif isinstance(value, bool):
+            rendered = "true" if value else "false"
+        elif isinstance(value, list):
+            # Commit subjects and warning strings are single-line, so
+            # newline-join is a safe delimiter _read_subjects can split apart.
+            rendered = "\n".join(str(item) for item in value)
+        else:
+            rendered = str(value)
+        sys.stdout.write(f"{key.upper()}={shlex.quote(rendered)}\n")
     return 0
 
 
@@ -89,20 +69,19 @@ def _read_subjects(path: str | None) -> set[str] | None:
     return subjects or None
 
 
-def _cmd_build_input(args: argparse.Namespace) -> int:
-    commit_log = _read_optional(args.commit_log_file)
-    existing_pr = _read_optional(args.existing_pr_file)
-    prompt_name, user_input = build_mr_prompt_input(
+def _cmd_build_prompt(args: argparse.Namespace) -> int:
+    prompt, user_input = build_mr_prompt(
         diff=Path(args.diff_file).read_text(encoding="utf-8"),
-        commit_log=commit_log,
+        commit_log=_read_optional(args.commit_log_file),
         diff_stat=_read_optional(args.diff_stat_file),
         release_context=_read_optional(args.release_context_file),
-        existing_pr=existing_pr,
+        existing_pr=_read_optional(args.existing_pr_file),
         churn_subjects=_read_subjects(args.churn_subjects_file),
-        repo_guidance=_read_optional(args.repo_instructions_file),
+        repo_guidance=load_repo_instructions(args.repo_path),
         diff_scope=cast("DiffScope", args.diff_scope),
     )
-    sys.stdout.write(json.dumps({"prompt_name": prompt_name, "user_input": user_input}))
+    Path(args.prompt_file).write_text(prompt, encoding="utf-8")
+    sys.stdout.write(user_input)
     return 0
 
 
@@ -118,10 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     prepare = sub.add_parser("prepare")
     prepare.add_argument("--repo-path", default=".")
     prepare.add_argument("--base-branch", required=True)
-    prepare.add_argument("--existing-pr-file")
     prepare.add_argument("--previous-head-sha")
     prepare.add_argument("--fresh", action="store_true")
-    prepare.add_argument("--format", choices=["json", "shell"], default="json")
     prepare.set_defaults(func=_cmd_prepare)
 
     save = sub.add_parser("save-cache")
@@ -133,16 +110,17 @@ def main(argv: list[str] | None = None) -> int:
     save.add_argument("--content-id")
     save.set_defaults(func=_cmd_save)
 
-    build = sub.add_parser("build-input")
+    build = sub.add_parser("build-prompt")
+    build.add_argument("--repo-path", default=".")
+    build.add_argument("--prompt-file", required=True)
     build.add_argument("--diff-file", required=True)
     build.add_argument("--commit-log-file")
     build.add_argument("--diff-stat-file")
     build.add_argument("--release-context-file")
     build.add_argument("--existing-pr-file")
     build.add_argument("--churn-subjects-file")
-    build.add_argument("--repo-instructions-file")
     build.add_argument("--diff-scope", choices=DIFF_SCOPES, default="since_existing")
-    build.set_defaults(func=_cmd_build_input)
+    build.set_defaults(func=_cmd_build_prompt)
 
     fmt = sub.add_parser("format")
     fmt.set_defaults(func=_cmd_format)
