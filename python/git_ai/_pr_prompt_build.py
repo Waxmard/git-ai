@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Literal
-
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    __package__ = "git_ai"
 
 from ._git import (
     DEFAULT_RELEASE_CONTEXT,
