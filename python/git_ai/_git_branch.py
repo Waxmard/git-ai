@@ -4,33 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import re
-import subprocess
-from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 
-if TYPE_CHECKING:
-    from ._git import (
-        _DIFF_FILE_HEADER,
-        _git,
-        git_is_ancestor,
-        git_ref_exists,
-    )
-elif __package__ in (None, ""):
-    import importlib as _importlib
-
-    _git_mod = _importlib.import_module("_git")
-    _git = _git_mod._git
-    _DIFF_FILE_HEADER = _git_mod._DIFF_FILE_HEADER
-    git_is_ancestor = _git_mod.git_is_ancestor
-    git_ref_exists = _git_mod.git_ref_exists
-else:
-    from ._git import (
-        _DIFF_FILE_HEADER,
-        _git,
-        git_is_ancestor,
-        git_ref_exists,
-    )
+from ._git import (
+    _DIFF_FILE_HEADER,
+    _git,
+    _git_try,
+    git_is_ancestor,
+    git_ref_exists,
+)
 
 _BASE_CANDIDATE_NAMES = ("main", "master", "dev")
 
@@ -50,31 +32,23 @@ _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+")
 _PORCELAIN_SHA_RE = re.compile(r"^([0-9a-f]{40}) ")
 
 
-def _load_branch_cache_dir() -> Callable[..., Path]:
-    """Lazily import branch_cache_dir, avoiding a circular import at module load."""
-    if __package__ in (None, ""):
-        import importlib  # noqa: PLC0415
+def _git_hash_object(text: str) -> str:
+    blob = f"blob {len(text.encode())}\0{text}".encode()
+    return hashlib.sha1(blob, usedforsecurity=False).hexdigest()
 
-        return cast(
-            "Callable[..., Path]",
-            importlib.import_module("_pr_incremental").branch_cache_dir,
-        )
-    from ._pr_incremental import branch_cache_dir  # noqa: PLC0415
 
-    return branch_cache_dir
+def branch_cache_dir(git_dir: str | Path, branch_name: str, base_branch: str) -> Path:
+    key = _git_hash_object(f"{branch_name}\n{base_branch}\n")
+    return Path(git_dir) / "pr-cache" / key
 
 
 def get_default_branch(repo_path: str | Path) -> str | None:
     """Return the remote's default branch as a bare name (origin/HEAD), or None."""
-    result = subprocess.run(
-        ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
+    out = _git_try(
+        repo_path, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"
     )
-    if result.returncode == 0:
-        name = result.stdout.strip()
+    if out is not None:
+        name = out.strip()
         if name:
             return name.removeprefix("origin/")
     return None
@@ -104,24 +78,15 @@ def _count_range(
     repo_path: str | Path, rng: str, *, no_merges: bool = False
 ) -> int | None:
     """Count commits in a ``A..B`` range. None on git failure."""
-    result = subprocess.run(
-        ["git", "rev-list", "--count", *(["--no-merges"] if no_merges else []), rng],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
+    out = _git_try(
+        repo_path, "rev-list", "--count", *(["--no-merges"] if no_merges else []), rng
     )
-    if result.returncode != 0:
+    if out is None:
         return None
     try:
-        return int(result.stdout.strip())
+        return int(out.strip())
     except ValueError:
         return None
-
-
-def _commits_ahead(repo_path: str | Path, base_ref: str) -> int | None:
-    """Count commits on HEAD not reachable from base_ref. None on git failure."""
-    return _count_range(repo_path, f"{base_ref}..HEAD")
 
 
 def base_warnings(
@@ -191,7 +156,6 @@ def _base_name_from_pr_cache(
     """
     if not git_dir or not branch:
         return None
-    branch_cache_dir = _load_branch_cache_dir()
     best: tuple[float, str] | None = None
     for name in names:
         cache_dir = branch_cache_dir(git_dir, branch, name)
@@ -219,28 +183,22 @@ def _shorten_ref(refname: str) -> str | None:
 
 def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list[str]:
     """Local + origin branch short-refs, newest first, minus the current branch."""
-    result = subprocess.run(
-        [
-            "git",
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname)",
-            "refs/heads",
-            "refs/remotes/origin",
-        ],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
+    out = _git_try(
+        repo_path,
+        "for-each-ref",
+        "--sort=-committerdate",
+        "--format=%(refname)",
+        "refs/heads",
+        "refs/remotes/origin",
     )
-    if result.returncode != 0:
+    if out is None:
         return []
     exclude = {"origin"}
     if current_branch:
         exclude.add(current_branch)
         exclude.add(f"origin/{current_branch}")
     refs: list[str] = []
-    for line in result.stdout.splitlines():
+    for line in out.splitlines():
         ref = _shorten_ref(line.strip())
         if not ref or ref in exclude or ref.endswith("/HEAD"):
             continue
@@ -252,16 +210,10 @@ def _list_branch_refs(repo_path: str | Path, current_branch: str | None) -> list
 
 def _ahead_behind(repo_path: str | Path, ref: str) -> tuple[int, int] | None:
     """Return (ahead, behind): HEAD-only and ref-only commit counts. None on error."""
-    result = subprocess.run(
-        ["git", "rev-list", "--left-right", "--count", f"{ref}...HEAD"],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
+    out = _git_try(repo_path, "rev-list", "--left-right", "--count", f"{ref}...HEAD")
+    if out is None:
         return None
-    parts = result.stdout.split()
+    parts = out.split()
     if len(parts) != 2:
         return None
     try:
@@ -302,28 +254,22 @@ def _branch_ahead_behind(
     each. None when the token is unsupported, so the caller can fall back to
     per-ref probing. ``ahead``/``behind`` match :func:`_ahead_behind`.
     """
-    result = subprocess.run(
-        [
-            "git",
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname)\t%(ahead-behind:HEAD)",
-            "refs/heads",
-            "refs/remotes/origin",
-        ],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
+    out = _git_try(
+        repo_path,
+        "for-each-ref",
+        "--sort=-committerdate",
+        "--format=%(refname)\t%(ahead-behind:HEAD)",
+        "refs/heads",
+        "refs/remotes/origin",
     )
-    if result.returncode != 0:
+    if out is None:
         return None
     exclude = {"origin"}
     if current_branch:
         exclude.add(current_branch)
         exclude.add(f"origin/{current_branch}")
     rows: list[tuple[str, int, int]] = []
-    for line in result.stdout.splitlines():
+    for line in out.splitlines():
         refname, _, counts = line.partition("\t")
         ref = _shorten_ref(refname.strip())
         if not ref or ref in exclude or ref.endswith("/HEAD"):
@@ -345,14 +291,8 @@ def _branch_ahead_behind(
 
 def _forked_at(repo_path: str | Path, refname: str, fork_sha: str) -> bool:
     """Whether ``fork_sha`` is a merge-base of HEAD and ``refname``."""
-    result = subprocess.run(
-        ["git", "merge-base", "--all", "HEAD", refname],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0 and fork_sha in result.stdout.split()
+    out = _git_try(repo_path, "merge-base", "--all", "HEAD", refname)
+    return out is not None and fork_sha in out.split()
 
 
 def _nearest_fork_parent(
@@ -385,45 +325,29 @@ def _nearest_fork_parent(
         f"refs/remotes/{ref}" if ref.startswith("origin/") else f"refs/heads/{ref}"
         for ref in candidates
     ]
-    count = subprocess.run(
-        ["git", "rev-list", "--first-parent", "--count", "HEAD", "--not", *full_refs],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
+    count = _git_try(
+        repo_path, "rev-list", "--first-parent", "--count", "HEAD", "--not", *full_refs
     )
-    if count.returncode != 0 or not count.stdout.strip().isdigit():
+    if count is None or not count.strip().isdigit():
         return None
-    fork = f"HEAD~{int(count.stdout)}"
-    contains = subprocess.run(
-        [
-            "git",
-            "for-each-ref",
-            f"--contains={fork}",
-            "--format=%(refname)",
-            "refs/heads",
-            "refs/remotes/origin",
-        ],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
+    fork = f"HEAD~{int(count)}"
+    contains = _git_try(
+        repo_path,
+        "for-each-ref",
+        f"--contains={fork}",
+        "--format=%(refname)",
+        "refs/heads",
+        "refs/remotes/origin",
     )
-    if contains.returncode != 0:
+    if contains is None:
         return None
-    rev = subprocess.run(
-        ["git", "rev-parse", "--verify", fork],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if rev.returncode != 0:
+    rev = _git_try(repo_path, "rev-parse", "--verify", fork)
+    if rev is None:
         return None
-    fork_sha = rev.stdout.strip()
+    fork_sha = rev.strip()
     containing = [
         (ref, refname)
-        for line in contains.stdout.splitlines()
+        for line in contains.splitlines()
         if (ref := _shorten_ref(refname := line.strip())) in candidates
     ]
     forked = [
@@ -469,7 +393,7 @@ def resolve_commit_base(
     cached = _base_name_from_pr_cache(git_dir, branch, _candidate_base_names(repo_path))
     if cached:
         ref = _best_base_ref(repo_path, cached)
-        if ref and (_commits_ahead(repo_path, ref) or 0) > 0:
+        if ref and (_count_range(repo_path, f"{ref}..HEAD") or 0) > 0:
             return ref
 
     return _nearest_fork_parent(repo_path, branch)
@@ -520,34 +444,29 @@ def branch_content_id(
     count = _count_range(repo_path, f"{base_ref}..HEAD", no_merges=True)
     if not count or count > max_commits:
         return None
-    diff = subprocess.run(
-        ["git", "diff", "--no-color", "--no-ext-diff", "-U3", f"{base_ref}...HEAD"],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
+    diff = _git_try(
+        repo_path,
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "-U3",
+        f"{base_ref}...HEAD",
         errors="surrogateescape",
-        check=False,
     )
-    if diff.returncode != 0:
+    if diff is None:
         return None
-    messages = subprocess.run(
-        [
-            "git",
-            "log",
-            "--no-merges",
-            "--no-color",
-            "--format=%B%x00",
-            f"{base_ref}..HEAD",
-        ],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
+    messages = _git_try(
+        repo_path,
+        "log",
+        "--no-merges",
+        "--no-color",
+        "--format=%B%x00",
+        f"{base_ref}..HEAD",
         errors="surrogateescape",
-        check=False,
     )
-    if messages.returncode != 0:
+    if messages is None:
         return None
-    payload = _normalize_diff_position(diff.stdout) + "\0" + messages.stdout
+    payload = _normalize_diff_position(diff) + "\0" + messages
     # surrogateescape both ways: git calls any NUL-free file text, so a latin-1
     # source file puts undecodable bytes in the diff. Round-tripping them keeps
     # the fingerprint lossless where a replacement char would collide.
@@ -602,18 +521,13 @@ def _blame_introducers(
     """Return the SHAs that introduced lines ``start..start+count-1`` of ``file``
     at ``rev``. Returns None when blame fails (e.g. file absent at ``rev``)."""
     end = start + count - 1
-    result = subprocess.run(
-        ["git", "blame", "--porcelain", "-l", f"-L{start},{end}", rev, "--", file],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        errors="replace",
-        check=False,
+    out = _git_try(
+        repo_path, "blame", "--porcelain", "-l", f"-L{start},{end}", rev, "--", file
     )
-    if result.returncode != 0:
+    if out is None:
         return None
     shas: set[str] = set()
-    for line in result.stdout.splitlines():
+    for line in out.splitlines():
         match = _PORCELAIN_SHA_RE.match(line)
         if match:
             shas.add(match.group(1))

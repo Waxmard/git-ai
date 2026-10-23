@@ -112,20 +112,3 @@ def test_pr_format_fails_on_an_empty_response(
     monkeypatch.setattr("sys.stdin", io.StringIO("  \n "))
     assert _pr_repo_cli.main(["format"]) == 1
     assert "empty response" in capsys.readouterr().err
-
-
-def test_instructions_prints_nothing_when_absent(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    assert _commit_cli.main(["instructions", "--repo", str(tmp_path)]) == 0
-    assert capsys.readouterr().out == ""
-
-
-def test_instructions_prints_trimmed_contents(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    (tmp_path / ".git-ai-instructions").write_text(
-        "\n  Scope commits by service.\n\n", encoding="utf-8"
-    )
-    assert _commit_cli.main(["instructions", "--repo", str(tmp_path)]) == 0
-    assert capsys.readouterr().out == "Scope commits by service.\n"

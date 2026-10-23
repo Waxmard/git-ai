@@ -2,38 +2,21 @@
 
 from __future__ import annotations
 
-import importlib
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
-if TYPE_CHECKING:
-    from ._git import (
-        DEFAULT_RELEASE_CONTEXT,
-        count_conventional_commits,
-        derive_diff_stat,
-    )
-    from ._instructions import format_repo_guidance
-    from ._pr_draft import draft_body
-elif __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    _git = importlib.import_module("_git")
-    _instructions = importlib.import_module("_instructions")
-    _pr_draft = importlib.import_module("_pr_draft")
-    DEFAULT_RELEASE_CONTEXT = _git.DEFAULT_RELEASE_CONTEXT
-    count_conventional_commits = _git.count_conventional_commits
-    derive_diff_stat = _git.derive_diff_stat
-    format_repo_guidance = _instructions.format_repo_guidance
-    draft_body = _pr_draft.draft_body
-else:
-    from ._git import (
-        DEFAULT_RELEASE_CONTEXT,
-        count_conventional_commits,
-        derive_diff_stat,
-    )
-    from ._instructions import format_repo_guidance
-    from ._pr_draft import draft_body
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    __package__ = "git_ai"
 
+from ._git import (
+    DEFAULT_RELEASE_CONTEXT,
+    count_conventional_commits,
+    derive_diff_stat,
+)
+from ._instructions import format_repo_guidance
+from ._pr_draft import draft_body
 
 DiffScope = Literal["branch", "since_existing"]
 DIFF_SCOPES: tuple[DiffScope, ...] = ("branch", "since_existing")

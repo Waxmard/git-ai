@@ -2,78 +2,32 @@
 
 from __future__ import annotations
 
-import hashlib
-import importlib
-import json
 import shutil
 import subprocess
-import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-# TYPE_CHECKING is for mypy only; the elif (standalone) and else (package)
-# branches below are what actually import at runtime.
-if TYPE_CHECKING:
-    from ._git import (
-        check_git_repo,
-        get_commit_log,
-        get_current_branch,
-        get_diff_context,
-        get_git_dir,
-        get_head_sha,
-        get_mr_release_context,
-        git_is_ancestor,
-        git_merge_base,
-        git_ref_exists,
-    )
-    from ._git_branch import (
-        _best_base_ref,
-        base_warnings,
-        branch_content_id,
-        get_branch_churn_subjects,
-    )
-    from ._pr_prompt_build import DiffScope
-elif __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    _git = importlib.import_module("_git")
-    _git_branch = importlib.import_module("_git_branch")
-    check_git_repo = _git.check_git_repo
-    _best_base_ref = _git_branch._best_base_ref
-    base_warnings = _git_branch.base_warnings
-    branch_content_id = _git_branch.branch_content_id
-    get_branch_churn_subjects = _git_branch.get_branch_churn_subjects
-    get_commit_log = _git.get_commit_log
-    get_current_branch = _git.get_current_branch
-    get_diff_context = _git.get_diff_context
-    get_git_dir = _git.get_git_dir
-    get_head_sha = _git.get_head_sha
-    get_mr_release_context = _git.get_mr_release_context
-    git_is_ancestor = _git.git_is_ancestor
-    git_merge_base = _git.git_merge_base
-    git_ref_exists = _git.git_ref_exists
-    DiffScope = importlib.import_module("_pr_prompt_build").DiffScope
-else:
-    from ._git import (
-        check_git_repo,
-        get_commit_log,
-        get_current_branch,
-        get_diff_context,
-        get_git_dir,
-        get_head_sha,
-        get_mr_release_context,
-        git_is_ancestor,
-        git_merge_base,
-        git_ref_exists,
-    )
-    from ._git_branch import (
-        _best_base_ref,
-        base_warnings,
-        branch_content_id,
-        get_branch_churn_subjects,
-    )
-    from ._pr_prompt_build import DiffScope
+from ._git import (
+    check_git_repo,
+    get_commit_log,
+    get_current_branch,
+    get_diff_context,
+    get_git_dir,
+    get_head_sha,
+    get_mr_release_context,
+    git_is_ancestor,
+    git_merge_base,
+    git_ref_exists,
+)
+from ._git_branch import (
+    _best_base_ref,
+    base_warnings,
+    branch_cache_dir,
+    branch_content_id,
+    get_branch_churn_subjects,
+)
+from ._pr_prompt_build import DiffScope
 
 # DiffScope is imported at runtime, not just under TYPE_CHECKING: RepoPrContext
 # is public, and `typing.get_type_hints` on it — what a serialization layer
@@ -106,23 +60,11 @@ class RepoPrContext:
     # commits since the cached HEAD the existing PR text describes.
     diff_scope: DiffScope = "since_existing"
 
-    def to_json(self) -> str:
-        return json.dumps(asdict(self), ensure_ascii=True)
-
-
-def branch_cache_dir(git_dir: str | Path, branch_name: str, base_branch: str) -> Path:
-    key = _git_hash_object(f"{branch_name}\n{base_branch}\n")
-    return Path(git_dir) / "pr-cache" / key
-
-
-def branch_cache_path(git_dir: str | Path, branch_name: str, base_branch: str) -> Path:
-    return branch_cache_dir(git_dir, branch_name, base_branch) / "last-output"
-
 
 def load_cached_pr(
     git_dir: str | Path, branch_name: str, base_branch: str
 ) -> str | None:
-    path = branch_cache_path(git_dir, branch_name, base_branch)
+    path = branch_cache_dir(git_dir, branch_name, base_branch) / "last-output"
     if not path.is_file():
         return None
     return path.read_text(encoding="utf-8").rstrip("\n")
@@ -163,9 +105,7 @@ def save_cached_pr(
     """
     cache_dir = branch_cache_dir(git_dir, branch_name, base_branch)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    branch_cache_path(git_dir, branch_name, base_branch).write_text(
-        f"{output}\n", encoding="utf-8"
-    )
+    (cache_dir / "last-output").write_text(f"{output}\n", encoding="utf-8")
     # The cache key is a hash, so the branch is unrecoverable without this.
     (cache_dir / "branch-name").write_text(f"{branch_name}\n", encoding="utf-8")
     if head_sha:
@@ -453,9 +393,3 @@ def prepare_repo_pr_context(
         churn_subjects=churn_subjects,
         warnings=warnings,
     )
-
-
-def _git_hash_object(text: str) -> str:
-    data = text.encode("utf-8")
-    blob = b"blob %d\0" % len(data) + data
-    return hashlib.sha1(blob, usedforsecurity=False).hexdigest()
