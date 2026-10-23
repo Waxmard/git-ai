@@ -216,6 +216,7 @@ _setup_pin_new_projects() {
   shift 2
   first="$1"
   shift
+  [[ $# -gt 0 ]] && printf 'Choosing models once for %d projects: %s\n' "$(($# + 1))" "$(_join_comma "$first" "$@")"
   [[ -n "$seed" ]] && printf 'Starting from the models pinned on your other projects.\n'
   _setup_change_models "$conf" "vertex@${first}" "$seed"
   [[ $# -gt 0 ]] || return 0
@@ -265,7 +266,7 @@ _setup_change_vertex_projects() {
   local -a picked=()
   local selected want_custom="" line pseen=$'\n' st
   selected=$(_setup_multiselect 'vertex projects> ' \
-    'Current projects start marked — Tab to add/drop; Enter saves the marked set; Esc keeps current' \
+    'Current projects start marked — Tab/Space to add/drop (new ones share one model pick); Enter saves the marked set; Esc keeps current' \
     '— keep current list —' "$rows" "$preselect")
   st=$?
   if [[ $st -ne 0 ]]; then
@@ -454,7 +455,7 @@ _setup_change_models() {
   local -a picked=()
   local selected want_custom="" line pseen=$'\n' st
   selected=$(_setup_multiselect "models for $(provider_display_name "$provider")> " \
-    "${header} — Tab to add/drop; Enter saves the marked set; Esc keeps current" \
+    "${header} — Tab/Space to add/drop; Enter saves the marked set; Esc keeps current" \
     '— none: unpin every model —' "$rows" "$preselect")
   st=$?
   if [[ $st -ne 0 ]]; then

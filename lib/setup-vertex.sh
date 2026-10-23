@@ -201,7 +201,7 @@ _setup_pick_projects() {
   if [[ -n "$rows" ]]; then
     rows+=$'\n'"$SETUP_CUSTOM_PROJECT_ROW"
     selected=$(_setup_multiselect 'vertex projects> ' \
-      'Tab marks GCP project(s); Enter confirms; Esc keeps current' \
+      'Tab/Space marks several projects (one model pick covers them all); Enter confirms; Esc keeps current' \
       '— skip / keep current —' "$rows")
     st=$?
     [[ $st -eq 0 ]] || return 0

@@ -1186,6 +1186,30 @@ EOF
   refute_line "projects = old-proj"
 }
 
+@test "_setup_pin_new_projects: names every project in the batch" {
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_change_models() { :; }
+    _setup_existing_models() { :; }
+    _setup_write_vertex_models() { :; }
+    _setup_pin_new_projects "'"$CONF"'" "" p1 p2 p3
+  '
+  assert_success
+  assert_output --partial "Choosing models once for 3 projects: p1, p2, p3"
+}
+
+@test "_setup_pin_new_projects: a single project prints no batch line" {
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_change_models() { :; }
+    _setup_pin_new_projects "'"$CONF"'" "" p1
+  '
+  assert_success
+  refute_output --partial "Choosing models once"
+}
+
 # --- GCP project discovery / picking ---
 
 @test "_setup_gcloud_projects: sweeps every gcloud login, active account first" {

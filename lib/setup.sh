@@ -267,7 +267,7 @@ _setup_pick_models() {
     local rows selected want_custom=""
     rows=$(_setup_model_rows "$provider" "$listed")
     selected=$(_setup_multiselect "models for $(provider_display_name "$provider")> " \
-      'Recommended start marked — Tab to add/drop; Enter confirms; Esc picks none' \
+      'Recommended start marked — Tab/Space to add/drop; Enter confirms; Esc picks none' \
       '— no model (pick one at commit time) —' "$rows" "$SETUP_PRESELECT_RECOMMENDED")
     st=$?
     # Cancel and a confirmed-empty pick collapse here: nothing is configured yet,
@@ -324,7 +324,7 @@ _setup_multiselect() {
   selected=$(printf '—|%s\n%s' "$skip_label" "$rows" \
     | env -u FZF_DEFAULT_OPTS -u FZF_DEFAULT_OPTS_FILE fzf --multi \
       --delimiter='|' --with-nth=2 "${SETUP_FZF_OPTS[@]}" \
-      --header="$header" --prompt="$prompt" \
+      --header="$header" --prompt="$prompt" --bind='space:toggle+down' \
       ${preselect_opts[@]+"${preselect_opts[@]}"})
   st=$?
   [[ $st -eq 0 ]] || return 2
