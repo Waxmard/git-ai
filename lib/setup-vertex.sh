@@ -30,7 +30,7 @@ _setup_detect_vertex_project() {
     [[ $probed -ge 10 ]] && break
     probed=$((probed + 1))
     _setup_vertex_api_enabled "$p" && enabled+=("$p")
-  done < <(gcloud projects list --format="value(projectId)" 2>/dev/null)
+  done < <(gcloud projects list --format="value(projectId)" --billing-project= 2>/dev/null)
 
   if [[ ${#enabled[@]} -gt 0 ]]; then
     printf '%s\n' "${enabled[0]}"
@@ -43,7 +43,7 @@ _setup_detect_vertex_project() {
 _setup_vertex_api_enabled() {
   gcloud services list --enabled --project="$1" \
     --filter="config.name=aiplatform.googleapis.com" \
-    --format="value(config.name)" 2>/dev/null | grep -q aiplatform
+    --format="value(config.name)" --billing-project= 2>/dev/null | grep -q aiplatform
 }
 
 # Name the logins whose project listing failed. An expired, revoked, or
@@ -53,7 +53,7 @@ _setup_vertex_api_enabled() {
 _setup_warn_gcloud_failures() {
   [[ $# -gt 0 ]] || return 0
   printf 'gcloud could not list projects for: %s\n' "$(_join_comma "$@")" >&2
-  printf '  Re-auth with: gcloud auth login --account=<account>\n' >&2
+  printf '  See why: gcloud projects list --account=<account>\n' >&2
   printf '  (You can still type a project id via the custom row.)\n' >&2
 }
 
@@ -72,7 +72,7 @@ _setup_gcloud_projects() {
     [[ $probed -ge 5 ]] && break
     probed=$((probed + 1))
     any=1
-    if ! listed=$(gcloud projects list --account="$a" --format="value(projectId)" 2>/dev/null); then
+    if ! listed=$(gcloud projects list --account="$a" --format="value(projectId)" --billing-project= 2>/dev/null); then
       failed+=("$a")
       continue
     fi
@@ -93,7 +93,7 @@ _setup_gcloud_projects() {
   # default credential can see, with no account to tag it with.
   while IFS= read -r p; do
     [[ -n "$p" ]] && printf '%s\t\n' "$p"
-  done < <(gcloud projects list --format="value(projectId)" 2>/dev/null)
+  done < <(gcloud projects list --format="value(projectId)" --billing-project= 2>/dev/null)
 }
 
 # Picker rows ("value|label") for discoverable GCP projects, skipping any id in
@@ -105,7 +105,7 @@ _setup_project_rows() {
   local seen="${1:-$'\n'}" sweep="${2:-}"
   local -a pairs=()
   local line p a accounts=$'\n' n=0
-  [[ -n "$sweep" ]] || sweep=$(_setup_gcloud_projects)
+  [[ $# -ge 2 ]] || sweep=$(_setup_gcloud_projects)
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     pairs+=("$line")
@@ -195,7 +195,7 @@ _setup_offer_account_pin() {
 # always exist.
 _setup_pick_projects() {
   local sweep="${1:-}" line p rows selected want_custom="" st
-  [[ -n "$sweep" ]] || sweep=$(_setup_gcloud_projects)
+  [[ $# -ge 1 ]] || sweep=$(_setup_gcloud_projects)
   rows=$(_setup_project_rows $'\n' "$sweep")
 
   if [[ -n "$rows" ]]; then

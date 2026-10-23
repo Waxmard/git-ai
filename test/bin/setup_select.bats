@@ -967,6 +967,34 @@ EOF
   assert_output --partial "FRESH $CONF"
 }
 
+@test "_setup_action_remove: declining keeps the provider" {
+  printf '[vertex-gemini]\ngemini-3.6-flash\n\n[vertex]\nprojects = p1\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_warm_ready() { :; }
+    printf "1\nn\n" | GIT_AI_NO_FZF=1 _setup_action_remove "'"$CONF"'"
+  '
+  assert_success
+  assert_output --partial "Kept Vertex AI."
+  run cat "$CONF"
+  assert_line "[vertex-gemini]"
+}
+
+@test "_setup_action_remove: confirming removes the provider" {
+  printf '[vertex-gemini]\ngemini-3.6-flash\n\n[vertex]\nprojects = p1\n' >"$CONF"
+  run bash -c '
+    source "'"${REPO_ROOT}"'/lib/ai-common.sh"
+    source "'"${REPO_ROOT}"'/bin/git-ai"
+    _setup_warm_ready() { :; }
+    printf "1\ny\n" | GIT_AI_NO_FZF=1 _setup_action_remove "'"$CONF"'"
+  '
+  assert_success
+  assert_output --partial "Removed Vertex AI."
+  run cat "$CONF"
+  refute_output --partial "[vertex-gemini]"
+}
+
 @test "_setup_print_summary: both vertex sections render as one Vertex AI row" {
   cat >"$CONF" <<'EOF'
 [vertex-anthropic]

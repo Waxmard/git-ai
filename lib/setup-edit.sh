@@ -330,11 +330,17 @@ _setup_change_vertex_projects() {
 # wizard's `vertex` entry drops every per-project section, both base sections,
 # and the shared [vertex] settings block — nothing vertex-related is left behind.
 _setup_action_remove() {
-  local conf="$1" p
+  local conf="$1" p ans name
   local -a secs=()
   while IFS= read -r p; do secs+=("$p"); done < <(_setup_conf_wizard_providers "$conf")
   local provider
   provider=$(_setup_choose_provider 'Remove which provider? ' "${secs[@]}") || { printf 'Cancelled.\n'; return 0; }
+  name=$(provider_display_name "$provider")
+  _setup_read ans "Remove ${name} and its model pins? [y/N]: " || ans=""
+  case "$ans" in
+    y | Y | yes | Yes) ;;
+    *) printf 'Kept %s.\n' "$name"; return 0 ;;
+  esac
   if [[ "$provider" == vertex ]]; then
     while IFS= read -r p; do
       _setup_vertex_drop_project "$conf" "$p"
@@ -345,7 +351,7 @@ _setup_action_remove() {
   else
     _conf_apply "$conf" conf_remove_section "$provider"
   fi &&
-    printf 'Removed %s.\n' "$(provider_display_name "$provider")"
+    printf 'Removed %s.\n' "$name"
 }
 
 # Set the directories where one configured provider section is blocked
