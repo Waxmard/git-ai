@@ -261,7 +261,7 @@ _fetch_models_vertex() {
   account=$(vertex_resolve "$provider" account)
   region=$(vertex_resolve "$provider" region)
   region="${region:-us-central1}"
-  token=$(_vertex_access_token "$account") && [[ -n "$token" ]] || return 1
+  token=$(_vertex_access_token "$account" 2>/dev/null) && [[ -n "$token" ]] || return 1
 
   # Quota project for the aiplatform API: the provider's own project, else the
   # gcloud default, else the first shared [vertex] projects entry. Any project

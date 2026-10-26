@@ -117,3 +117,18 @@ EOF
   assert_output "gemini ok"
   assert_equal "$(cat "$GCLOUD_LOG")" "auth print-access-token --account=me@acme.com"
 }
+
+@test "Vertex API calls surface gcloud's reauth error and the login command" {
+  cat >"${STUB_BIN}/gcloud" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GCLOUD_LOG"
+echo "ERROR: Reauthentication failed. cannot prompt during non-interactive execution." >&2
+exit 1
+EOF
+  chmod +x "${STUB_BIN}/gcloud"
+
+  PATH="${STUB_BIN}:$PATH" run _run_vertex_api gemini "gemini-test" "prompt" "input" "proj" "global" "me@acme.com"
+  assert_failure
+  assert_output --partial "Reauthentication failed"
+  assert_output --partial "gcloud auth login me@acme.com"
+}
