@@ -207,7 +207,7 @@ _vertex_has_auth() {
 # that specific gcloud-authed user account, enabling multi-account setups.
 # gcloud's stderr passes through; probing callers silence it.
 _vertex_access_token() {
-  command -v gcloud >/dev/null 2>&1 || return 1
+  command -v gcloud >/dev/null 2>&1 || { printf 'gcloud not installed — see https://cloud.google.com/sdk\n' >&2; return 1; }
   local account="${1:-}"
   if [[ -n "$account" ]]; then
     gcloud auth print-access-token --account="$account"
