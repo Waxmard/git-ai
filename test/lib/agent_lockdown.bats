@@ -8,7 +8,7 @@ setup() {
   source "${REPO_ROOT}/lib/ai-common.sh"
   export XDG_CONFIG_HOME="$(mktemp -d)"
   mkdir -p "${XDG_CONFIG_HOME}/git-ai"
-  STUB="$(mktemp -d)"
+  export STUB="$(mktemp -d)"
   export LOG="${STUB}/log"
   PATH="${STUB}:$PATH"
   for cli in claude codex agy; do
@@ -16,6 +16,7 @@ setup() {
 #!/bin/sh
 pwd -P >"$LOG"
 printf '[%s]' "$@" >>"$LOG"
+[ "${0##*/}" = agy ] && cat >"${STUB}/stdin"
 prev=
 for arg in "$@"; do
   [ "$prev" = --output-last-message ] && printf ok >"$arg"
@@ -65,4 +66,6 @@ assert_ran_outside_repo() {
   assert_output --partial ok
   assert_ran_outside_repo
   grep -qF '[--sandbox]' "$LOG"
+  ! grep -qF '[-p]' "$LOG"
+  assert_equal "$(<"${STUB}/stdin")" $'p\n\ni'
 }
