@@ -174,33 +174,6 @@ _run_gemini_api() {
   _extract_gemini_text <<<"$response" || die "Failed to parse Gemini API response"
 }
 
-# Linux caps a SINGLE argv string at MAX_ARG_STRLEN (32 pages = 131072 bytes),
-# separately from ARG_MAX, and execve fails with E2BIG above it — a branch diff
-# well inside git-ai's own GIT_AI_MAX_DIFF_BYTES ceiling can exceed that. macOS
-# has no per-argument cap, but the threshold is uniform so behaviour doesn't
-# differ by platform.
-AGY_MAX_INLINE_PROMPT="${AGY_MAX_INLINE_PROMPT:-120000}"
-
-# _agy_prompt_arg PROMPT INPUT
-# Print the value for agy's -p flag. Past the argv limit the payload is staged
-# in a temp file and printed as `@path`, which agy expands client-side (still
-# one turn — not a tool call the model has to make). An `@` answer is therefore
-# the caller's signal that it owns a temp file to remove.
-_agy_prompt_arg() {
-  local payload bytes staged
-  payload=$(printf '%s\n\n%s' "$1" "$2")
-  # ${#payload} counts characters; execve counts bytes, and a multi-byte diff
-  # would slip past a character-based check.
-  bytes=$(printf '%s' "$payload" | LC_ALL=C wc -c)
-  if ((bytes <= AGY_MAX_INLINE_PROMPT)); then
-    printf '%s' "$payload"
-    return 0
-  fi
-  staged=$(mktemp "${TMPDIR:-/tmp}/git-ai-agy-prompt.XXXXXX") || return 1
-  printf '%s' "$payload" >"$staged" || return 1
-  printf '@%s' "$staged"
-}
-
 # _run_in_empty_dir CMD [ARG...]
 # Run CMD from a fresh empty temp dir (removed afterwards) so an agent CLI
 # never sees the repo it is summarizing; returns CMD's status.
@@ -414,24 +387,20 @@ run_provider() {
     antigravity)
       command -v agy >/dev/null 2>&1 ||
         die "Antigravity auth requires the Antigravity CLI. See: https://antigravity.google"
-      local agy_err_file agy_status agy_error agy_arg agy_prompt_file=""
+      local agy_err_file agy_status agy_error
       agy_err_file=$(mktemp "${TMPDIR:-/tmp}/git-ai-agy.XXXXXX") ||
         die "failed to create temporary error file"
-      # agy ignores stdin, so prompt and input both ride on -p.
-      agy_arg=$(_agy_prompt_arg "$prompt" "$input") || die "failed to stage the Antigravity prompt"
-      # An @-prefixed arg means the payload was staged past the argv limit, and
-      # that file is ours to clean up.
-      [[ "$agy_arg" == @* ]] && agy_prompt_file="${agy_arg#@}"
       # shellcheck disable=SC2016
-      _rm_on_exit 'rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}'
+      _rm_on_exit 'rm -f "$agy_err_file"'
       # --disable-slash-commands stops a diff line opening with `/` from being
       # expanded as a slash command.
-      output=$(_run_in_empty_dir agy -p "$agy_arg" \
-        --model "$model" --output-format text --disable-slash-commands \
-        --sandbox 2>"$agy_err_file")
+      output=$(printf '%s\n\n%s' "$prompt" "$input" |
+        _run_in_empty_dir agy \
+          --model "$model" --output-format text --disable-slash-commands \
+          --sandbox 2>"$agy_err_file")
       agy_status=$?
       agy_error=$(<"$agy_err_file")
-      rm -f "$agy_err_file" ${agy_prompt_file:+"$agy_prompt_file"}
+      rm -f "$agy_err_file"
       if [[ $agy_status -ne 0 ]]; then
         [[ -n "$agy_error" ]] && die "Antigravity generation failed: $agy_error"
         die "Antigravity generation failed"
