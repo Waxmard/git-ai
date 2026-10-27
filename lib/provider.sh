@@ -262,8 +262,11 @@ _run_vertex_api() {
     gemini) shape=gemini publisher=google method=generateContent extract=_extract_gemini_text label="Vertex Gemini" ;;
     *) die "unknown Vertex kind: $kind" ;;
   esac
-  token=$(_vertex_access_token "$account") ||
-    die "Vertex auth: gcloud print-access-token failed."
+  if ! token=$(_vertex_access_token "$account"); then
+    [[ -n "$account" ]] &&
+      die "Vertex auth failed for account ${account} (gcloud error above). Run: gcloud auth login ${account} — or remove account= from options.conf to use ADC."
+    die "Vertex ADC auth failed (gcloud error above). Run: gcloud auth application-default login, or set account=/credentials= in options.conf."
+  fi
   body_file=$(printf '%s' "$input" | _stage_request_body "$shape" "$prompt") ||
     die "Failed to build ${label} request"
   url=$(_vertex_endpoint "$project" "$region" "$publisher" "$model" "$method")
@@ -389,8 +392,6 @@ run_provider() {
         export GOOGLE_APPLICATION_CREDENTIALS="$vertex_creds"
       fi
 
-      _vertex_has_auth "$vertex_account" ||
-        die "Vertex auth not found. Configure gcloud ADC, set account=/credentials= under [$provider] in options.conf, or GOOGLE_APPLICATION_CREDENTIALS."
       [[ -n "$vertex_project" ]] ||
         die "Vertex auth requires a project (set project= under [$provider] in options.conf, or GOOGLE_CLOUD_PROJECT/GOOGLE_VERTEX_PROJECT)."
 

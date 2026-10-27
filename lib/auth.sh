@@ -198,20 +198,21 @@ provider_ready() {
 # no ACCOUNT this is ADC-only; with an ACCOUNT it validates the per-account
 # user credential instead.
 _vertex_has_auth() {
-  [[ -n "$(_vertex_access_token "${1:-}")" ]]
+  [[ -n "$(_vertex_access_token "${1:-}" 2>/dev/null)" ]]
 }
 
 # _vertex_access_token [ACCOUNT]
 # With no ACCOUNT, mint an Application Default Credentials token (honours
 # GOOGLE_APPLICATION_CREDENTIALS when exported). With ACCOUNT, mint a token for
 # that specific gcloud-authed user account, enabling multi-account setups.
+# gcloud's stderr passes through; probing callers silence it.
 _vertex_access_token() {
-  command -v gcloud >/dev/null 2>&1 || return 1
+  command -v gcloud >/dev/null 2>&1 || { printf 'gcloud not installed — see https://cloud.google.com/sdk\n' >&2; return 1; }
   local account="${1:-}"
   if [[ -n "$account" ]]; then
-    gcloud auth print-access-token --account="$account" 2>/dev/null
+    gcloud auth print-access-token --account="$account"
   else
-    gcloud auth application-default print-access-token 2>/dev/null
+    gcloud auth application-default print-access-token
   fi
 }
 
