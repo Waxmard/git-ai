@@ -37,4 +37,7 @@ jobs:
 
       - name: Back-sync dev
         if: steps.release.outputs.release_created == 'true'
-        run: git push origin HEAD:dev || echo "::warning::dev moved ahead during release; merge main into dev manually"
+        run: |
+          git checkout -B dev origin/dev
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" rebase origin/main
+          git push --force-with-lease origin dev
