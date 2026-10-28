@@ -20,7 +20,7 @@ The Bash CLI reaches this package through `_commit_cli.py` (`build-prompt`, `for
 
 ## Prompts and response parsing
 
-Runtime prompts live in `git_ai/prompts/*.txt` and are loaded here via `importlib.resources` (the shell `cat`s them from `GIT_AI_PKG_DIR`, choosing the name from a whitelist). The six `pr-*.txt` files are generated from `prompts/src/` — edit the templates, then `make prompts-build`. `commit.txt` is hand-written.
+Runtime prompts live in `git_ai/prompts/*.txt` and are loaded in `_generate.py` from `_PROMPTS_DIR`. The six `pr-*.txt` files are generated from `prompts/src/` — edit the templates, then `make prompts-build`. `commit.txt` is hand-written.
 
 Every PR prompt receives `<diff>`, including the conventional-commit two-pass path. The draft supplements the patch; commit messages and file stats alone cannot reveal incompatible interface changes. Breaking changes receive `(breaking)` beside the affected change and an automatic `!` on the selected title type. Incremental updates preserve breaking annotations for earlier work outside the supplied diff.
 
