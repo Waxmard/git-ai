@@ -1,5 +1,25 @@
 # Changelog
 
+## [6.13.0](https://github.com/Waxmard/git-ai/compare/v6.12.0...v6.13.0) (2026-10-28)
+
+
+### Features
+
+* allow Space to toggle items in setup menus ([#156](https://github.com/Waxmard/git-ai/issues/156)) ([f664625](https://github.com/Waxmard/git-ai/commit/f664625c651047612115d31e9008dea3876d3af2))
+
+
+### Bug Fixes
+
+* drop post-response babble and trailing continuation dumps ([#155](https://github.com/Waxmard/git-ai/issues/155)) ([945d23b](https://github.com/Waxmard/git-ai/commit/945d23bbd0ed91e813042b38daef78f518f2f736))
+* offer account pin when Vertex Anthropic inherits wrong account ([d8d3f00](https://github.com/Waxmard/git-ai/commit/d8d3f00639789b48f14726e7c2c64726858640a3))
+* pipe Antigravity prompt over stdin instead of -p ([#160](https://github.com/Waxmard/git-ai/issues/160)) ([8db11c2](https://github.com/Waxmard/git-ai/commit/8db11c2a436d630b04669769ae0b88c139d29dc3))
+* show gcloud errors and login hints on Vertex auth failures ([#158](https://github.com/Waxmard/git-ai/issues/158)) ([c313dd8](https://github.com/Waxmard/git-ai/commit/c313dd8bbb77c616538c1c14e532085b080cac05))
+
+
+### Continuous Integration
+
+* rebase dev onto main during release back-sync ([b47dcc6](https://github.com/Waxmard/git-ai/commit/b47dcc6cb6bdc5f88cfa0266c5fc2fe5ada9609b))
+
 ## [6.12.0](https://github.com/Waxmard/git-ai/compare/v6.11.0...v6.12.0) (2026-10-16)
 
 
