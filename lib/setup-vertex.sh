@@ -163,6 +163,10 @@ _setup_offer_account_pin() {
     [[ -n "$a" ]] || continue
     cur=$(vertex_resolve "vertex-gemini@${p}" account)
     cur="${cur:-$active}"
+    if [[ "$cur" == "$a" ]]; then
+      cur=$(vertex_resolve "vertex-anthropic@${p}" account)
+      cur="${cur:-$active}"
+    fi
     [[ "$cur" != "$a" ]] || continue
     printf '\n%s is visible to %s, but Vertex AI would use %s.\n' "$p" "$a" "${cur:-default ADC}"
     _setup_read ans "  Pin account = ${a} for ${p}? [Y/n]: " || ans=""

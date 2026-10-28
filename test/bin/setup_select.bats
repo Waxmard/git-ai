@@ -1341,20 +1341,20 @@ SH
 }
 
 @test "_setup_offer_account_pin: offers a per-project pin when the inherited account is wrong" {
-  printf '[vertex]\naccount = pinned@x.com\n\n[vertex-gemini@proj-b]\n\n[vertex-anthropic@proj-b]\n' >"$CONF"
+  printf '[vertex-anthropic]\naccount = pinned@x.com\n\n[vertex-gemini@proj-a]\n\n[vertex-anthropic@proj-a]\n' >"$CONF"
   local stub; stub="$(mktemp -d)"
   _account_stub "$stub"
   run bash -c '
     export PATH="'"${stub}"':$PATH"
     source "'"${REPO_ROOT}"'/lib/ai-common.sh"
     source "'"${REPO_ROOT}"'/bin/git-ai"
-    printf "\n" | _setup_offer_account_pin "'"$CONF"'" "proj-b'$'\t''b@y.com" proj-b
+    printf "\n" | _setup_offer_account_pin "'"$CONF"'" "proj-a'$'\t''a@x.com" proj-a
   '
   rm -rf "$stub"
   assert_success
   assert_output --partial "Vertex AI would use pinned@x.com"
   assert_equal "$(grep -c '^account = pinned@x.com$' "$CONF")" 1
-  assert_equal "$(grep -c '^account = b@y.com$' "$CONF")" 2
+  assert_equal "$(grep -c '^account = a@x.com$' "$CONF")" 2
 }
 
 @test "_setup_offer_account_pin: silent when the project's own section already pins its login" {
