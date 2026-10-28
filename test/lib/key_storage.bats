@@ -17,7 +17,7 @@ teardown() {
 
 # --- provider_key_meta -----------------------------------------------------
 
-@test "provider_key_meta: openai-api resolves via the shared compat table" {
+@test "provider_key_meta: openai-api maps to service + env var" {
   run provider_key_meta openai-api
   assert_success
   assert_output "openai-api-key OPENAI_API_KEY"
