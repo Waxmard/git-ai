@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Run BATS tests
@@ -19,7 +22,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: "26"
 
       - name: Install test dependencies
         run: npm ci
@@ -38,7 +41,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: "26"
 
       # The bash CLI shells out to the sibling _*_cli.py modules, but npm ships
       # only what "files" whitelists — a data-only list silently strips them and

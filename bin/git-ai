@@ -69,7 +69,8 @@ _file_mtime() {
 # ---------------------------------------------------------------------------
 _commit_prompt_and_run() {
   local msg="$1" note="${2:-}"
-  if [[ -t 1 ]]; then
+  if _is_interactive; then
+    _copy_to_clipboard "$msg"
     local tmpfile editor comment_char
     tmpfile=$(mktemp /tmp/git-ai-commit.XXXXXX)
     trap 'rm -f "$tmpfile"' EXIT INT TERM
@@ -92,7 +93,11 @@ _commit_prompt_and_run() {
     mtime_before=$(_file_mtime "$tmpfile")
     editor=$(git var GIT_EDITOR 2>/dev/null) || editor="${VISUAL:-${EDITOR:-vi}}"
     local editor_status=0
-    eval "$editor" "$tmpfile" </dev/tty >/dev/tty || editor_status=$?
+    if (: </dev/tty >/dev/tty) 2>/dev/null; then
+      eval "$editor" "$tmpfile" </dev/tty >/dev/tty || editor_status=$?
+    else
+      eval "$editor" "$tmpfile" || editor_status=$?
+    fi
     ((editor_status != 0)) && die "editor exited with status $editor_status; commit aborted"
     local mtime_after
     mtime_after=$(_file_mtime "$tmpfile")
@@ -103,6 +108,7 @@ _commit_prompt_and_run() {
     local edited
     edited=$(_trim "$(git -c core.commentChar="$comment_char" stripspace --strip-comments < "$tmpfile")")
     [[ -z "$edited" ]] && die "empty commit message; aborting"
+    [[ "$edited" != "$msg" ]] && _copy_to_clipboard "$edited"
     # Commit straight from the file (not -m) so --cleanup=strip drops comment
     # lines and trims blank runs exactly like a native editor commit. die's
     # EXIT trap removes the tmpfile on the abort path.
@@ -317,6 +323,7 @@ cmd_pr() {
 
   if [[ "$NO_CHANGES" == "true" ]]; then
     echo "git-ai: no new commits since last generation, using cached output (use --fresh to regenerate)" >&2
+    _is_interactive && _copy_to_clipboard "$EXISTING_PR"
     printf '%s\n' "$EXISTING_PR"
     return 0
   fi
@@ -367,6 +374,7 @@ cmd_pr() {
     save_cached_pr "$GIT_DIR" "$CURRENT_BRANCH" "$BASE" "$OUTPUT" "$HEAD_SHA" "${CONTENT_ID:-}" ||
       die "failed to save PR cache for branch ${CURRENT_BRANCH} against ${BASE}"
   fi
+  _is_interactive && _copy_to_clipboard "$OUTPUT"
   render_pr_output "${EXISTING_PR:-}" "$OUTPUT"
 }
 
