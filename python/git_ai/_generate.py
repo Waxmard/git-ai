@@ -623,6 +623,82 @@ def wrap_commit_body(message: str, width: int = BODY_WRAP_WIDTH) -> str:
     return subject + newline + "\n" * lead + "".join(out) + "\n" * tail
 
 
+_REFERENCE_TOKEN_RE = re.compile(r"(?<![\w&])([#!])(\d+)(?!\w)")
+_LINK_SPAN_RE = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
+_URL_SPAN_RE = re.compile(r"(?:https?://|www\.)[^\s<>()]+")
+_INDENTED_CODE_RE = re.compile(r"(?: {4}|\t)")
+
+
+def _code_span_close(line: str, start: int, run: int) -> int:
+    """Return the end index of the code span opened by ``run`` backticks.
+
+    CommonMark closes a span only on a run of *exactly* ``run`` backticks, so a
+    longer run inside stays literal. Returns ``-1`` when the span never closes.
+    """
+    close = re.compile(rf"(?<!`)`{{{run}}}(?!`)")
+    m = close.search(line, start)
+    return m.end() if m else -1
+
+
+def _neutralize_plain(text: str) -> str:
+    return _REFERENCE_TOKEN_RE.sub(lambda m: m.group(1) + "\u200b" + m.group(2), text)
+
+
+def _neutralize_refs_inline(line: str) -> str:
+    """Split ``#``/``!`` from a following number, except inside markup."""
+    out: list[str] = []
+    plain_start = 0
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        end = -1
+        if ch == "`":
+            tail = line[i:]
+            run = len(tail) - len(tail.lstrip("`"))
+            end = _code_span_close(line, i + run, run)
+        elif ch in "[!":
+            m = _LINK_SPAN_RE.match(line, i)
+            end = m.end() if m else -1
+        elif ch in "hw":
+            m = _URL_SPAN_RE.match(line, i)
+            end = m.end() if m else -1
+        elif line.startswith("<!--", i):
+            close = line.find("-->", i + 4)
+            end = close + 3 if close >= 0 else -1
+        if end <= i:
+            i += 1
+            continue
+        out.append(_neutralize_plain(line[plain_start:i]))
+        out.append(line[i:end])
+        plain_start = i = end
+    out.append(_neutralize_plain(line[plain_start:]))
+    return "".join(out)
+
+
+def neutralize_references(text: str) -> str:
+    """Insert a zero-width space between a bare ``#``/``!`` and its number.
+
+    See ``python/AGENTS.md`` for why, and for the spans left verbatim.
+    """
+    out: list[str] = []
+    fence: tuple[str, int] | None = None
+    indented = False
+    prev_blank = True  # a document that opens indented is an indented code block
+    for line in text.split("\n"):
+        before = fence
+        fence = _fence_state([line], fence)
+        if before or fence:
+            indented = False
+        elif line.strip():
+            # A code block cannot interrupt a paragraph, so only a blank line
+            # opens one; a blank line inside keeps it open.
+            indented = bool(_INDENTED_CODE_RE.match(line)) and (indented or prev_blank)
+        verbatim = before or fence or indented
+        out.append(line if verbatim else _neutralize_refs_inline(line))
+        prev_blank = not line.strip()
+    return "\n".join(out)
+
+
 def parse_commit_response(raw: str) -> str:
     """Strip fences, unwrap the ``===COMMIT===`` marker, drop agent trailers.
 
@@ -636,6 +712,10 @@ def parse_mr_response(raw: str) -> str:
     """Strip fences, unwrap ``===TITLE===`` / ``===BODY===``, drop agent trailers.
 
     Falls back to the fence-stripped text when the markers are absent. Raises
-    if the response cleans to empty.
+    if the response cleans to empty. Bare ``#N`` / ``!N`` references are
+    neutralized (see ``neutralize_references``) so the platform does not
+    auto-link them.
     """
-    return _drop_trailing_noise_safe(_extract_pr_sections(_parse_response(raw)))
+    return neutralize_references(
+        _drop_trailing_noise_safe(_extract_pr_sections(_parse_response(raw)))
+    )
