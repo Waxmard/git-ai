@@ -365,6 +365,35 @@ def test_parse_mr_response_body_of_only_a_closing_marker_yields_title() -> None:
     assert parse_mr_response(raw) == "feat: title"
 
 
+def test_parse_mr_response_neutralizes_bare_issue_and_mr_refs() -> None:
+    zwsp = "\u200b"
+    raw = (
+        "===TITLE===\nfeat: rank #7 teams\n===BODY===\n"
+        "Mudkip's Marsh Pit #6 teams and !42 MRs."
+    )
+    expected = (
+        f"feat: rank #{zwsp}7 teams\n\n"
+        f"Mudkip's Marsh Pit #{zwsp}6 teams and !{zwsp}42 MRs."
+    )
+    assert parse_mr_response(raw) == expected
+
+
+def test_parse_mr_response_preserves_refs_in_code_links_and_urls() -> None:
+    body = (
+        "Use `#1` here.\n\n"
+        "```\nhistory !42 #6\n```\n\n"
+        "[Marsh Pit #6](https://example.com/events/6)\n"
+        "https://example.com/page#7 and #123abc stay."
+    )
+    raw = f"===TITLE===\nfeat: title\n===BODY===\n{body}"
+    assert parse_mr_response(raw) == f"feat: title\n\n{body}"
+
+
+def test_parse_mr_response_ref_neutralization_is_idempotent() -> None:
+    once = parse_mr_response("===TITLE===\nfeat: x\n===BODY===\nMarsh Pit #6")
+    assert parse_mr_response(once) == once
+
+
 def test_parse_commit_response_drops_trailing_closing_marker() -> None:
     raw = "===COMMIT===\nfeat: add thing\n\nBody.\n===COMMIT===\n"
     assert parse_commit_response(raw) == "feat: add thing\n\nBody."

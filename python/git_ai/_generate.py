@@ -623,6 +623,80 @@ def wrap_commit_body(message: str, width: int = BODY_WRAP_WIDTH) -> str:
     return subject + newline + "\n" * lead + "".join(out) + "\n" * tail
 
 
+_REFERENCE_TOKEN_RE = re.compile(r"(?<!&)([#!])(\d+)(?![0-9A-Za-z_])")
+_LINK_SPAN_RE = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
+_URL_SPAN_RE = re.compile(r"(?:https?://|www\.)[^\s<>()]+")
+
+
+def _code_span_close(line: str, start: int, run: int) -> int:
+    """Return the end index of the code span opened by ``run`` backticks.
+
+    CommonMark closes a span only on a run of *exactly* ``run`` backticks, so a
+    longer run inside stays literal. Returns ``-1`` when the span never closes.
+    """
+    close = re.compile(rf"(?<!`)`{{{run}}}(?!`)")
+    m = close.search(line, start)
+    return m.end() if m else -1
+
+
+def _neutralize_plain(text: str) -> str:
+    return _REFERENCE_TOKEN_RE.sub(lambda m: m.group(1) + "\u200b" + m.group(2), text)
+
+
+def _neutralize_refs_inline(line: str) -> str:
+    """Split ``#``/``!`` from a following number, except inside markup.
+
+    Code spans, links, bare URLs, and HTML comments are copied verbatim: a
+    reference there is either literal content or a link target, and a hidden
+    space would break it.
+    """
+    out: list[str] = []
+    plain_start = 0
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        end = -1
+        if ch == "`":
+            tail = line[i:]
+            run = len(tail) - len(tail.lstrip("`"))
+            end = _code_span_close(line, i + run, run)
+        elif ch in "[!":
+            m = _LINK_SPAN_RE.match(line, i)
+            end = m.end() if m else -1
+        elif ch in "hw":
+            m = _URL_SPAN_RE.match(line, i)
+            end = m.end() if m else -1
+        elif line.startswith("<!--", i):
+            close = line.find("-->", i + 4)
+            end = close + 3 if close >= 0 else -1
+        if end <= i:
+            i += 1
+            continue
+        out.append(_neutralize_plain(line[plain_start:i]))
+        out.append(line[i:end])
+        plain_start = i = end
+    out.append(_neutralize_plain(line[plain_start:]))
+    return "".join(out)
+
+
+def neutralize_references(text: str) -> str:
+    """Insert a zero-width space between a bare ``#``/``!`` and its number.
+
+    GitHub and GitLab auto-link ``#6`` / ``!42`` to unrelated issues and merge
+    requests, so a PR title or body quoting a commit subject silently gains
+    bogus cross-references. The split renders identically and defeats the
+    matcher. Fenced blocks, inline code, and explicit links are left alone —
+    there the reference is literal content or a deliberate target.
+    """
+    out: list[str] = []
+    fence: tuple[str, int] | None = None
+    for line in text.split("\n"):
+        before = fence
+        fence = _fence_state([line], fence)
+        out.append(line if before or fence else _neutralize_refs_inline(line))
+    return "\n".join(out)
+
+
 def parse_commit_response(raw: str) -> str:
     """Strip fences, unwrap the ``===COMMIT===`` marker, drop agent trailers.
 
@@ -636,6 +710,10 @@ def parse_mr_response(raw: str) -> str:
     """Strip fences, unwrap ``===TITLE===`` / ``===BODY===``, drop agent trailers.
 
     Falls back to the fence-stripped text when the markers are absent. Raises
-    if the response cleans to empty.
+    if the response cleans to empty. Bare ``#N`` / ``!N`` references are
+    neutralized (see ``neutralize_references``) so the platform does not
+    auto-link them.
     """
-    return _drop_trailing_noise_safe(_extract_pr_sections(_parse_response(raw)))
+    return neutralize_references(
+        _drop_trailing_noise_safe(_extract_pr_sections(_parse_response(raw)))
+    )
