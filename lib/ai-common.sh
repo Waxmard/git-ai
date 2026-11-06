@@ -51,6 +51,27 @@ _trim() {
   printf '%s' "${s%"${s##*[![:space:]]}"}"
 }
 
+_is_interactive() {
+  [[ "${GIT_AI_FORCE_INTERACTIVE:-}" == "1" ]] && return 0
+  [[ "${GIT_AI_FORCE_INTERACTIVE:-}" == "0" ]] && return 1
+  [[ -t 1 ]]
+}
+
+_copy_to_clipboard() {
+  local text="$1"
+  [[ -n "$text" ]] || return 0
+  if command -v pbcopy >/dev/null 2>&1; then
+    printf '%s' "$text" | pbcopy 2>/dev/null || true
+  elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null 2>&1; then
+    printf '%s' "$text" | wl-copy 2>/dev/null || true
+  elif command -v xclip >/dev/null 2>&1; then
+    printf '%s' "$text" | xclip -selection clipboard 2>/dev/null || true
+  elif command -v xsel >/dev/null 2>&1; then
+    printf '%s' "$text" | xsel --clipboard --input 2>/dev/null || true
+  fi
+  return 0
+}
+
 get_last_choice() {
   local key="$1"
   local fallback="$2"
