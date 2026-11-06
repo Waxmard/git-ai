@@ -58,17 +58,18 @@ _is_interactive() {
 }
 
 _copy_to_clipboard() {
-  local text="$1"
+  local text="$1" copied=false
   [[ -n "$text" ]] || return 0
   if command -v pbcopy >/dev/null 2>&1; then
-    printf '%s' "$text" | pbcopy 2>/dev/null || true
+    printf '%s' "$text" | pbcopy 2>/dev/null && copied=true
   elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null 2>&1; then
-    printf '%s' "$text" | wl-copy 2>/dev/null || true
+    printf '%s' "$text" | wl-copy 2>/dev/null && copied=true
   elif command -v xclip >/dev/null 2>&1; then
-    printf '%s' "$text" | xclip -selection clipboard 2>/dev/null || true
+    printf '%s' "$text" | xclip -selection clipboard 2>/dev/null && copied=true
   elif command -v xsel >/dev/null 2>&1; then
-    printf '%s' "$text" | xsel --clipboard --input 2>/dev/null || true
+    printf '%s' "$text" | xsel --clipboard --input 2>/dev/null && copied=true
   fi
+  [[ "$copied" == "true" ]] && printf 'git-ai: copied to clipboard\n' >&2
   return 0
 }
 

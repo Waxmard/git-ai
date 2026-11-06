@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
 load '../helpers/common'
 
 setup() {
@@ -42,9 +43,10 @@ teardown() {
 }
 
 @test "cmd_commit: interactive mode auto-copies generated message via pbcopy" {
-  GIT_EDITOR="touch" GIT_AI_FORCE_INTERACTIVE=1 run cmd_commit "codex:gpt-5.4-mini"
+  GIT_EDITOR="touch" GIT_AI_FORCE_INTERACTIVE=1 run --separate-stderr cmd_commit "codex:gpt-5.4-mini"
 
   assert_success
+  assert_stderr --partial "git-ai: copied to clipboard"
   [ -f "$CLIPBOARD_FILE" ]
   run cat "$CLIPBOARD_FILE"
   assert_success
@@ -58,9 +60,10 @@ printf 'fix: edited in buffer\n' >"$1"
 EOF
   chmod +x "${STUB_BIN}/edit-msg"
 
-  GIT_EDITOR="${STUB_BIN}/edit-msg" GIT_AI_FORCE_INTERACTIVE=1 run cmd_commit "codex:gpt-5.4-mini"
+  GIT_EDITOR="${STUB_BIN}/edit-msg" GIT_AI_FORCE_INTERACTIVE=1 run --separate-stderr cmd_commit "codex:gpt-5.4-mini"
 
   assert_success
+  assert_stderr --partial "git-ai: copied to clipboard"
   [ -f "$CLIPBOARD_FILE" ]
   run cat "$CLIPBOARD_FILE"
   assert_success
@@ -82,10 +85,11 @@ EOF
     $'feat: old pr title\n\n### Features\n- old bullet' \
     "0000000000000000000000000000000000000000"
 
-  GIT_AI_FORCE_INTERACTIVE=1 run cmd_pr codex gpt-5.4-mini --base main
+  GIT_AI_FORCE_INTERACTIVE=1 run --separate-stderr cmd_pr codex gpt-5.4-mini --base main
 
   assert_success
   assert_output --partial "**Changes since previous draft**"
+  assert_stderr --partial "git-ai: copied to clipboard"
   [ -f "$CLIPBOARD_FILE" ]
   run cat "$CLIPBOARD_FILE"
   assert_success
@@ -93,9 +97,10 @@ EOF
   refute_output --partial "**Changes since previous draft**"
 
   rm -f "$CLIPBOARD_FILE"
-  GIT_AI_FORCE_INTERACTIVE=1 run cmd_pr codex gpt-5.4-mini --base main
+  GIT_AI_FORCE_INTERACTIVE=1 run --separate-stderr cmd_pr codex gpt-5.4-mini --base main
 
   assert_success
+  assert_stderr --partial "git-ai: copied to clipboard"
   [ -f "$CLIPBOARD_FILE" ]
   run cat "$CLIPBOARD_FILE"
   assert_success
@@ -110,4 +115,32 @@ EOF
   assert_success
   assert_output --partial $'feat: generated pr title\n\n### Features\n- generated pr bullet'
   [ ! -e "$CLIPBOARD_FILE" ]
+}
+
+@test "_copy_to_clipboard: silent no-op when no clipboard tool is on PATH" {
+  local empty_bin="${TEST_DIR}/empty-bin"
+  mkdir -p "$empty_bin"
+
+  run bash -c 'source "$1/lib/ai-common.sh"; PATH="$2" _copy_to_clipboard "some text"; printf "rc=%s\n" "$?"' _ "$REPO_ROOT" "$empty_bin"
+
+  assert_success
+  assert_output "rc=0"
+}
+
+@test "cmd_commit: succeeds with no clipboard tool on PATH" {
+  local no_clip="${TEST_DIR}/no-clip-bin"
+  mkdir -p "$no_clip"
+  for c in git mktemp rm cat true stat touch dirname readlink python3; do
+    ln -s "$(command -v "$c")" "$no_clip/$c"
+  done
+
+  local old_path="$PATH"
+  export PATH="$no_clip"
+  GIT_EDITOR=touch GIT_AI_FORCE_INTERACTIVE=1 run cmd_commit "codex:gpt-5.4-mini"
+  export PATH="$old_path"
+
+  assert_success
+  refute_output --partial "copied to clipboard"
+  run git log -1 --format=%s
+  assert_output "feat: generated commit title"
 }
