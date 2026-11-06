@@ -645,12 +645,7 @@ def _neutralize_plain(text: str) -> str:
 
 
 def _neutralize_refs_inline(line: str) -> str:
-    """Split ``#``/``!`` from a following number, except inside markup.
-
-    Code spans, links, bare URLs, and single-line HTML comments are copied
-    verbatim: a reference there is either literal content or a link target, and
-    a hidden space would break it.
-    """
+    """Split ``#``/``!`` from a following number, except inside markup."""
     out: list[str] = []
     plain_start = 0
     i = 0
@@ -683,12 +678,7 @@ def _neutralize_refs_inline(line: str) -> str:
 def neutralize_references(text: str) -> str:
     """Insert a zero-width space between a bare ``#``/``!`` and its number.
 
-    GitHub and GitLab auto-link ``#6`` / ``!42`` to unrelated issues and merge
-    requests, so a PR title or body quoting a commit subject silently gains
-    bogus cross-references. The split renders identically and defeats the
-    matcher. Fenced and indented code blocks, inline code, and explicit links
-    are left alone — there the reference is literal content or a deliberate
-    target.
+    See ``python/AGENTS.md`` for why, and for the spans left verbatim.
     """
     out: list[str] = []
     fence: tuple[str, int] | None = None
