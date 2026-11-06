@@ -100,6 +100,7 @@ EOF
   GIT_AI_FORCE_INTERACTIVE=1 run --separate-stderr cmd_pr codex gpt-5.4-mini --base main
 
   assert_success
+  assert_stderr --partial "no new commits since last generation"
   assert_stderr --partial "git-ai: copied to clipboard"
   [ -f "$CLIPBOARD_FILE" ]
   run cat "$CLIPBOARD_FILE"

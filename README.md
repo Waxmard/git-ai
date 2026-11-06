@@ -103,6 +103,7 @@ git-ai commit [auth-method] [model-id]
 - Uses your configured default (from `git-ai setup`) or the interactive picker; pass an auth method to override
 - All auth methods default to a lightweight model when `model-id` is omitted
 - Pass `last` as the provider to reuse the previously generated message
+- In an interactive terminal, copies the message to the system clipboard (again if you edit it in `$EDITOR`)
 
 ### pr
 
@@ -122,6 +123,7 @@ git-ai mr [...]   # alias for pr
 - Cache entries for branches you've since deleted are pruned automatically
 - Use `--fresh` to ignore the saved output and regenerate from scratch
 - Use `--from-sha` to override the saved HEAD and regenerate only from commits after a specific prior generated commit
+- In an interactive terminal, copies the generated title + body to the system clipboard
 - Uses your configured default (from `git-ai setup`) or the interactive picker; pass an auth method to override
 - All auth methods default to a stronger model when `model-id` is omitted
 
