@@ -35,7 +35,7 @@ jobs:
             p/python
             p/bash
             p/secrets
-      - uses: github/codeql-action/upload-sarif@v4.39.1
+      - uses: github/codeql-action/upload-sarif@v4.39.2
         if: always()
         with:
           sarif_file: semgrep.sarif
@@ -56,7 +56,7 @@ jobs:
           output: trivy-fs.sarif
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
-      - uses: github/codeql-action/upload-sarif@v4.39.1
+      - uses: github/codeql-action/upload-sarif@v4.39.2
         if: always()
         with:
           sarif_file: trivy-fs.sarif

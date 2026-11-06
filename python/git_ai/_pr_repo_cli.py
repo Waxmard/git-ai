@@ -14,7 +14,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     __package__ = "git_ai"
 
-from ._generate import build_mr_prompt, parse_mr_response
+from ._generate import build_mr_prompt, neutralize_references, parse_mr_response
 from ._instructions import load_repo_instructions
 from ._pr_incremental import prepare_repo_pr_context, save_cached_pr
 from ._pr_prompt_build import DIFF_SCOPES, DiffScope
@@ -36,6 +36,8 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
             # Commit subjects and warning strings are single-line, so
             # newline-join is a safe delimiter _read_subjects can split apart.
             rendered = "\n".join(str(item) for item in value)
+        elif key == "existing_pr":
+            rendered = neutralize_references(str(value))
         else:
             rendered = str(value)
         sys.stdout.write(f"{key.upper()}={shlex.quote(rendered)}\n")
