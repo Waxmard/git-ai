@@ -9,6 +9,7 @@ from git_ai import (
     derive_diff_stat,
     format_branch_context,
     format_commit_log,
+    neutralize_references,
     parse_commit_response,
     parse_mr_response,
 )
@@ -378,15 +379,24 @@ def test_parse_mr_response_neutralizes_bare_issue_and_mr_refs() -> None:
     assert parse_mr_response(raw) == expected
 
 
-def test_parse_mr_response_preserves_refs_in_code_links_and_urls() -> None:
+def test_parse_mr_response_preserves_refs_in_literal_contexts() -> None:
     body = (
         "Use `#1` here.\n\n"
         "```\nhistory !42 #6\n```\n\n"
         "[Marsh Pit #6](https://example.com/events/6)\n"
-        "https://example.com/page#7 and #123abc stay."
+        "https://example.com/page#7\n"
+        "<!-- #8 --> and #123abc stay.\n"
+        "C#9, v1#10, logs/issue#11.txt stay."
     )
     raw = f"===TITLE===\nfeat: title\n===BODY===\n{body}"
     assert parse_mr_response(raw) == f"feat: title\n\n{body}"
+
+
+def test_neutralize_references_tracks_indented_code_blocks() -> None:
+    zwsp = "\u200b"
+    text = "para\n\n    #1 code\n\n    #2 still code\n\n#3 prose"
+    expected = f"para\n\n    #1 code\n\n    #2 still code\n\n#{zwsp}3 prose"
+    assert neutralize_references(text) == expected
 
 
 def test_parse_mr_response_ref_neutralization_is_idempotent() -> None:

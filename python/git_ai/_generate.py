@@ -623,9 +623,10 @@ def wrap_commit_body(message: str, width: int = BODY_WRAP_WIDTH) -> str:
     return subject + newline + "\n" * lead + "".join(out) + "\n" * tail
 
 
-_REFERENCE_TOKEN_RE = re.compile(r"(?<!&)([#!])(\d+)(?![0-9A-Za-z_])")
+_REFERENCE_TOKEN_RE = re.compile(r"(?<![\w&])([#!])(\d+)(?!\w)")
 _LINK_SPAN_RE = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
 _URL_SPAN_RE = re.compile(r"(?:https?://|www\.)[^\s<>()]+")
+_INDENTED_CODE_RE = re.compile(r"(?: {4}|\t)")
 
 
 def _code_span_close(line: str, start: int, run: int) -> int:
@@ -646,9 +647,9 @@ def _neutralize_plain(text: str) -> str:
 def _neutralize_refs_inline(line: str) -> str:
     """Split ``#``/``!`` from a following number, except inside markup.
 
-    Code spans, links, bare URLs, and HTML comments are copied verbatim: a
-    reference there is either literal content or a link target, and a hidden
-    space would break it.
+    Code spans, links, bare URLs, and single-line HTML comments are copied
+    verbatim: a reference there is either literal content or a link target, and
+    a hidden space would break it.
     """
     out: list[str] = []
     plain_start = 0
@@ -685,15 +686,26 @@ def neutralize_references(text: str) -> str:
     GitHub and GitLab auto-link ``#6`` / ``!42`` to unrelated issues and merge
     requests, so a PR title or body quoting a commit subject silently gains
     bogus cross-references. The split renders identically and defeats the
-    matcher. Fenced blocks, inline code, and explicit links are left alone —
-    there the reference is literal content or a deliberate target.
+    matcher. Fenced and indented code blocks, inline code, and explicit links
+    are left alone — there the reference is literal content or a deliberate
+    target.
     """
     out: list[str] = []
     fence: tuple[str, int] | None = None
+    indented = False
+    prev_blank = True  # a document that opens indented is an indented code block
     for line in text.split("\n"):
         before = fence
         fence = _fence_state([line], fence)
-        out.append(line if before or fence else _neutralize_refs_inline(line))
+        if before or fence:
+            indented = False
+        elif line.strip():
+            # A code block cannot interrupt a paragraph, so only a blank line
+            # opens one; a blank line inside keeps it open.
+            indented = bool(_INDENTED_CODE_RE.match(line)) and (indented or prev_blank)
+        verbatim = before or fence or indented
+        out.append(line if verbatim else _neutralize_refs_inline(line))
+        prev_blank = not line.strip()
     return "\n".join(out)
 
 
