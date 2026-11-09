@@ -494,6 +494,24 @@ def test_parse_mr_response_slices_at_first_end_marker_before_babble() -> None:
     assert parse_mr_response(raw) == "feat: title\n\n## Overview\n\nBody."
 
 
+def test_parse_mr_response_strips_inline_closing_marker() -> None:
+    raw = (
+        "===TITLE===\nfeat: title\n===BODY===\n"
+        "Verify the JSON output without modifying the MR on GitLab.===END===\n"
+        "Extra commentary after the end marker.\n"
+    )
+    assert parse_mr_response(raw) == (
+        "feat: title\n\nVerify the JSON output without modifying the MR on GitLab."
+    )
+
+
+def test_parse_commit_response_strips_inline_closing_marker() -> None:
+    raw = "===COMMIT===\nfeat: add thing\n\nBody paragraph.===END===\nBabble."
+    assert parse_commit_response(raw) == "feat: add thing\n\nBody paragraph."
+    fallback = "Reasoning:\nfix: guard path\n\nBody paragraph.===END==="
+    assert parse_commit_response(fallback) == "fix: guard path\n\nBody paragraph."
+
+
 def test_parse_commit_response_strips_trailing_skill_file_and_markdown_dump() -> None:
     raw = (
         "===COMMIT===\n"

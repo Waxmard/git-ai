@@ -269,7 +269,9 @@ def _parse_response(raw: str) -> str:
 _ATTRIBUTION_TRAILER_RE = re.compile(
     r"^(?:co-authored-by:|\W*generated with \[)", re.IGNORECASE
 )
-_CLOSING_MARKER_RE = re.compile(r"^={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,}$")
+_CLOSING_MARKER_RE = re.compile(
+    r"(?:[ \t]*={2,} *[A-Za-z][A-Za-z0-9 _-]* *={2,})+[ \t]*$"
+)
 
 
 def _drop_trailing_noise(text: str) -> str:
@@ -287,12 +289,17 @@ def _drop_trailing_noise(text: str) -> str:
     separate passes.
     """
     lines = text.split("\n")
-    while lines and (
-        not lines[-1].strip()
-        or _ATTRIBUTION_TRAILER_RE.match(lines[-1].strip())
-        or _CLOSING_MARKER_RE.match(lines[-1].strip())
-    ):
-        lines.pop()
+    while lines:
+        stripped = lines[-1].strip()
+        if not stripped or _ATTRIBUTION_TRAILER_RE.match(stripped):
+            lines.pop()
+        elif m := _CLOSING_MARKER_RE.search(lines[-1]):
+            if prefix := lines[-1][: m.start()].rstrip():
+                lines[-1] = prefix
+            else:
+                lines.pop()
+        else:
+            break
     return "\n".join(lines)
 
 
@@ -326,8 +333,9 @@ def _fence_open_at(lines: list[str]) -> bool:
 def _slice_at_closing_marker(text: str) -> str:
     lines = text.split("\n")
     for i, line in enumerate(lines):
-        if _CLOSING_MARKER_RE.match(line.strip()):
-            return "\n".join(lines[:i])
+        if m := _CLOSING_MARKER_RE.search(line):
+            prefix = line[: m.start()].rstrip()
+            return "\n".join([*lines[:i], prefix] if prefix else lines[:i])
     return text
 
 
