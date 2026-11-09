@@ -1,5 +1,23 @@
 # Changelog
 
+## [6.14.0](https://github.com/Waxmard/git-ai/compare/v6.13.0...v6.14.0) (2026-11-09)
+
+
+### Features
+
+* auto-copy commit and PR output to clipboard in interactive mode ([#166](https://github.com/Waxmard/git-ai/issues/166)) ([abfacc7](https://github.com/Waxmard/git-ai/commit/abfacc77e12a0581cb163ee7dc95a09289dce62a))
+
+
+### Bug Fixes
+
+* stop leaving end markers on the last line of commits and PRs ([#169](https://github.com/Waxmard/git-ai/issues/169)) ([7affc08](https://github.com/Waxmard/git-ai/commit/7affc0866606e947e9bef1af123d5d451a866a40))
+* stop PR output from auto-linking bare issue and MR refs ([#168](https://github.com/Waxmard/git-ai/issues/168)) ([d01b2ab](https://github.com/Waxmard/git-ai/commit/d01b2aba9641607a5fc0cc28f13efc1653ca2a65))
+
+
+### Continuous Integration
+
+* bump uv.lock package version in release-please ([b2cb3f2](https://github.com/Waxmard/git-ai/commit/b2cb3f24b680a97fd6a2d9b37a56b8abd82646ef))
+
 ## [6.13.0](https://github.com/Waxmard/git-ai/compare/v6.12.0...v6.13.0) (2026-10-28)
 
 
